@@ -223,15 +223,66 @@ ShowPauseLayerTip() {
         return
     }
 
+    if ActiveWindowBlocksLayerTip() {
+        ToolTip , , , 2
+        return
+    }
+
     CoordMode "Mouse", "Screen"
     CoordMode "ToolTip", "Screen"
     MouseGetPos &mouse_x, &mouse_y
-    ToolTip "Pause", mouse_x + 14, mouse_y + 18, 2
+    ToolTip "pause mode", mouse_x + 14, mouse_y + 18, 2
 }
 
 HidePauseLayerTip() {
     SetTimer ShowPauseLayerTip, 0
     ToolTip , , , 2
+}
+
+ActiveWindowBlocksLayerTip() {
+    active_hwnd := WinExist("A")
+    if !active_hwnd
+        return false
+
+    ; Maximized windows do not need the armed-layer indicator.
+    if WinGetMinMax("ahk_id " active_hwnd) = 1
+        return true
+
+    try WinGetPos(
+        &window_x,
+        &window_y,
+        &window_width,
+        &window_height,
+        "ahk_id " active_hwnd
+    )
+    catch
+        return false
+
+    window_right := window_x + window_width
+    window_bottom := window_y + window_height
+    tolerance_px := 2
+
+    ; Borderless fullscreen windows normally cover one monitor exactly.
+    loop MonitorGetCount()
+    {
+        MonitorGet(
+            A_Index,
+            &monitor_left,
+            &monitor_top,
+            &monitor_right,
+            &monitor_bottom
+        )
+
+        if Abs(window_x - monitor_left) <= tolerance_px
+            && Abs(window_y - monitor_top) <= tolerance_px
+            && Abs(window_right - monitor_right) <= tolerance_px
+            && Abs(window_bottom - monitor_bottom) <= tolerance_px
+        {
+            return true
+        }
+    }
+
+    return false
 }
 
 SleepComputer() {
