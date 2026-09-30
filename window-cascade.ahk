@@ -1,0 +1,4023 @@
+#Requires AutoHotkey v2.0
+#SingleInstance Force
+#Warn
+
+Persistent
+
+A_IconTip := "Window Cascade"
+try TraySetIcon(A_ScriptDir "\icons\window-cascade.ico")
+
+; Use virtual-screen coordinates so multi-monitor mouse positions match MonitorGet().
+CoordMode "Mouse", "Screen"
+
+
+; =============================================================================
+; debug
+; =============================================================================
+
+debug_enabled := true
+debug_log_path := A_ScriptDir "\window-cascade-debug.log"
+
+InitializeDebugLogging()
+
+OnExit(HandleScriptExit)
+
+
+; =============================================================================
+; settings
+; =============================================================================
+
+; New windows use a predictable generic size instead of an app's remembered size.
+window_width_ratio := 0.80
+window_height_ratio := 0.80
+
+; First branch moves left/up from center; second branch moves right/down.
+cascade_x := 28
+cascade_y := 24
+
+
+; A manually moved window still counts as occupying a canonical slot when its
+; top-left corner remains close enough to that slot.
+cascade_slot_tolerance := 14
+
+; A managed window leaves the cascade after being deliberately moved away
+; from every canonical slot. Keep this looser than exact slot matching so
+; small manual adjustments do not release a window accidentally.
+cascade_release_tolerance := 56
+
+placement_delay_ms := 60
+
+; Some applications expose their real top-level window before it is ready for
+; placement. Keep the original launch context while waiting briefly for it.
+placement_ready_retry_ms := 200
+placement_ready_retry_limit := 25
+
+; Taskbar/shell launches may restore their remembered geometry shortly after
+; becoming usable. Let that finish before applying the cascade placement.
+placement_settle_delay_ms := 300
+
+; Keep one late safety check in case an application changes geometry again.
+placement_stabilize_delays_ms := [500]
+placement_stabilize_tolerance := 6
+
+; A busy window may not process an asynchronous placement immediately.
+; Keep its slot reserved while retrying without blocking Window Cascade.
+placement_stabilize_retry_ms := 500
+placement_stabilize_retry_limit := 20
+placement_stabilize_confirmation_ms := 2000
+
+; If an application overrides a Cascade placement, give it time to finish
+; managing its own geometry before posting another corrective move.
+placement_stabilize_backoff_delays_ms := [1000, 2000, 4000]
+
+edge_margin := 12
+minimum_width := 320
+minimum_height := 220
+
+; Unfocused cascade windows get a clickable bottom-left focus marker.
+focus_corner_size := 24
+focus_corner_thickness := 22
+focus_corner_overlap := 2
+; Coalesce event-driven focus-tab updates. The slow timer below is only a
+; fallback for Windows events that may occasionally be missed.
+focus_corner_update_ms := 50
+focus_corner_fallback_ms := 1000
+focus_corner_accent_check_ms := 1000
+
+; Focus tabs are shown faintly by default. Alpha 1 is reserved for the hidden
+; state so the clickable overlay remains hit-testable.
+focus_corner_visible := true
+focus_corner_visible_alpha := 72
+
+placement_enabled := true
+
+pending_windows := Map()
+handled_windows := Map()
+placement_reservations := Map()
+startup_windows := Map()
+known_windows := Map()
+missed_window_poll_ms := 1000
+cascade_history := Map()
+cascade_reset_cursors := Map()
+
+focus_corner_overlays := Map()
+focus_corner_targets := Map()
+focus_corner_accent_color := ""
+focus_corner_accent_check_tick := 0
+focus_corner_update_pending := false
+
+current_foreground_hwnd := WinExist("A")
+previous_foreground_hwnd := 0
+
+; Clicking empty desktop space can explicitly select a monitor for the next
+; window without changing how normal app-to-app placement works.
+desktop_monitor_hint := 0
+desktop_monitor_hint_tick := 0
+desktop_monitor_hint_max_age_ms := 5000
+
+startup_shortcut_path := A_Startup "\Window Cascade.lnk"
+
+win_event_callback := 0
+foreground_hook := 0
+window_show_hook := 0
+window_destroy_hook := 0
+
+focus_up_message := 0
+focus_down_message := 0
+adopt_active_message := 0
+cycle_stacks_message := 0
+toggle_minimize_message := 0
+bring_forward_message := 0
+close_all_message := 0
+show_help_message := 0
+
+window_cascade_help_gui := 0
+
+
+; =============================================================================
+; mission
+; =============================================================================
+; - detect new normal top-level windows through hooks and a polling fallback.
+; - preserve the queued monitor through readiness retries and startup settling.
+; - place them on the monitor where the user was already working.
+; - detect desktop clicks from the window under the cursor, independent of foreground timing.
+; - ignore the application's remembered position and size.
+; - give managed windows a consistent monitor-relative size.
+; - center the first managed window on each monitor.
+; - define fixed cascade slots: center, then left/up, then right/down.
+; - inspect actual window positions whenever a new window opens.
+; - fill the least-used canonical slot so gaps are repaired before a new layer grows.
+; - allow multiple windows per slot and rotate those stacks on command.
+; - let manually moved windows relinquish their old slot automatically.
+; - reject obvious child/helper windows before queueing placement.
+; - forget destroyed window handles so recycled hwnd values remain safe.
+; - optionally accept focus-up/focus-down commands from CapsLock Layer.
+; - remain fully functional when CapsLock Layer is not installed or running.
+; =============================================================================
+
+
+; =============================================================================
+; startup
+; =============================================================================
+
+BuildTrayMenu()
+
+RegisterIntegrationMessages()
+
+SeedStartupWindows()
+
+StartWindowHooks()
+
+SetTimer(WatchForMissedWindows, missed_window_poll_ms)
+
+; Window events normally keep focus tabs aligned. Keep a slow timer only as
+; insurance for an event that Windows may occasionally fail to deliver.
+OnMessage(0x0202, HandleFocusCornerClick) ; WM_LBUTTONUP
+SetTimer(UpdateFocusCornerOverlays, focus_corner_fallback_ms)
+
+; FancyZones can directly compete with new-window placement.
+SetTimer(CheckCompatibilitySettings, -500)
+
+
+; =============================================================================
+; standalone hotkeys
+; =============================================================================
+; These work without CapsLock Layer. Use Left Alt specifically so AltGr remains
+; available on keyboard layouts that use Right Alt for alternate characters.
+
+#HotIf !IsCapsLockLayerRunning()
+
+<!PgUp::NavigateCascade(-1)
+<!PgDn::NavigateCascade(1)
+<!Backspace::AdoptActiveWindow()
+<!End::CycleCascadeStacks()
+<!Home::BringCascadeForward()
+<!m::ToggleCascadeMinimize()
+
+#HotIf
+
+
+IsCapsLockLayerRunning()
+{
+    static SYNCHRONIZE := 0x00100000
+
+    mutex_handle := DllCall(
+        "OpenMutex",
+        "uint", SYNCHRONIZE,
+        "int", false,
+        "str", "Local\WindowCascade.CapsLockLayer",
+        "ptr"
+    )
+
+    if !mutex_handle
+        return false
+
+    DllCall("CloseHandle", "ptr", mutex_handle)
+    return true
+}
+
+; =============================================================================
+; desktop monitor selection
+; =============================================================================
+
+; Do not rely on foreground timing here. Windows may keep Progman focused while
+; the user clicks between monitors, or may update foreground focus after the
+; mouse-up event. Inspect the actual window under the cursor instead.
+~LButton Up::CaptureDesktopMonitorHint()
+
+CaptureDesktopMonitorHint()
+{
+    global desktop_monitor_hint, desktop_monitor_hint_tick
+
+    MouseGetPos(&mouse_x, &mouse_y, &hover_hwnd)
+
+    if !hover_hwnd
+        return
+
+    root_hwnd := DllCall(
+        "GetAncestor",
+        "ptr", hover_hwnd,
+        "uint", 2, ; GA_ROOT
+        "ptr"
+    )
+
+    if !IsDesktopSurfaceWindow(hover_hwnd)
+        && !IsDesktopSurfaceWindow(root_hwnd)
+        return
+
+    monitor_index := GetMonitorForPoint(mouse_x, mouse_y)
+
+    if !monitor_index
+        return
+
+    desktop_monitor_hint := monitor_index
+    desktop_monitor_hint_tick := A_TickCount
+
+}
+
+
+; =============================================================================
+; optional caps lock layer integration
+; =============================================================================
+
+RegisterIntegrationMessages()
+{
+    global focus_up_message, focus_down_message, adopt_active_message
+    global cycle_stacks_message, toggle_minimize_message
+    global bring_forward_message, close_all_message, show_help_message
+
+    focus_up_message := DllCall(
+        "RegisterWindowMessage",
+        "str", "WindowCascade.FocusUp",
+        "uint"
+    )
+
+    focus_down_message := DllCall(
+        "RegisterWindowMessage",
+        "str", "WindowCascade.FocusDown",
+        "uint"
+    )
+
+    adopt_active_message := DllCall(
+        "RegisterWindowMessage",
+        "str", "WindowCascade.AdoptActive",
+        "uint"
+    )
+
+    cycle_stacks_message := DllCall(
+        "RegisterWindowMessage",
+        "str", "WindowCascade.CycleStacks",
+        "uint"
+    )
+
+    toggle_minimize_message := DllCall(
+        "RegisterWindowMessage",
+        "str", "WindowCascade.ToggleMinimize",
+        "uint"
+    )
+
+    bring_forward_message := DllCall(
+        "RegisterWindowMessage",
+        "str", "WindowCascade.BringForward",
+        "uint"
+    )
+
+    close_all_message := DllCall(
+        "RegisterWindowMessage",
+        "str", "WindowCascade.CloseAll",
+        "uint"
+    )
+
+    show_help_message := DllCall(
+        "RegisterWindowMessage",
+        "str", "WindowCascade.ShowHelp",
+        "uint"
+    )
+
+    OnMessage(focus_up_message, HandleFocusUpMessage)
+    OnMessage(focus_down_message, HandleFocusDownMessage)
+    OnMessage(adopt_active_message, HandleAdoptActiveMessage)
+    OnMessage(cycle_stacks_message, HandleCycleStacksMessage)
+    OnMessage(toggle_minimize_message, HandleToggleMinimizeMessage)
+    OnMessage(bring_forward_message, HandleBringForwardMessage)
+    OnMessage(close_all_message, HandleCloseAllMessage)
+    OnMessage(show_help_message, HandleShowHelpMessage)
+
+}
+
+HandleFocusUpMessage(*)
+{
+    NavigateCascade(-1)
+}
+
+HandleFocusDownMessage(*)
+{
+    NavigateCascade(1)
+}
+
+HandleAdoptActiveMessage(*)
+{
+    AdoptActiveWindow()
+}
+
+HandleCycleStacksMessage(*)
+{
+    CycleCascadeStacks()
+}
+
+HandleToggleMinimizeMessage(*)
+{
+    ToggleCascadeMinimize()
+}
+
+HandleBringForwardMessage(*)
+{
+    BringCascadeForward()
+}
+
+HandleCloseAllMessage(*)
+{
+    CloseCascadeWindows()
+}
+
+HandleShowHelpMessage(*)
+{
+    ToggleWindowCascadeHelp()
+}
+
+GetManagedCascadeMonitor(hwnd)
+{
+    global cascade_history
+
+    for monitor_index, history in cascade_history {
+        for managed_hwnd in history {
+            if managed_hwnd = hwnd
+                return monitor_index
+        }
+    }
+
+    return 0
+}
+
+RemoveCascadeWindowFromHistory(hwnd)
+{
+    global cascade_history
+
+    for monitor_index, history in cascade_history {
+        index := history.Length
+
+        while index >= 1 {
+            if history[index] = hwnd
+                history.RemoveAt(index)
+
+            index -= 1
+        }
+    }
+}
+
+IsWindowInCascadeLayout(hwnd)
+{
+    global cascade_release_tolerance
+
+    if !hwnd || !WinExist("ahk_id " hwnd)
+        return false
+
+    stacks := BuildCascadeSlotStacks(
+        [hwnd],
+        cascade_release_tolerance
+    )
+
+    return stacks.Length > 0
+}
+
+AdoptActiveWindow()
+{
+    global handled_windows, known_windows
+    global window_width_ratio, window_height_ratio
+    global edge_margin, minimum_width, minimum_height
+
+    hwnd := WinExist("A")
+
+    if !hwnd
+        return
+
+    if IsShellSurfaceWindow(hwnd) {
+        return
+    }
+
+    window := "ahk_id " hwnd
+
+    try {
+        target_monitor := GetMonitorForWindow(hwnd)
+
+        if !target_monitor {
+            return
+        }
+
+        managed_monitor := GetManagedCascadeMonitor(hwnd)
+
+        if managed_monitor = target_monitor
+            && IsWindowInCascadeLayout(hwnd)
+        {
+            return
+        }
+
+        ; A maximized window must become ordinary before cascade geometry can
+        ; be applied. The command itself is an explicit request to windowize it.
+        if WinGetMinMax(window) != 0
+            WinRestore(window)
+
+        if !IsCascadeWindow(hwnd)
+            return
+
+        ; Remove any stale membership before calculating the next free slot.
+        RemoveCascadeWindowFromHistory(hwnd)
+
+        MonitorGetWorkArea(
+            target_monitor,
+            &work_left,
+            &work_top,
+            &work_right,
+            &work_bottom
+        )
+
+        work_width := work_right - work_left
+        work_height := work_bottom - work_top
+
+        window_width := Floor(work_width * window_width_ratio)
+        window_height := Floor(work_height * window_height_ratio)
+
+        window_width := Max(minimum_width, window_width)
+        window_height := Max(minimum_height, window_height)
+
+        window_width := Min(
+            window_width,
+            work_width - edge_margin * 2
+        )
+
+        window_height := Min(
+            window_height,
+            work_height - edge_margin * 2
+        )
+
+        position := GetNextCascadePosition(
+            target_monitor,
+            work_left,
+            work_top,
+            work_right,
+            work_bottom,
+            window_width,
+            window_height
+        )
+
+        target_x := position[1]
+        target_y := position[2]
+
+        raw_target := GetRawRectForVisibleTarget(
+            hwnd,
+            target_x,
+            target_y,
+            window_width,
+            window_height
+        )
+
+        WinMove(
+            raw_target[1],
+            raw_target[2],
+            raw_target[3],
+            raw_target[4],
+            window
+        )
+
+        handled_windows[hwnd] := true
+        known_windows[hwnd] := true
+
+        RecordCascadeWindow(target_monitor, hwnd)
+
+        SchedulePlacementStabilization(
+            hwnd,
+            target_x,
+            target_y,
+            window_width,
+            window_height
+        )
+
+    }
+    catch Error as err {
+        error_number := 0
+
+        try
+            error_number := err.Number
+
+        if err.What = "WinMove" && error_number = 5 {
+            handled_windows[hwnd] := true
+            known_windows[hwnd] := true
+            return
+        }
+
+        return
+    }
+}
+
+NavigateCascade(direction)
+{
+    active_hwnd := WinExist("A")
+    monitor_index := 0
+
+    ; A normal active window determines which monitor to navigate.
+    if active_hwnd
+        && !IsShellSurfaceWindow(active_hwnd)
+    {
+        monitor_index := GetMonitorForWindow(active_hwnd)
+    }
+
+    ; Desktop/shell focus uses the monitor under the mouse instead.
+    if !monitor_index {
+        MouseGetPos(&mouse_x, &mouse_y)
+        monitor_index := GetMonitorForPoint(mouse_x, mouse_y)
+    }
+
+    if !monitor_index {
+        return
+    }
+
+    windows := GetLiveCascadeHistory(monitor_index)
+
+    if windows.Length = 0
+        return
+
+    navigation_windows := GetCascadeNavigationWindows(windows)
+
+    if navigation_windows.Length = 0 {
+        return
+    }
+
+    ordered_windows := GetSpatialCascadeOrder(navigation_windows)
+    active_index := 0
+
+    Loop ordered_windows.Length {
+        if ordered_windows[A_Index] = active_hwnd {
+            active_index := A_Index
+            break
+        }
+    }
+
+    if active_index {
+        target_index := active_index + (direction < 0 ? -1 : 1)
+
+        if target_index < 1
+            target_index := ordered_windows.Length
+        else if target_index > ordered_windows.Length
+            target_index := 1
+
+        ActivateCascadeWindow(ordered_windows[target_index])
+
+        return
+    }
+
+    ; If focus is outside the managed cascade, enter at the nearest window
+    ; physically above/below the active window.
+    target_hwnd := GetNearestSpatialCascadeWindow(
+        ordered_windows,
+        active_hwnd,
+        direction
+    )
+
+    if target_hwnd {
+        ActivateCascadeWindow(target_hwnd)
+    }
+}
+
+GetCascadeNavigationWindows(windows)
+{
+    global cascade_slot_tolerance
+
+    stacks := BuildCascadeSlotStacks(
+        windows,
+        cascade_slot_tolerance
+    )
+
+    z_ranks := GetCascadeWindowZRanks()
+    navigation_windows := []
+    grouped_windows := Map()
+
+    ; Each canonical slot contributes only its currently exposed top window.
+    for stack_info in stacks {
+        stack_windows := stack_info["windows"]
+
+        if stack_windows.Length = 0
+            continue
+
+        ordered_stack := SortCascadeWindowsByZOrder(
+            stack_windows,
+            z_ranks
+        )
+
+        if ordered_stack.Length
+            navigation_windows.Push(ordered_stack[1])
+
+        for hwnd in stack_windows
+            grouped_windows[hwnd] := true
+    }
+
+    ; A manually moved managed window that no longer belongs to a canonical
+    ; slot remains independently navigable.
+    for hwnd in windows {
+        if grouped_windows.Has(hwnd)
+            continue
+
+        if !WinExist("ahk_id " hwnd)
+            continue
+
+        try {
+            if WinGetMinMax("ahk_id " hwnd) = -1
+                continue
+        }
+        catch {
+            continue
+        }
+
+        navigation_windows.Push(hwnd)
+    }
+
+    return navigation_windows
+}
+GetSpatialCascadeOrder(windows)
+{
+    spatial_items := []
+
+    ; History order is the final stable tie-breaker when windows occupy the
+    ; exact same physical position.
+    for history_index, hwnd in windows {
+        if !TryGetWindowCenter(hwnd, &center_x, &center_y)
+            continue
+
+        item := Map(
+            "hwnd", hwnd,
+            "center_x", center_x,
+            "center_y", center_y,
+            "history_index", history_index
+        )
+
+        insert_index := spatial_items.Length + 1
+
+        Loop spatial_items.Length {
+            existing := spatial_items[A_Index]
+
+            if SpatialItemComesBefore(item, existing) {
+                insert_index := A_Index
+                break
+            }
+        }
+
+        spatial_items.InsertAt(insert_index, item)
+    }
+
+    ordered_windows := []
+
+    for item in spatial_items
+        ordered_windows.Push(item["hwnd"])
+
+    return ordered_windows
+}
+
+SpatialItemComesBefore(item, existing)
+{
+    if item["center_y"] != existing["center_y"]
+        return item["center_y"] < existing["center_y"]
+
+    if item["center_x"] != existing["center_x"]
+        return item["center_x"] < existing["center_x"]
+
+    return item["history_index"] < existing["history_index"]
+}
+
+GetNearestSpatialCascadeWindow(
+    ordered_windows,
+    active_hwnd,
+    direction
+)
+{
+    if active_hwnd
+        && WinExist("ahk_id " active_hwnd)
+        && TryGetWindowCenter(
+            active_hwnd,
+            &active_center_x,
+            &active_center_y
+        )
+    {
+        target_hwnd := 0
+        best_distance := 0
+
+        for hwnd in ordered_windows {
+            if !TryGetWindowCenter(hwnd, &center_x, &center_y)
+                continue
+
+            vertical_delta := center_y - active_center_y
+
+            if direction < 0 {
+                if vertical_delta >= 0
+                    continue
+
+                distance := -vertical_delta
+            } else {
+                if vertical_delta <= 0
+                    continue
+
+                distance := vertical_delta
+            }
+
+            if !target_hwnd || distance < best_distance {
+                target_hwnd := hwnd
+                best_distance := distance
+            }
+        }
+
+        if target_hwnd
+            return target_hwnd
+    }
+
+    ; No window remains in the requested direction, so wrap.
+    return (
+        direction < 0
+        ? ordered_windows[ordered_windows.Length]
+        : ordered_windows[1]
+    )
+}
+
+TryGetWindowCenter(hwnd, &center_x, &center_y)
+{
+    if !TryGetVisibleFrameRect(
+        hwnd,
+        &x,
+        &y,
+        &width,
+        &height,
+        &inset_left,
+        &inset_top,
+        &inset_right,
+        &inset_bottom
+    ) {
+        return false
+    }
+
+    center_x := x + width / 2
+    center_y := y + height / 2
+
+    return true
+}
+
+ActivateCascadeWindow(hwnd)
+{
+    if !hwnd
+        return
+
+    try {
+        if WinGetMinMax("ahk_id " hwnd) = -1
+            WinRestore("ahk_id " hwnd)
+
+        WinActivate("ahk_id " hwnd)
+    }
+    catch {
+        return
+    }
+}
+
+BringCascadeForward()
+{
+    windows := GetAllLiveCascadeWindows()
+
+    if windows.Length = 0
+        return
+
+    z_ranks := GetCascadeWindowZRanks()
+
+    ordered_windows := SortCascadeWindowsByZOrder(
+        windows,
+        z_ranks
+    )
+
+    visible_windows := []
+
+    for hwnd in ordered_windows {
+        if !WinExist("ahk_id " hwnd)
+            continue
+
+        try {
+            if WinGetMinMax("ahk_id " hwnd) = -1
+                continue
+        }
+        catch {
+            continue
+        }
+
+        visible_windows.Push(hwnd)
+    }
+
+    if visible_windows.Length = 0
+        return
+
+    last_used_hwnd := visible_windows[1]
+
+    flags := (
+        0x0001  ; SWP_NOSIZE
+        | 0x0002  ; SWP_NOMOVE
+        | 0x0010  ; SWP_NOACTIVATE
+        | 0x0200  ; SWP_NOOWNERZORDER
+    )
+
+    ; Temporarily promote the whole cascade into the topmost band. Process
+    ; bottom-to-top so its existing internal Z-order is preserved.
+    index := visible_windows.Length
+
+    while index >= 1 {
+        hwnd := visible_windows[index]
+
+        try DllCall(
+            "SetWindowPos",
+            "ptr", hwnd,
+            "ptr", -1, ; HWND_TOPMOST
+            "int", 0,
+            "int", 0,
+            "int", 0,
+            "int", 0,
+            "uint", flags,
+            "int"
+        )
+
+        index -= 1
+    }
+
+    ; Immediately return the group to the normal Z band. Doing this in the
+    ; same bottom-to-top order keeps every cascade window above unrelated
+    ; normal windows without leaving the cascade always-on-top.
+    index := visible_windows.Length
+
+    while index >= 1 {
+        hwnd := visible_windows[index]
+
+        try DllCall(
+            "SetWindowPos",
+            "ptr", hwnd,
+            "ptr", -2, ; HWND_NOTOPMOST
+            "int", 0,
+            "int", 0,
+            "int", 0,
+            "int", 0,
+            "uint", flags,
+            "int"
+        )
+
+        index -= 1
+    }
+
+    ActivateCascadeWindow(last_used_hwnd)
+}
+
+CycleCascadeStacks()
+{
+    global cascade_slot_tolerance
+
+    windows := GetAllLiveCascadeWindows()
+
+    if windows.Length < 2
+        return
+
+    stacks := BuildCascadeSlotStacks(
+        windows,
+        cascade_slot_tolerance
+    )
+
+    z_ranks := GetCascadeWindowZRanks()
+    active_hwnd := WinExist("A")
+    next_active_hwnd := 0
+
+    for stack_info in stacks {
+        stack_windows := stack_info["windows"]
+
+        if stack_windows.Length < 2
+            continue
+
+        ordered_windows := SortCascadeWindowsByZOrder(
+            stack_windows,
+            z_ranks
+        )
+
+        if ordered_windows.Length < 2
+            continue
+
+        top_hwnd := ordered_windows[1]
+        new_top_hwnd := ordered_windows[2]
+        bottom_hwnd := ordered_windows[ordered_windows.Length]
+
+        flags := (
+            0x0001  ; SWP_NOSIZE
+            | 0x0002  ; SWP_NOMOVE
+            | 0x0010  ; SWP_NOACTIVATE
+            | 0x0200  ; SWP_NOOWNERZORDER
+        )
+
+        try {
+            succeeded := DllCall(
+                "SetWindowPos",
+                "ptr", top_hwnd,
+                "ptr", bottom_hwnd,
+                "int", 0,
+                "int", 0,
+                "int", 0,
+                "int", 0,
+                "uint", flags,
+                "int"
+            )
+
+            if !succeeded {
+                continue
+            }
+
+            if active_hwnd = top_hwnd
+                next_active_hwnd := new_top_hwnd
+        }
+        catch {
+            continue
+        }
+    }
+
+    if next_active_hwnd
+        && WinExist("ahk_id " next_active_hwnd)
+    {
+        try WinActivate("ahk_id " next_active_hwnd)
+    }
+}
+
+
+BuildCascadeSlotStacks(windows, tolerance)
+{
+    global window_width_ratio, window_height_ratio
+    global edge_margin, minimum_width, minimum_height
+
+    stacks := []
+    stacks_by_slot := Map()
+
+    for hwnd in windows {
+        try {
+            if WinGetMinMax("ahk_id " hwnd) = -1
+                continue
+
+            monitor_index := GetMonitorForWindow(hwnd)
+
+            if !monitor_index
+                continue
+
+            MonitorGetWorkArea(
+                monitor_index,
+                &work_left,
+                &work_top,
+                &work_right,
+                &work_bottom
+            )
+
+            work_width := work_right - work_left
+            work_height := work_bottom - work_top
+
+            canonical_width := Floor(
+                work_width * window_width_ratio
+            )
+
+            canonical_height := Floor(
+                work_height * window_height_ratio
+            )
+
+            canonical_width := Max(
+                minimum_width,
+                canonical_width
+            )
+
+            canonical_height := Max(
+                minimum_height,
+                canonical_height
+            )
+
+            canonical_width := Min(
+                canonical_width,
+                work_width - edge_margin * 2
+            )
+
+            canonical_height := Min(
+                canonical_height,
+                work_height - edge_margin * 2
+            )
+
+            slots := BuildCascadeSlots(
+                work_left,
+                work_top,
+                work_right,
+                work_bottom,
+                canonical_width,
+                canonical_height
+            )
+
+            if !TryGetVisibleFrameRect(
+                hwnd,
+                &window_x,
+                &window_y,
+                &window_width,
+                &window_height,
+                &window_inset_left,
+                &window_inset_top,
+                &window_inset_right,
+                &window_inset_bottom
+            ) {
+                continue
+            }
+        }
+        catch {
+            continue
+        }
+
+        best_slot_index := FindNearestCascadeSlot(
+            window_x,
+            window_y,
+            slots,
+            tolerance
+        )
+
+        ; A manually moved window that is no longer near a canonical slot does
+        ; not belong to any stack.
+        if !best_slot_index
+            continue
+
+        stack_key :=
+            monitor_index
+            . ":"
+            . best_slot_index
+
+        if stacks_by_slot.Has(stack_key) {
+            stacks_by_slot[stack_key]["windows"].Push(hwnd)
+            continue
+        }
+
+        stack_info := Map(
+            "windows", [hwnd]
+        )
+
+        stacks_by_slot[stack_key] := stack_info
+        stacks.Push(stack_info)
+    }
+
+    return stacks
+}
+GetAllLiveCascadeWindows()
+{
+    global cascade_history
+
+    windows := []
+    seen := Map()
+
+    for monitor_index, history in cascade_history {
+        live_history := []
+
+        for hwnd in history {
+            if seen.Has(hwnd)
+                continue
+
+            if !WinExist("ahk_id " hwnd)
+                continue
+
+            ; Moving to another monitor or deliberately away from every
+            ; canonical slot releases the window from the cascade.
+            if GetMonitorForWindow(hwnd) != monitor_index
+                continue
+
+            if !IsWindowInCascadeLayout(hwnd)
+                continue
+
+            seen[hwnd] := true
+            live_history.Push(hwnd)
+            windows.Push(hwnd)
+        }
+
+        cascade_history[monitor_index] := live_history
+    }
+
+    return windows
+}
+
+GetCascadeWindowZRanks()
+{
+    ranks := Map()
+
+    ; WinGetList returns top-level windows in Z-order.
+    for rank, hwnd in WinGetList()
+        ranks[hwnd] := rank
+
+    return ranks
+}
+
+SortCascadeWindowsByZOrder(windows, ranks)
+{
+    ordered_windows := []
+
+    for hwnd in windows {
+        rank := (
+            ranks.Has(hwnd)
+            ? ranks[hwnd]
+            : 2147483647
+        )
+
+        insert_index := ordered_windows.Length + 1
+
+        Loop ordered_windows.Length {
+            existing_hwnd := ordered_windows[A_Index]
+
+            existing_rank := (
+                ranks.Has(existing_hwnd)
+                ? ranks[existing_hwnd]
+                : 2147483647
+            )
+
+            if rank < existing_rank {
+                insert_index := A_Index
+                break
+            }
+        }
+
+        ordered_windows.InsertAt(insert_index, hwnd)
+    }
+
+    return ordered_windows
+}
+GetLiveCascadeHistory(monitor_index)
+{
+    global cascade_history
+
+    live_history := []
+
+    if !cascade_history.Has(monitor_index)
+        return live_history
+
+    for hwnd in cascade_history[monitor_index] {
+        if !WinExist("ahk_id " hwnd)
+            continue
+
+        if GetMonitorForWindow(hwnd) != monitor_index
+            continue
+
+        if !IsWindowInCascadeLayout(hwnd)
+            continue
+
+        live_history.Push(hwnd)
+    }
+
+    cascade_history[monitor_index] := live_history
+
+    return live_history
+}
+
+
+; =============================================================================
+; window discovery and placement queue
+; =============================================================================
+
+SeedStartupWindows()
+{
+    global startup_windows, known_windows
+
+    startup_windows := Map()
+    known_windows := Map()
+
+    for hwnd in WinGetList() {
+        startup_windows[hwnd] := true
+        known_windows[hwnd] := true
+    }
+
+}
+
+QueueWindowPlacement(hwnd, source_hwnd)
+{
+    global pending_windows, known_windows, placement_delay_ms
+
+    ; Once any discovery path adopts an HWND, the polling fallback no longer
+    ; needs to rediscover the same window.
+    known_windows[hwnd] := true
+
+
+    pending_windows[hwnd] := true
+
+    ; Snapshot once here. Readiness retries and settling reuse this monitor
+    ; instead of sampling a later mouse position.
+    MouseGetPos(&queue_mouse_x, &queue_mouse_y)
+    queued_monitor := GetMonitorForPoint(
+        queue_mouse_x,
+        queue_mouse_y
+    )
+
+    DebugLog(
+        "Queue placement."
+        . " | target=" DebugDescribeWindow(hwnd)
+        . " | source=" DebugDescribeWindow(source_hwnd)
+        . " | queued-monitor=" queued_monitor
+        . " | mouse=(" queue_mouse_x "," queue_mouse_y ")"
+    )
+
+
+    SetTimer(
+        PlaceNewWindow.Bind(
+            hwnd,
+            source_hwnd,
+            queued_monitor
+        ),
+        -placement_delay_ms
+    )
+}
+
+WatchForMissedWindows()
+{
+    global known_windows
+    global pending_windows, handled_windows
+    global current_foreground_hwnd, previous_foreground_hwnd
+    global placement_enabled
+
+    for hwnd in WinGetList() {
+        if known_windows.Has(hwnd)
+            continue
+
+        ; Record the HWND immediately. Rejected helper windows should not be
+        ; reconsidered every polling cycle.
+        known_windows[hwnd] := true
+
+        DebugLog(
+            "Poll discovered HWND."
+            . " | " DebugDescribeWindow(hwnd)
+        )
+
+        if !placement_enabled
+            continue
+
+        if pending_windows.Has(hwnd) || handled_windows.Has(hwnd)
+            continue
+
+        if !IsPlausibleTopLevelWindow(hwnd) {
+            DebugLog(
+                "Poll rejected by top-level prefilter."
+                . " | " DebugDescribeWindow(hwnd)
+            )
+            continue
+        }
+
+        source_hwnd := current_foreground_hwnd
+
+        if source_hwnd = hwnd
+            source_hwnd := previous_foreground_hwnd
+
+
+        QueueWindowPlacement(hwnd, source_hwnd)
+    }
+}
+
+TryQueueForegroundFallback(hwnd)
+{
+    global startup_windows
+    global pending_windows, handled_windows
+    global previous_foreground_hwnd
+    global placement_enabled
+
+    if !hwnd
+        return
+
+    ; Never adopt a window merely because it was already open when this script
+    ; started.
+    if startup_windows.Has(hwnd)
+        return
+
+    if !placement_enabled
+        return
+
+    if pending_windows.Has(hwnd) || handled_windows.Has(hwnd)
+        return
+
+    if !IsPlausibleTopLevelWindow(hwnd)
+        return
+
+    source_hwnd := previous_foreground_hwnd
+
+    if source_hwnd = hwnd
+        source_hwnd := 0
+
+
+    QueueWindowPlacement(hwnd, source_hwnd)
+}
+
+
+; =============================================================================
+; windows event hooks
+; =============================================================================
+
+StartWindowHooks()
+{
+    global win_event_callback
+    global foreground_hook, window_show_hook, window_destroy_hook
+
+    EVENT_SYSTEM_FOREGROUND := 0x0003
+    EVENT_OBJECT_DESTROY := 0x8001
+    EVENT_OBJECT_SHOW := 0x8002
+
+    WINEVENT_OUTOFCONTEXT := 0x0000
+    WINEVENT_SKIPOWNPROCESS := 0x0002
+    flags := WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS
+
+    win_event_callback := CallbackCreate(HandleWinEvent)
+
+    foreground_hook := DllCall(
+        "SetWinEventHook",
+        "uint", EVENT_SYSTEM_FOREGROUND,
+        "uint", EVENT_SYSTEM_FOREGROUND,
+        "ptr", 0,
+        "ptr", win_event_callback,
+        "uint", 0,
+        "uint", 0,
+        "uint", flags,
+        "ptr"
+    )
+
+
+    window_show_hook := DllCall(
+        "SetWinEventHook",
+        "uint", EVENT_OBJECT_SHOW,
+        "uint", EVENT_OBJECT_SHOW,
+        "ptr", 0,
+        "ptr", win_event_callback,
+        "uint", 0,
+        "uint", 0,
+        "uint", flags,
+        "ptr"
+    )
+
+
+    window_destroy_hook := DllCall(
+        "SetWinEventHook",
+        "uint", EVENT_OBJECT_DESTROY,
+        "uint", EVENT_OBJECT_DESTROY,
+        "ptr", 0,
+        "ptr", win_event_callback,
+        "uint", 0,
+        "uint", 0,
+        "uint", flags,
+        "ptr"
+    )
+
+    if !foreground_hook || !window_show_hook || !window_destroy_hook {
+
+        MsgBox(
+            "Could not install all Windows event hooks.`n`n"
+            . "Window Cascade may not detect new windows correctly.",
+            "Window Cascade",
+            "Iconx"
+        )
+    }
+}
+
+StopWindowHooks()
+{
+    global win_event_callback
+    global foreground_hook, window_show_hook, window_destroy_hook
+
+    SetTimer(WatchForMissedWindows, 0)
+    SetTimer(UpdateFocusCornerOverlays, 0)
+    SetTimer(RunQueuedFocusCornerUpdate, 0)
+
+
+    if foreground_hook {
+        DllCall("UnhookWinEvent", "ptr", foreground_hook)
+        foreground_hook := 0
+    }
+
+    if window_show_hook {
+        DllCall("UnhookWinEvent", "ptr", window_show_hook)
+        window_show_hook := 0
+    }
+
+    if window_destroy_hook {
+        DllCall("UnhookWinEvent", "ptr", window_destroy_hook)
+        window_destroy_hook := 0
+    }
+
+    if win_event_callback {
+        CallbackFree(win_event_callback)
+        win_event_callback := 0
+    }
+}
+
+HandleWinEvent(
+    hook_handle,
+    event,
+    hwnd,
+    object_id,
+    child_id,
+    event_thread,
+    event_time
+)
+{
+    global current_foreground_hwnd, previous_foreground_hwnd
+    global pending_windows, handled_windows
+    global startup_windows
+    global placement_enabled
+    global desktop_monitor_hint, desktop_monitor_hint_tick
+
+    try {
+        EVENT_SYSTEM_FOREGROUND := 0x0003
+        EVENT_OBJECT_DESTROY := 0x8001
+        EVENT_OBJECT_SHOW := 0x8002
+        OBJID_WINDOW := 0
+        CHILDID_SELF := 0
+
+        if event = EVENT_SYSTEM_FOREGROUND {
+            if hwnd && hwnd != current_foreground_hwnd {
+                previous_foreground_hwnd := current_foreground_hwnd
+                current_foreground_hwnd := hwnd
+
+                DebugLog(
+                    "Foreground changed."
+                    . " | current=" DebugDescribeWindow(hwnd)
+                    . " | previous="
+                    . DebugDescribeWindow(previous_foreground_hwnd)
+                )
+
+                if IsDesktopSurfaceWindow(hwnd) {
+                    MouseGetPos(&mouse_x, &mouse_y)
+                    monitor_index := GetMonitorForPoint(mouse_x, mouse_y)
+
+                    if monitor_index {
+                        desktop_monitor_hint := monitor_index
+                        desktop_monitor_hint_tick := A_TickCount
+
+                    }
+                }
+            }
+
+            QueueFocusCornerUpdate()
+            TryQueueForegroundFallback(hwnd)
+            return
+        }
+
+        if object_id != OBJID_WINDOW || child_id != CHILDID_SELF || !hwnd
+            return
+
+
+        if event = EVENT_OBJECT_DESTROY {
+            DebugLog(
+                "Destroy event."
+                . " | " DebugDescribeWindow(hwnd)
+            )
+
+            was_managed := !!GetManagedCascadeMonitor(hwnd)
+
+            ForgetWindow(hwnd)
+
+            if was_managed
+                QueueFocusCornerUpdate()
+
+            return
+        }
+
+
+        if event != EVENT_OBJECT_SHOW
+            return
+
+        if GetManagedCascadeMonitor(hwnd)
+            QueueFocusCornerUpdate()
+
+        DebugLog(
+            "Show event."
+            . " | pending=" pending_windows.Has(hwnd)
+            . " | handled=" handled_windows.Has(hwnd)
+            . " | " DebugDescribeWindow(hwnd)
+        )
+
+        ; EVENT_OBJECT_SHOW also fires when some existing minimized windows are
+        ; restored. Only windows absent from the startup snapshot are new.
+        if startup_windows.Has(hwnd) {
+            DebugLog(
+                "Show event skipped: window existed at script startup."
+                . " | " DebugDescribeWindow(hwnd)
+            )
+            return
+        }
+
+        ; Cheap filtering here prevents Explorer controls, ribbon pieces,
+        ; tooltips, and other child/helper windows from ever reaching the timer.
+        if !IsPlausibleTopLevelWindow(hwnd)
+            return
+
+
+        if !placement_enabled {
+            return
+        }
+
+        if pending_windows.Has(hwnd) {
+            return
+        }
+
+        if handled_windows.Has(hwnd) {
+            return
+        }
+
+        source_hwnd := current_foreground_hwnd
+
+        ; If focus already moved to the new window, use the prior foreground window.
+        if source_hwnd = hwnd
+            source_hwnd := previous_foreground_hwnd
+
+        DebugLog(
+            "Show event accepted."
+            . " | target=" DebugDescribeWindow(hwnd)
+            . " | source=" DebugDescribeWindow(source_hwnd)
+        )
+
+        QueueWindowPlacement(hwnd, source_hwnd)
+    }
+    catch {
+        return
+    }
+}
+
+IsPlausibleTopLevelWindow(hwnd)
+{
+    if !hwnd
+        return false
+
+    if !DllCall("IsWindow", "ptr", hwnd, "int")
+        return false
+
+    ; Reject child controls before doing any higher-level AutoHotkey queries.
+    root_hwnd := DllCall(
+        "GetAncestor",
+        "ptr", hwnd,
+        "uint", 2, ; GA_ROOT
+        "ptr"
+    )
+
+    if root_hwnd != hwnd
+        return false
+
+    try {
+        style := WinGetStyle("ahk_id " hwnd)
+        ex_style := WinGetExStyle("ahk_id " hwnd)
+        window_class := WinGetClass("ahk_id " hwnd)
+    }
+    catch {
+        return false
+    }
+
+    if style & 0x40000000 ; WS_CHILD
+        return false
+
+    if ex_style & 0x00000080 ; WS_EX_TOOLWINDOW
+        return false
+
+    if ex_style & 0x08000000 ; WS_EX_NOACTIVATE
+        return false
+
+    ; Owned top-level windows are normally dialogs or transient popups.
+    if DllCall("GetWindow", "ptr", hwnd, "uint", 4, "ptr") ; GW_OWNER
+        return false
+
+    if window_class = "Shell_TrayWnd"
+        || window_class = "Shell_SecondaryTrayWnd"
+        || window_class = "Progman"
+        || window_class = "WorkerW"
+        || window_class = "NotifyIconOverflowWindow"
+        || window_class = "tooltips_class32"
+        || window_class = "Ghost"
+        return false
+
+    return true
+}
+
+ForgetWindow(hwnd)
+{
+    global pending_windows, handled_windows, placement_reservations
+    global cascade_history
+    global startup_windows, known_windows
+    global current_foreground_hwnd, previous_foreground_hwnd
+
+    if startup_windows.Has(hwnd)
+        startup_windows.Delete(hwnd)
+
+    if known_windows.Has(hwnd)
+        known_windows.Delete(hwnd)
+
+    if pending_windows.Has(hwnd) {
+        pending_windows.Delete(hwnd)
+    }
+
+    if handled_windows.Has(hwnd) {
+        handled_windows.Delete(hwnd)
+    }
+
+    if placement_reservations.Has(hwnd)
+        placement_reservations.Delete(hwnd)
+
+    if current_foreground_hwnd = hwnd
+        current_foreground_hwnd := 0
+
+    if previous_foreground_hwnd = hwnd
+        previous_foreground_hwnd := 0
+
+
+    ; Remove the destroyed handle from per-monitor histories. This also avoids
+    ; stale hwnd reuse after the application has been closed for a while.
+    for monitor_index, history in cascade_history {
+        index := history.Length
+
+        while index >= 1 {
+            if history[index] = hwnd
+                history.RemoveAt(index)
+
+            index -= 1
+        }
+    }
+
+}
+
+
+; =============================================================================
+; focus corners
+; =============================================================================
+
+QueueFocusCornerUpdate()
+{
+    global focus_corner_update_pending
+    global focus_corner_update_ms
+
+    if focus_corner_update_pending
+        return
+
+    focus_corner_update_pending := true
+
+    SetTimer(
+        RunQueuedFocusCornerUpdate,
+        -focus_corner_update_ms
+    )
+}
+
+
+RunQueuedFocusCornerUpdate()
+{
+    global focus_corner_update_pending
+
+    focus_corner_update_pending := false
+    UpdateFocusCornerOverlays()
+}
+
+
+UpdateFocusCornerOverlays()
+{
+    global focus_corner_overlays
+
+    RefreshFocusCornerAccent()
+
+    active_hwnd := DllCall(
+        "GetForegroundWindow",
+        "ptr"
+    )
+
+    ; The marker timer must never mutate cascade membership. A window can be
+    ; temporarily between geometries while Explorer or placement settles.
+    live_windows := GetCascadeWindowsForOverlay()
+    live_targets := Map()
+    visible_bounds := Map()
+
+    highest_hwnd := 0
+    highest_y := 0
+
+    ; Cache geometry and identify the cascade window with the smallest Y.
+    for hwnd in live_windows {
+        live_targets[hwnd] := true
+
+        if !DllCall(
+            "IsWindowVisible",
+            "ptr", hwnd,
+            "int"
+        ) {
+            continue
+        }
+
+        try {
+            if WinGetMinMax("ahk_id " hwnd) != 0
+                continue
+        }
+        catch {
+            continue
+        }
+
+        if !GetVisibleWindowBounds(
+            hwnd,
+            &window_x,
+            &window_y,
+            &window_width,
+            &window_height
+        ) {
+            continue
+        }
+
+        visible_bounds[hwnd] := [
+            window_x,
+            window_y,
+            window_width,
+            window_height
+        ]
+
+        if !highest_hwnd || window_y < highest_y {
+            highest_hwnd := hwnd
+            highest_y := window_y
+        }
+    }
+
+    for hwnd in live_windows {
+        if (
+            hwnd = active_hwnd
+            || !visible_bounds.Has(hwnd)
+        ) {
+            HideFocusCornerOverlay(hwnd)
+            continue
+        }
+
+        bounds := visible_bounds[hwnd]
+
+        ShowFocusCornerOverlay(
+            hwnd,
+            bounds[1],
+            bounds[2],
+            bounds[3],
+            bounds[4],
+            hwnd = highest_hwnd
+        )
+    }
+
+    stale_targets := []
+
+    for hwnd, overlay in focus_corner_overlays {
+        if !live_targets.Has(hwnd)
+            stale_targets.Push(hwnd)
+    }
+
+    for hwnd in stale_targets
+        DestroyFocusCornerOverlay(hwnd)
+}
+
+
+GetCascadeWindowsForOverlay()
+{
+    global cascade_history
+
+    windows := []
+    seen := Map()
+
+    for monitor_index, history in cascade_history {
+        for hwnd in history {
+            if seen.Has(hwnd)
+                continue
+
+            if !WinExist("ahk_id " hwnd)
+                continue
+
+            if GetMonitorForWindow(hwnd) != monitor_index
+                continue
+
+            ; Do not remove a window from history just because a visual refresh
+            ; catches it during a transient geometry change.
+            if !IsWindowInCascadeLayout(hwnd)
+                continue
+
+            seen[hwnd] := true
+            windows.Push(hwnd)
+        }
+    }
+
+    return windows
+}
+
+
+ShowFocusCornerOverlay(
+    hwnd,
+    window_x,
+    window_y,
+    window_width,
+    window_height,
+    full_height := false
+)
+{
+    global focus_corner_overlays
+    global focus_corner_size
+    global focus_corner_thickness
+    global focus_corner_overlap
+    global focus_corner_visible, focus_corner_visible_alpha
+
+    if !focus_corner_overlays.Has(hwnd)
+        CreateFocusCornerOverlay(hwnd)
+
+    overlay := focus_corner_overlays[hwnd]
+
+    if (
+        overlay.shown
+        && overlay.window_x = window_x
+        && overlay.window_y = window_y
+        && overlay.window_width = window_width
+        && overlay.window_height = window_height
+        && overlay.full_height = full_height
+    ) {
+        PlaceFocusCornerAboveTarget(hwnd, overlay)
+        return
+    }
+
+    thickness := focus_corner_thickness
+    overlap := focus_corner_overlap
+    outside := thickness - overlap
+
+    marker_x := window_x - outside
+
+    if full_height {
+        marker_y := window_y
+        marker_height := window_height
+    } else {
+        marker_y :=
+            window_y
+            + window_height
+            - focus_corner_size
+
+        marker_height := focus_corner_size
+    }
+
+    overlay.gui.Show(
+        "NA"
+        . " x" marker_x
+        . " y" marker_y
+        . " w" thickness
+        . " h" marker_height
+    )
+
+    WinSetTransparent(
+        focus_corner_visible ? focus_corner_visible_alpha : 1,
+        "ahk_id " overlay.gui.Hwnd
+    )
+
+    PlaceFocusCornerAboveTarget(hwnd, overlay)
+
+    overlay.window_x := window_x
+    overlay.window_y := window_y
+    overlay.window_width := window_width
+    overlay.window_height := window_height
+    overlay.full_height := full_height
+    overlay.shown := true
+}
+
+
+PlaceFocusCornerAboveTarget(hwnd, overlay)
+{
+    static SWP_NOSIZE := 0x0001
+    static SWP_NOMOVE := 0x0002
+    static SWP_NOACTIVATE := 0x0010
+
+    if !WinExist("ahk_id " hwnd)
+        return
+
+    flags :=
+        SWP_NOSIZE
+        | SWP_NOMOVE
+        | SWP_NOACTIVATE
+
+    DllCall(
+        "SetWindowPos",
+        "ptr", overlay.gui.Hwnd,
+        "ptr", hwnd,
+        "int", 0,
+        "int", 0,
+        "int", 0,
+        "int", 0,
+        "uint", flags,
+        "int"
+    )
+}
+
+
+HideFocusCornerOverlay(hwnd)
+{
+    global focus_corner_overlays
+
+    if !focus_corner_overlays.Has(hwnd)
+        return
+
+    overlay := focus_corner_overlays[hwnd]
+
+    if !overlay.shown
+        return
+
+    try overlay.gui.Hide()
+
+    overlay.shown := false
+}
+
+
+CreateFocusCornerOverlay(hwnd)
+{
+    global focus_corner_overlays
+    global focus_corner_targets
+    global focus_corner_accent_color
+
+    marker_gui := Gui(
+        "-Caption"
+        . " +ToolWindow"
+        . " +E0x08000000",
+        "Window Cascade Focus Marker"
+    )
+
+    marker_gui.BackColor := focus_corner_accent_color
+
+    focus_corner_targets[marker_gui.Hwnd] := hwnd
+
+    focus_corner_overlays[hwnd] := {
+        gui: marker_gui,
+        shown: false,
+        window_x: 0,
+        window_y: 0,
+        window_width: 0,
+        window_height: 0,
+        full_height: false
+    }
+}
+
+
+DestroyFocusCornerOverlay(hwnd)
+{
+    global focus_corner_overlays
+    global focus_corner_targets
+
+    if !focus_corner_overlays.Has(hwnd)
+        return
+
+    overlay := focus_corner_overlays[hwnd]
+    overlay_hwnd := overlay.gui.Hwnd
+
+    try overlay.gui.Destroy()
+
+    focus_corner_overlays.Delete(hwnd)
+
+    if focus_corner_targets.Has(overlay_hwnd)
+        focus_corner_targets.Delete(overlay_hwnd)
+}
+
+
+HandleFocusCornerClick(
+    w_param,
+    l_param,
+    message,
+    overlay_hwnd
+)
+{
+    global focus_corner_targets
+
+    if !focus_corner_targets.Has(overlay_hwnd)
+        return
+
+    target_hwnd := focus_corner_targets[overlay_hwnd]
+
+    if !WinExist("ahk_id " target_hwnd) {
+        DestroyFocusCornerOverlay(target_hwnd)
+        return 0
+    }
+
+    HideFocusCornerOverlay(target_hwnd)
+
+    try WinActivate("ahk_id " target_hwnd)
+
+    return 0
+}
+
+
+ToggleFocusCornerVisibility(*)
+{
+    global focus_corner_visible, focus_corner_visible_alpha
+    global focus_corner_overlays
+
+    focus_corner_visible := !focus_corner_visible
+    transparency := focus_corner_visible ? focus_corner_visible_alpha : 1
+
+    for hwnd, overlay in focus_corner_overlays {
+        try WinSetTransparent(
+            transparency,
+            "ahk_id " overlay.gui.Hwnd
+        )
+    }
+
+    UpdateTrayMenu()
+}
+
+
+RefreshFocusCornerAccent()
+{
+    global focus_corner_overlays
+    global focus_corner_accent_color
+    global focus_corner_accent_check_tick
+    global focus_corner_accent_check_ms
+
+    if (
+        focus_corner_accent_color != ""
+        && A_TickCount - focus_corner_accent_check_tick
+            < focus_corner_accent_check_ms
+    ) {
+        return
+    }
+
+    focus_corner_accent_check_tick := A_TickCount
+    new_color := GetWindowsAccentHexColor()
+
+    if new_color = focus_corner_accent_color
+        return
+
+    focus_corner_accent_color := new_color
+    targets := []
+
+    for hwnd, overlay in focus_corner_overlays
+        targets.Push(hwnd)
+
+    for hwnd in targets
+        DestroyFocusCornerOverlay(hwnd)
+}
+
+
+GetVisibleWindowBounds(
+    hwnd,
+    &x,
+    &y,
+    &width,
+    &height
+)
+{
+    static DWMWA_EXTENDED_FRAME_BOUNDS := 9
+
+    frame := Buffer(16, 0)
+
+    result := DllCall(
+        "dwmapi\DwmGetWindowAttribute",
+        "ptr", hwnd,
+        "uint", DWMWA_EXTENDED_FRAME_BOUNDS,
+        "ptr", frame,
+        "uint", frame.Size,
+        "int"
+    )
+
+    if result != 0
+        return false
+
+    left := NumGet(frame, 0, "int")
+    top := NumGet(frame, 4, "int")
+    right := NumGet(frame, 8, "int")
+    bottom := NumGet(frame, 12, "int")
+
+    x := left
+    y := top
+    width := right - left
+    height := bottom - top
+
+    return width > 0 && height > 0
+}
+
+
+GetWindowsAccentHexColor()
+{
+    colorization_color := 0
+    opaque_blend := 0
+
+    result := DllCall(
+        "dwmapi\DwmGetColorizationColor",
+        "uint*", &colorization_color,
+        "int*", &opaque_blend,
+        "int"
+    )
+
+    if result != 0
+        return "0078D4"
+
+    red := (colorization_color >> 16) & 0xFF
+    green := (colorization_color >> 8) & 0xFF
+    blue := colorization_color & 0xFF
+
+    return Format(
+        "{:02X}{:02X}{:02X}",
+        red,
+        green,
+        blue
+    )
+}
+
+; =============================================================================
+; placement
+; =============================================================================
+
+GetPlacementReadinessReason(hwnd)
+{
+    ; Query title and state in the same order as the placement path.
+    retry_reason := ""
+
+    try {
+        candidate_title := WinGetTitle("ahk_id " hwnd)
+        candidate_min_max := WinGetMinMax("ahk_id " hwnd)
+
+        if candidate_title = ""
+            retry_reason := "empty title"
+        else if candidate_min_max != 0
+            retry_reason := "minimized or maximized"
+    }
+    catch {
+        retry_reason := "window state unavailable"
+    }
+
+    return retry_reason
+}
+
+PlaceNewWindow(
+    hwnd,
+    source_hwnd,
+    queued_monitor := 0,
+    retry_count := 0,
+    settle_complete := false
+)
+{
+    global pending_windows, handled_windows, placement_reservations
+    global placement_ready_retry_ms, placement_ready_retry_limit
+    global placement_settle_delay_ms
+    global window_width_ratio, window_height_ratio
+    global edge_margin, minimum_width, minimum_height
+
+    try {
+        if pending_windows.Has(hwnd)
+            pending_windows.Delete(hwnd)
+
+        DebugLog(
+            "PlaceNewWindow begin."
+            . " | retry=" retry_count
+            . " | settled=" settle_complete
+            . " | queued-monitor=" queued_monitor
+            . " | target=" DebugDescribeWindow(hwnd)
+            . " | source=" DebugDescribeWindow(source_hwnd)
+        )
+
+        if !WinExist("ahk_id " hwnd) {
+            return
+        }
+
+        retry_reason := GetPlacementReadinessReason(hwnd)
+
+        if retry_reason != ""
+            && retry_count < placement_ready_retry_limit
+        {
+            next_retry := retry_count + 1
+            pending_windows[hwnd] := true
+
+            DebugLog(
+                "Placement readiness retry."
+                . " | reason=" retry_reason
+                . " | retry=" next_retry
+                . "/" placement_ready_retry_limit
+                . " | target=" DebugDescribeWindow(hwnd)
+            )
+
+            SetTimer(
+                PlaceNewWindow.Bind(
+                    hwnd,
+                    source_hwnd,
+                    queued_monitor,
+                    next_retry,
+                    settle_complete
+                ),
+                -placement_ready_retry_ms
+            )
+
+            return
+        }
+
+        if !settle_complete {
+            source_is_shell_or_gone := (
+                !source_hwnd
+                || !WinExist("ahk_id " source_hwnd)
+                || IsShellSurfaceWindow(source_hwnd)
+            )
+
+            if queued_monitor && source_is_shell_or_gone {
+                pending_windows[hwnd] := true
+
+                SetTimer(
+                    PlaceNewWindow.Bind(
+                        hwnd,
+                        source_hwnd,
+                        queued_monitor,
+                        retry_count,
+                        true
+                    ),
+                    -placement_settle_delay_ms
+                )
+
+                return
+            }
+        }
+
+        if !IsCascadeWindow(hwnd) {
+            DebugLog(
+                "Placement rejected by IsCascadeWindow."
+                . " | " DebugDescribeWindow(hwnd)
+            )
+            return
+        }
+
+        target_monitor := GetTargetMonitor(hwnd, source_hwnd, queued_monitor)
+
+        DebugLog(
+            "Placement monitor resolved."
+            . " | monitor=" target_monitor
+            . " | queued-monitor=" queued_monitor
+            . " | target=" DebugDescribeWindow(hwnd)
+            . " | source=" DebugDescribeWindow(source_hwnd)
+        )
+
+        MonitorGetWorkArea(
+            target_monitor,
+            &work_left,
+            &work_top,
+            &work_right,
+            &work_bottom
+        )
+
+        work_width := work_right - work_left
+        work_height := work_bottom - work_top
+
+        window_width := Floor(work_width * window_width_ratio)
+        window_height := Floor(work_height * window_height_ratio)
+
+        window_width := Max(minimum_width, window_width)
+        window_height := Max(minimum_height, window_height)
+
+        window_width := Min(window_width, work_width - edge_margin * 2)
+        window_height := Min(window_height, work_height - edge_margin * 2)
+
+        ; Slot selection and reservation must be atomic. An asynchronous move
+        ; may not reach its target before another window needs a slot.
+        Critical "On"
+
+        try {
+            position := GetNextCascadePosition(
+                target_monitor,
+                work_left,
+                work_top,
+                work_right,
+                work_bottom,
+                window_width,
+                window_height
+            )
+
+            target_x := position[1]
+            target_y := position[2]
+
+            placement_reservations[hwnd] := Map(
+                "monitor", target_monitor,
+                "x", target_x,
+                "y", target_y
+            )
+        }
+        finally {
+            Critical "Off"
+        }
+
+        raw_target := GetRawRectForVisibleTarget(
+            hwnd,
+            target_x,
+            target_y,
+            window_width,
+            window_height
+        )
+
+        raw_target_x := raw_target[1]
+        raw_target_y := raw_target[2]
+        raw_target_width := raw_target[3]
+        raw_target_height := raw_target[4]
+
+        DebugLog(
+            "Placement slot reserved."
+            . " | monitor=" target_monitor
+            . " | visible-rect=(" target_x "," target_y
+            . " " window_width "x" window_height ")"
+            . " | hwnd=" hwnd
+        )
+
+        DebugLog(
+            "Moving cascade window."
+            . " | monitor=" target_monitor
+            . " | visible-rect=(" target_x "," target_y
+            . " " window_width "x" window_height ")"
+            . " | raw-rect=(" raw_target_x "," raw_target_y
+            . " " raw_target_width "x" raw_target_height ")"
+            . " | " DebugDescribeWindow(hwnd)
+        )
+
+        ; Post the placement request instead of blocking on applications whose
+        ; window thread is temporarily busy, such as DST during startup.
+        swp_flags := (
+            0x4000  ; SWP_ASYNCWINDOWPOS
+            | 0x0010  ; SWP_NOACTIVATE
+            | 0x0004  ; SWP_NOZORDER
+        )
+
+        DebugLog(
+            "SetWindowPos begin."
+            . " | flags=" swp_flags
+            . " | target=" DebugDescribeWindow(hwnd)
+        )
+
+        set_window_pos_start_tick := A_TickCount
+
+        set_window_pos_result := DllCall(
+            "SetWindowPos",
+            "ptr", hwnd,
+            "ptr", 0,
+            "int", raw_target_x,
+            "int", raw_target_y,
+            "int", raw_target_width,
+            "int", raw_target_height,
+            "uint", swp_flags,
+            "int"
+        )
+
+        set_window_pos_elapsed_ms :=
+            A_TickCount - set_window_pos_start_tick
+
+        DebugLog(
+            "SetWindowPos returned."
+            . " | result=" set_window_pos_result
+            . " | elapsed-ms=" set_window_pos_elapsed_ms
+            . " | target=" DebugDescribeWindow(hwnd)
+        )
+
+        if !set_window_pos_result {
+            if placement_reservations.Has(hwnd)
+                placement_reservations.Delete(hwnd)
+
+            DebugLog(
+                "SetWindowPos failed."
+                . " | last-error=" A_LastError
+                . " | target=" DebugDescribeWindow(hwnd)
+            )
+            return
+        }
+
+        handled_windows[hwnd] := true
+        RecordCascadeWindow(target_monitor, hwnd)
+
+        DebugLog(
+            "Placement complete."
+            . " | monitor=" target_monitor
+            . " | " DebugDescribeWindow(hwnd)
+        )
+
+        SchedulePlacementStabilization(
+            hwnd,
+            target_x,
+            target_y,
+            window_width,
+            window_height
+        )
+
+    }
+    catch Error as err {
+        error_number := 0
+
+        try
+            error_number := err.Number
+
+        if err.What = "WinMove" && error_number = 5 {
+            ; The window was successfully identified but Windows denied control.
+            ; Treat it as handled so fallback detection does not retry it.
+            handled_windows[hwnd] := true
+            return
+        }
+
+        return
+    }
+}
+
+SchedulePlacementStabilization(
+    hwnd,
+    target_x,
+    target_y,
+    target_width,
+    target_height
+)
+{
+    global placement_stabilize_delays_ms
+
+    for delay_ms in placement_stabilize_delays_ms {
+        SetTimer(
+            StabilizePlacedWindow.Bind(
+                hwnd,
+                target_x,
+                target_y,
+                target_width,
+                target_height,
+                delay_ms
+            ),
+            -delay_ms
+        )
+    }
+}
+
+StabilizePlacedWindow(
+    hwnd,
+    target_x,
+    target_y,
+    target_width,
+    target_height,
+    delay_ms,
+    attempt := 0,
+    passive_stage := 0
+)
+{
+    global handled_windows, placement_reservations
+    global placement_stabilize_tolerance
+    global placement_stabilize_retry_ms
+    global placement_stabilize_retry_limit
+    global placement_stabilize_confirmation_ms
+    global placement_stabilize_backoff_delays_ms
+
+    DebugLog(
+        "Stabilization callback."
+        . " | delay-ms=" delay_ms
+        . " | attempt=" attempt
+        . " | passive-stage=" passive_stage
+        . " | hwnd=" hwnd
+    )
+
+    if !handled_windows.Has(hwnd) {
+        if placement_reservations.Has(hwnd)
+            placement_reservations.Delete(hwnd)
+
+        return
+    }
+
+    if !WinExist("ahk_id " hwnd) {
+        if placement_reservations.Has(hwnd)
+            placement_reservations.Delete(hwnd)
+
+        return
+    }
+
+    try {
+        ; Do not fight an intentional maximize/minimize transition.
+        if WinGetMinMax("ahk_id " hwnd) != 0 {
+            if placement_reservations.Has(hwnd)
+                placement_reservations.Delete(hwnd)
+
+            return
+        }
+
+        if !TryGetVisibleFrameRect(
+            hwnd,
+            &current_x,
+            &current_y,
+            &current_width,
+            &current_height,
+            &current_inset_left,
+            &current_inset_top,
+            &current_inset_right,
+            &current_inset_bottom
+        ) {
+            if placement_reservations.Has(hwnd)
+                placement_reservations.Delete(hwnd)
+
+            return
+        }
+
+        needs_correction := (
+            Abs(current_x - target_x) > placement_stabilize_tolerance
+            || Abs(current_y - target_y) > placement_stabilize_tolerance
+            || Abs(current_width - target_width) > placement_stabilize_tolerance
+            || Abs(current_height - target_height) > placement_stabilize_tolerance
+        )
+
+        DebugLog(
+            "Stabilization check."
+            . " | delay-ms=" delay_ms
+            . " | matched=" (!needs_correction)
+            . " | actual=("
+            . current_x "," current_y " "
+            . current_width "x" current_height
+            . ")"
+            . " | requested=("
+            . target_x "," target_y " "
+            . target_width "x" target_height
+            . ")"
+            . " | hwnd=" hwnd
+        )
+
+        if !needs_correction {
+            if placement_reservations.Has(hwnd)
+                placement_reservations.Delete(hwnd)
+
+            DebugLog(
+                "Placement reservation released."
+                . " | reason=matched"
+                . " | hwnd=" hwnd
+            )
+
+            return
+        }
+
+        if attempt >= placement_stabilize_retry_limit {
+            ; Stop posting additional moves after the correction limit, but
+            ; continue checking so the reserved slot is not reused prematurely.
+            SetTimer(
+                StabilizePlacedWindow.Bind(
+                    hwnd,
+                    target_x,
+                    target_y,
+                    target_width,
+                    target_height,
+                    placement_stabilize_confirmation_ms,
+                    attempt,
+                    passive_stage
+                ),
+                -placement_stabilize_confirmation_ms
+            )
+
+            DebugLog(
+                "Stabilization confirmation-only recheck scheduled."
+                . " | attempts=" attempt
+                . " | delay-ms=" placement_stabilize_confirmation_ms
+                . " | hwnd=" hwnd
+            )
+
+            return
+        }
+
+        ; A mismatch does not immediately mean that Cascade needs to fight the
+        ; application. Give the window progressively more time to finish its
+        ; own startup or asynchronous geometry changes.
+        if passive_stage < placement_stabilize_backoff_delays_ms.Length {
+            next_passive_stage := passive_stage + 1
+
+            passive_delay_ms :=
+                placement_stabilize_backoff_delays_ms[
+                    next_passive_stage
+                ]
+
+            SetTimer(
+                StabilizePlacedWindow.Bind(
+                    hwnd,
+                    target_x,
+                    target_y,
+                    target_width,
+                    target_height,
+                    passive_delay_ms,
+                    attempt,
+                    next_passive_stage
+                ),
+                -passive_delay_ms
+            )
+
+            DebugLog(
+                "Stabilization passive recheck scheduled."
+                . " | stage=" next_passive_stage
+                . "/" placement_stabilize_backoff_delays_ms.Length
+                . " | delay-ms=" passive_delay_ms
+                . " | hwnd=" hwnd
+            )
+
+            return
+        }
+
+        ; The full passive grace period expired and the window is still wrong.
+        ; Post one asynchronous correction, then begin a fresh passive cycle if
+        ; the application overrides that correction too.
+        next_attempt := attempt + 1
+
+        raw_target_x := target_x - current_inset_left
+        raw_target_y := target_y - current_inset_top
+
+        raw_target_width := Max(
+            1,
+            target_width
+            + current_inset_left
+            + current_inset_right
+        )
+
+        raw_target_height := Max(
+            1,
+            target_height
+            + current_inset_top
+            + current_inset_bottom
+        )
+
+        swp_flags := (
+            0x4000  ; SWP_ASYNCWINDOWPOS
+            | 0x0010  ; SWP_NOACTIVATE
+            | 0x0004  ; SWP_NOZORDER
+        )
+
+        DebugLog(
+            "Stabilization SetWindowPos begin."
+            . " | attempt=" next_attempt
+            . " | passive-grace-complete=1"
+            . " | hwnd=" hwnd
+        )
+
+        stabilization_start_tick := A_TickCount
+
+        stabilization_result := DllCall(
+            "SetWindowPos",
+            "ptr", hwnd,
+            "ptr", 0,
+            "int", raw_target_x,
+            "int", raw_target_y,
+            "int", raw_target_width,
+            "int", raw_target_height,
+            "uint", swp_flags,
+            "int"
+        )
+
+        stabilization_elapsed_ms :=
+            A_TickCount - stabilization_start_tick
+
+        DebugLog(
+            "Stabilization SetWindowPos returned."
+            . " | result=" stabilization_result
+            . " | attempt=" next_attempt
+            . " | elapsed-ms=" stabilization_elapsed_ms
+            . " | hwnd=" hwnd
+        )
+
+        if !stabilization_result {
+            if placement_reservations.Has(hwnd)
+                placement_reservations.Delete(hwnd)
+
+            DebugLog(
+                "Placement reservation released."
+                . " | reason=stabilization-failed"
+                . " | last-error=" A_LastError
+                . " | hwnd=" hwnd
+            )
+
+            return
+        }
+
+        SetTimer(
+            StabilizePlacedWindow.Bind(
+                hwnd,
+                target_x,
+                target_y,
+                target_width,
+                target_height,
+                placement_stabilize_retry_ms,
+                next_attempt,
+                0
+            ),
+            -placement_stabilize_retry_ms
+        )
+
+        DebugLog(
+            "Stabilization recheck scheduled."
+            . " | attempt=" next_attempt
+            . " | passive-stage=0"
+            . " | delay-ms=" placement_stabilize_retry_ms
+            . " | hwnd=" hwnd
+        )
+    }
+    catch {
+        return
+    }
+}
+
+CenterCoordinate(work_start, work_size, window_size)
+{
+    return work_start + Floor((work_size - window_size) / 2)
+}
+
+GetNextCascadePosition(
+    monitor_index,
+    work_left,
+    work_top,
+    work_right,
+    work_bottom,
+    window_width,
+    window_height
+)
+{
+    global cascade_slot_tolerance, cascade_reset_cursors
+
+    slots := BuildCascadeSlots(
+        work_left,
+        work_top,
+        work_right,
+        work_bottom,
+        window_width,
+        window_height
+    )
+
+    slot_counts := GetCascadeSlotCounts(
+        monitor_index,
+        slots,
+        cascade_slot_tolerance
+    )
+
+    ; Reset Cascade starts one fresh sequential pass at slot 0 without
+    ; forgetting any existing managed windows.
+    if cascade_reset_cursors.Has(monitor_index) {
+        selected_slot_index := cascade_reset_cursors[monitor_index]
+        slot := slots[selected_slot_index]
+
+        next_slot_index := selected_slot_index + 1
+
+        if next_slot_index > slots.Length
+            cascade_reset_cursors.Delete(monitor_index)
+        else
+            cascade_reset_cursors[monitor_index] := next_slot_index
+
+        return slot
+    }
+
+    selected_slot_index := 1
+    selected_count := slot_counts[1]
+
+    ; Fill the least-used layer first. When several slots have the same count,
+    ; the earlier canonical slot wins, so holes are repaired predictably.
+    Loop slots.Length {
+        slot_index := A_Index
+        count := slot_counts[slot_index]
+
+        if count < selected_count {
+            selected_slot_index := slot_index
+            selected_count := count
+        }
+    }
+
+    return slots[selected_slot_index]
+}
+
+
+FindNearestCascadeSlot(
+    window_x,
+    window_y,
+    slots,
+    tolerance
+)
+{
+    best_slot_index := 0
+    best_distance := 0
+
+    Loop slots.Length {
+        slot_index := A_Index
+        slot := slots[slot_index]
+
+        delta_x := Abs(window_x - slot[1])
+        delta_y := Abs(window_y - slot[2])
+
+        if delta_x > tolerance || delta_y > tolerance
+            continue
+
+        distance := delta_x + delta_y
+
+        if !best_slot_index
+            || distance < best_distance
+        {
+            best_slot_index := slot_index
+            best_distance := distance
+        }
+    }
+
+    return best_slot_index
+}
+GetCascadeSlotCounts(
+    monitor_index,
+    slots,
+    tolerance
+)
+{
+    global cascade_history, placement_reservations
+
+    counts := []
+
+    Loop slots.Length
+        counts.Push(0)
+
+    if cascade_history.Has(monitor_index) {
+        for hwnd in cascade_history[monitor_index] {
+            if !WinExist("ahk_id " hwnd)
+                continue
+
+            ; A reserved window is counted at its intended slot below instead
+            ; of at stale geometry from before its asynchronous move completes.
+            if placement_reservations.Has(hwnd)
+                continue
+
+            if GetMonitorForWindow(hwnd) != monitor_index
+                continue
+
+            try {
+                if WinGetMinMax("ahk_id " hwnd) = -1
+                    continue
+            }
+            catch {
+                continue
+            }
+
+            if !TryGetVisibleFrameRect(
+                hwnd,
+                &window_x,
+                &window_y,
+                &window_width,
+                &window_height,
+                &window_inset_left,
+                &window_inset_top,
+                &window_inset_right,
+                &window_inset_bottom
+            ) {
+                continue
+            }
+
+            best_slot_index := FindNearestCascadeSlot(
+                window_x,
+                window_y,
+                slots,
+                tolerance
+            )
+
+            if best_slot_index
+                counts[best_slot_index] += 1
+        }
+    }
+
+    ; Reservations also include windows that have selected a slot but have not
+    ; yet been recorded in cascade history.
+    for reserved_hwnd, reservation in placement_reservations {
+        if reservation["monitor"] != monitor_index
+            continue
+
+        if !WinExist("ahk_id " reserved_hwnd)
+            continue
+
+        best_slot_index := FindNearestCascadeSlot(
+            reservation["x"],
+            reservation["y"],
+            slots,
+            tolerance
+        )
+
+        if best_slot_index
+            counts[best_slot_index] += 1
+    }
+
+    return counts
+}
+BuildCascadeSlots(
+    work_left,
+    work_top,
+    work_right,
+    work_bottom,
+    window_width,
+    window_height
+)
+{
+    global cascade_x, cascade_y
+
+    work_width := work_right - work_left
+    work_height := work_bottom - work_top
+
+    center_x := CenterCoordinate(
+        work_left,
+        work_width,
+        window_width
+    )
+
+    center_y := CenterCoordinate(
+        work_top,
+        work_height,
+        window_height
+    )
+
+    slots := [[center_x, center_y]]
+
+    ; First branch: left and upward from center.
+    step := 1
+
+    Loop {
+        x := center_x - cascade_x * step
+        y := center_y - cascade_y * step
+
+        if !CascadePositionFits(
+            x,
+            y,
+            window_width,
+            window_height,
+            work_left,
+            work_top,
+            work_right,
+            work_bottom
+        ) {
+            break
+        }
+
+        slots.Push([x, y])
+        step += 1
+    }
+
+    ; Second branch: right and downward from center.
+    step := 1
+
+    Loop {
+        x := center_x + cascade_x * step
+        y := center_y + cascade_y * step
+
+        if !CascadePositionFits(
+            x,
+            y,
+            window_width,
+            window_height,
+            work_left,
+            work_top,
+            work_right,
+            work_bottom
+        ) {
+            break
+        }
+
+        slots.Push([x, y])
+        step += 1
+    }
+
+    return slots
+}
+
+CascadePositionFits(
+    x,
+    y,
+    window_width,
+    window_height,
+    work_left,
+    work_top,
+    work_right,
+    work_bottom
+)
+{
+    global edge_margin
+
+    return (
+        x >= work_left + edge_margin
+        && y >= work_top + edge_margin
+        && x + window_width <= work_right - edge_margin
+        && y + window_height <= work_bottom - edge_margin
+    )
+}
+
+GetTargetMonitor(hwnd, source_hwnd, queued_monitor := 0)
+{
+    global desktop_monitor_hint, desktop_monitor_hint_tick
+    global desktop_monitor_hint_max_age_ms
+
+    ; Normal case: follow the real application window the user was working in.
+    if source_hwnd
+        && WinExist("ahk_id " source_hwnd)
+        && !IsShellSurfaceWindow(source_hwnd)
+    {
+        monitor_index := GetMonitorForWindow(source_hwnd)
+
+        if monitor_index {
+            ; A real app interaction supersedes any older desktop-click hint.
+            desktop_monitor_hint := 0
+            desktop_monitor_hint_tick := 0
+
+            return monitor_index
+        }
+    }
+
+    ; Preserve the monitor where the launch was detected. This is newer than
+    ; any earlier desktop-click hint and survives delayed application startup.
+    if queued_monitor {
+        desktop_monitor_hint := 0
+        desktop_monitor_hint_tick := 0
+
+        return queued_monitor
+    }
+
+    ; Special case: clicking empty desktop space explicitly selects that monitor
+    ; when no newer launch snapshot is available.
+    if desktop_monitor_hint {
+        hint_age_ms := A_TickCount - desktop_monitor_hint_tick
+
+        if hint_age_ms <= desktop_monitor_hint_max_age_ms {
+            monitor_index := desktop_monitor_hint
+
+            ; Consume the hint so one desktop click affects only the next launch.
+            desktop_monitor_hint := 0
+            desktop_monitor_hint_tick := 0
+
+            return monitor_index
+        }
+
+
+        desktop_monitor_hint := 0
+        desktop_monitor_hint_tick := 0
+    }
+
+    ; Final live-input fallback when no launch snapshot was available.
+    MouseGetPos(&mouse_x, &mouse_y)
+    monitor_index := GetMonitorForPoint(mouse_x, mouse_y)
+
+    if monitor_index {
+        return monitor_index
+    }
+
+    ; Final fallback: wherever the application initially created the window.
+    monitor_index := GetMonitorForWindow(hwnd)
+
+    if monitor_index {
+        return monitor_index
+    }
+
+    monitor_index := MonitorGetPrimary()
+
+    return monitor_index
+}
+
+GetMonitorForWindow(hwnd)
+{
+    try {
+        WinGetPos(
+            &x,
+            &y,
+            &width,
+            &height,
+            "ahk_id " hwnd
+        )
+    }
+    catch {
+        return 0
+    }
+
+    if width <= 0 || height <= 0
+        return 0
+
+    return GetMonitorForPoint(
+        x + Floor(width / 2),
+        y + Floor(height / 2)
+    )
+}
+
+GetMonitorForPoint(x, y)
+{
+    monitor_count := MonitorGetCount()
+
+    Loop monitor_count {
+        MonitorGet(
+            A_Index,
+            &left,
+            &top,
+            &right,
+            &bottom
+        )
+
+        if x >= left && x < right && y >= top && y < bottom
+            return A_Index
+    }
+
+    return 0
+}
+
+RecordCascadeWindow(monitor_index, hwnd)
+{
+    global cascade_history
+
+    if !cascade_history.Has(monitor_index)
+        cascade_history[monitor_index] := []
+
+    cascade_history[monitor_index].Push(hwnd)
+
+    QueueFocusCornerUpdate()
+}
+
+
+; =============================================================================
+; window filtering
+; =============================================================================
+
+IsCascadeWindow(hwnd)
+{
+    if !hwnd {
+        return false
+    }
+
+    if !DllCall("IsWindowVisible", "ptr", hwnd, "int") {
+        return false
+    }
+
+    try {
+        min_max := WinGetMinMax("ahk_id " hwnd)
+        style := WinGetStyle("ahk_id " hwnd)
+        ex_style := WinGetExStyle("ahk_id " hwnd)
+        window_class := WinGetClass("ahk_id " hwnd)
+        title := WinGetTitle("ahk_id " hwnd)
+
+        WinGetPos(
+            &x,
+            &y,
+            &width,
+            &height,
+            "ahk_id " hwnd
+        )
+    }
+    catch {
+        return false
+    }
+
+    if min_max != 0 {
+        return false
+    }
+
+    ; Require a normal captioned, resizable application window.
+    if !(style & 0x00C00000) {
+        return false
+    }
+
+    if !(style & 0x00040000) {
+        return false
+    }
+
+    ; Ignore tool windows and windows that deliberately cannot activate.
+    if ex_style & 0x00000080 {
+        return false
+    }
+
+    if ex_style & 0x08000000 {
+        return false
+    }
+
+    ; Owned top-level windows are normally dialogs or transient popups.
+    if DllCall("GetWindow", "ptr", hwnd, "uint", 4, "ptr") {
+        return false
+    }
+
+    if width < 1 || height < 1 {
+        return false
+    }
+
+    if IsWindowCloaked(hwnd) {
+        return false
+    }
+
+    if IsShellSurfaceWindow(hwnd) {
+        return false
+    }
+
+    ; Empty-title windows are commonly invisible framework/helper windows.
+    if title = "" {
+        return false
+    }
+
+    return true
+}
+
+IsDesktopSurfaceWindow(hwnd)
+{
+    if !hwnd || !WinExist("ahk_id " hwnd)
+        return false
+
+    try window_class := WinGetClass("ahk_id " hwnd)
+    catch
+        return false
+
+    return window_class = "Progman" || window_class = "WorkerW"
+}
+
+IsShellSurfaceWindow(hwnd)
+{
+    if !hwnd || !WinExist("ahk_id " hwnd)
+        return false
+
+    try window_class := WinGetClass("ahk_id " hwnd)
+    catch
+        return false
+
+    return (
+        window_class = "Shell_TrayWnd"
+        || window_class = "Shell_SecondaryTrayWnd"
+        || window_class = "Progman"
+        || window_class = "WorkerW"
+        || window_class = "NotifyIconOverflowWindow"
+        || window_class = "tooltips_class32"
+    )
+}
+
+IsWindowCloaked(hwnd)
+{
+    cloaked := 0
+
+    result := DllCall(
+        "dwmapi\DwmGetWindowAttribute",
+        "ptr", hwnd,
+        "uint", 14, ; DWMWA_CLOAKED
+        "uint*", &cloaked,
+        "uint", 4,
+        "int"
+    )
+
+    return result = 0 && cloaked != 0
+}
+
+
+TryGetVisibleFrameRect(
+    hwnd,
+    &frame_x,
+    &frame_y,
+    &frame_width,
+    &frame_height,
+    &inset_left,
+    &inset_top,
+    &inset_right,
+    &inset_bottom
+)
+{
+    if !hwnd || !DllCall("IsWindow", "ptr", hwnd, "int")
+        return false
+
+    try {
+        WinGetPos(
+            &raw_x,
+            &raw_y,
+            &raw_width,
+            &raw_height,
+            "ahk_id " hwnd
+        )
+    }
+    catch {
+        return false
+    }
+
+    if raw_width <= 0 || raw_height <= 0
+        return false
+
+    ; Fall back to the raw HWND rectangle when DWM frame information is not
+    ; available. This keeps ordinary Win32 behavior as the safe default.
+    frame_x := raw_x
+    frame_y := raw_y
+    frame_width := raw_width
+    frame_height := raw_height
+
+    inset_left := 0
+    inset_top := 0
+    inset_right := 0
+    inset_bottom := 0
+
+    frame_rect := Buffer(16, 0)
+
+    dwm_result := DllCall(
+        "dwmapi\DwmGetWindowAttribute",
+        "ptr", hwnd,
+        "uint", 9, ; DWMWA_EXTENDED_FRAME_BOUNDS
+        "ptr", frame_rect.Ptr,
+        "uint", frame_rect.Size,
+        "int"
+    )
+
+    if dwm_result != 0
+        return true
+
+    frame_left := NumGet(frame_rect, 0, "int")
+    frame_top := NumGet(frame_rect, 4, "int")
+    frame_right := NumGet(frame_rect, 8, "int")
+    frame_bottom := NumGet(frame_rect, 12, "int")
+
+    if frame_right <= frame_left || frame_bottom <= frame_top
+        return true
+
+    frame_x := frame_left
+    frame_y := frame_top
+    frame_width := frame_right - frame_left
+    frame_height := frame_bottom - frame_top
+
+    inset_left := frame_left - raw_x
+    inset_top := frame_top - raw_y
+    inset_right := (raw_x + raw_width) - frame_right
+    inset_bottom := (raw_y + raw_height) - frame_bottom
+
+    return true
+}
+
+
+GetRawRectForVisibleTarget(
+    hwnd,
+    visible_x,
+    visible_y,
+    visible_width,
+    visible_height
+)
+{
+    if !TryGetVisibleFrameRect(
+        hwnd,
+        &current_frame_x,
+        &current_frame_y,
+        &current_frame_width,
+        &current_frame_height,
+        &inset_left,
+        &inset_top,
+        &inset_right,
+        &inset_bottom
+    ) {
+        return [
+            visible_x,
+            visible_y,
+            visible_width,
+            visible_height
+        ]
+    }
+
+    raw_x := visible_x - inset_left
+    raw_y := visible_y - inset_top
+
+    raw_width := Max(
+        1,
+        visible_width + inset_left + inset_right
+    )
+
+    raw_height := Max(
+        1,
+        visible_height + inset_top + inset_bottom
+    )
+
+    return [
+        raw_x,
+        raw_y,
+        raw_width,
+        raw_height
+    ]
+}
+
+
+; =============================================================================
+; debug helpers
+; =============================================================================
+
+InitializeDebugLogging()
+{
+    global debug_enabled
+
+    if !debug_enabled
+        return
+
+    reset_message := DllCall(
+        "RegisterWindowMessage",
+        "str", "WindowDebug.ResetLogs",
+        "uint"
+    )
+
+    if reset_message {
+        OnMessage(
+            reset_message,
+            HandleDebugResetLogsMessage
+        )
+    }
+
+    OnError(LogUnhandledError)
+
+    DebugLogSession("started")
+}
+
+
+HandleDebugResetLogsMessage(*)
+{
+    ResetDebugLog()
+}
+
+
+ResetDebugLog()
+{
+    global debug_enabled, debug_log_path
+
+    if !debug_enabled
+        return
+
+    try {
+        if FileExist(debug_log_path)
+            FileDelete(debug_log_path)
+    }
+    catch Error as err {
+        DebugLog(
+            "Debug log reset failed."
+            . " | message=" err.Message
+        )
+        return
+    }
+
+    DebugLogSession("reset")
+}
+
+
+DebugLogSession(reason)
+{
+    process_id := DllCall(
+        "GetCurrentProcessId",
+        "uint"
+    )
+
+    DebugLog(
+        "Debug session " reason "."
+        . " | pid=" process_id
+        . " | ahk=" A_AhkVersion
+        . ' | script="' A_ScriptFullPath '"'
+    )
+}
+
+
+DebugLog(message)
+{
+    global debug_enabled, debug_log_path
+
+    if !debug_enabled
+        return
+
+    timestamp := FormatTime(
+        ,
+        "yyyy-MM-dd HH:mm:ss"
+    )
+
+    try FileAppend(
+        timestamp
+        . " | tick=" A_TickCount
+        . " | " message
+        . "`n",
+        debug_log_path,
+        "UTF-8-RAW"
+    )
+}
+
+DebugError(context, err)
+{
+    DebugLog(
+        "ERROR in " context
+        . " | message=" err.Message
+        . " | what=" err.What
+        . " | file=" err.File
+        . " | line=" err.Line
+    )
+
+    if err.Stack != ""
+        DebugLog(
+            "STACK | "
+            . StrReplace(
+                StrReplace(err.Stack, "`r", ""),
+                "`n",
+                " | "
+            )
+        )
+}
+
+
+LogUnhandledError(err, mode)
+{
+    DebugError(
+        "Unhandled error, mode=" mode,
+        err
+    )
+
+    return 0
+}
+
+
+DebugDescribeWindow(hwnd)
+{
+    if !hwnd
+        return "hwnd=0"
+
+    if !DllCall("IsWindow", "ptr", hwnd, "int")
+        return "hwnd=" hwnd " [invalid]"
+
+    title := ""
+    class_name := ""
+    process_name := ""
+    min_max := "?"
+    x := "?"
+    y := "?"
+    width := "?"
+    height := "?"
+
+    try title := WinGetTitle("ahk_id " hwnd)
+    try class_name := WinGetClass("ahk_id " hwnd)
+    try process_name := WinGetProcessName("ahk_id " hwnd)
+    try min_max := WinGetMinMax("ahk_id " hwnd)
+
+    try {
+        WinGetPos(
+            &window_x,
+            &window_y,
+            &window_width,
+            &window_height,
+            "ahk_id " hwnd
+        )
+
+        x := window_x
+        y := window_y
+        width := window_width
+        height := window_height
+    }
+
+    title := StrReplace(
+        StrReplace(title, "`r", " "),
+        "`n",
+        " "
+    )
+
+    visible := DllCall(
+        "IsWindowVisible",
+        "ptr", hwnd,
+        "int"
+    )
+
+    iconic := DllCall(
+        "IsIconic",
+        "ptr", hwnd,
+        "int"
+    )
+
+    cloaked := false
+    try cloaked := IsWindowCloaked(hwnd)
+
+    return (
+        "hwnd=" hwnd
+        . ' exe="' process_name '"'
+        . ' class="' class_name '"'
+        . ' title="' title '"'
+        . " minmax=" min_max
+        . " visible=" visible
+        . " iconic=" iconic
+        . " cloaked=" cloaked
+        . " rect=(" x "," y
+        . " " width "x" height ")"
+    )
+}
+
+; =============================================================================
+; compatibility checks
+; =============================================================================
+
+CheckCompatibilitySettings(*)
+{
+    try {
+        warnings := []
+
+        fancyzones_settings_path :=
+            EnvGet("LOCALAPPDATA") "\Microsoft\PowerToys\FancyZones\settings.json"
+
+
+        if FileExist(fancyzones_settings_path) {
+            fancyzones_settings := FileRead(
+                fancyzones_settings_path,
+                "UTF-8"
+            )
+
+            if RegExMatch(
+                fancyzones_settings,
+                '"fancyzones_appLastZone_moveWindows"\s*:\s*\{\s*"value"\s*:\s*true'
+            ) {
+                warnings.Push(
+                    'FancyZones: "Move newly created windows to the last known zone" '
+                    . "is enabled."
+                )
+            }
+        }
+
+        if warnings.Length = 0 {
+            return
+        }
+
+        message :=
+            "This setting may compete with Window Cascade:`n`n"
+
+        for warning in warnings
+            message .= "• " warning "`n`n"
+
+        message .= "Window Cascade will not change PowerToys settings automatically."
+
+        MsgBox(message, "Window Cascade", "Icon!")
+    }
+    catch {
+        return
+    }
+}
+
+
+; =============================================================================
+; help
+; =============================================================================
+
+ToggleWindowCascadeHelp(*)
+{
+    global window_cascade_help_gui
+
+    if window_cascade_help_gui {
+        CloseWindowCascadeHelp()
+        return
+    }
+
+    window_cascade_help_gui := Gui("+AlwaysOnTop", "Window Cascade")
+    window_cascade_help_gui.SetFont("s10", "Cascadia Mono")
+
+    if IsCapsLockLayerRunning() {
+        help_text :=
+        (
+        "Caps + H             Toggle this help`n"
+        "`n"
+        "CONTROLS`n"
+        "Caps + PgUp          Previous cascade window`n"
+        "Caps + PgDn          Next cascade window`n"
+        "Caps + Backspace     Adopt active window into cascade`n"
+        "Caps + Tab           Rotate stacked cascade windows`n"
+        "Caps + Home          Bring cascade to front`n"
+        "Caps + M             Minimize / restore cascade windows`n"
+        "Caps + F4            Close all managed cascade windows"
+        )
+    } else {
+        help_text :=
+        (
+        "CONTROLS`n"
+        "Left Alt + PgUp      Previous cascade window`n"
+        "Left Alt + PgDn      Next cascade window`n"
+        "Left Alt + Backspace Adopt active window into cascade`n"
+        "Left Alt + End       Rotate stacked cascade windows`n"
+        "Left Alt + Home      Bring cascade to front`n"
+        "Left Alt + M         Minimize / restore cascade windows"
+        )
+    }
+
+    help_text .=
+    (
+    "`n"
+    "`n"
+    "FOCUS TABS`n"
+    "Click a window's left-edge focus tab to focus that cascade window.`n"
+    "Use Show focus tabs in the tray to show or hide them.`n"
+    "`n"
+    "TRAY`n"
+    "Pause cascading      Pause automatic placement`n"
+    "Reset cascade        Restart the placement sequence`n"
+    "Show focus tabs      Show / hide the faint focus tabs`n"
+    "Check compatibility  Check conflicting settings"
+    )
+
+    window_cascade_help_gui.AddText("w610", help_text)
+
+    window_cascade_help_gui.OnEvent(
+        "Close",
+        CloseWindowCascadeHelp
+    )
+
+    window_cascade_help_gui.OnEvent(
+        "Escape",
+        CloseWindowCascadeHelp
+    )
+
+    window_cascade_help_gui.Show()
+}
+
+
+CloseWindowCascadeHelp(*)
+{
+    global window_cascade_help_gui
+
+    if !window_cascade_help_gui
+        return
+
+    try window_cascade_help_gui.Destroy()
+    window_cascade_help_gui := 0
+}
+
+; =============================================================================
+; tray menu
+; =============================================================================
+
+BuildTrayMenu()
+{
+    A_TrayMenu.Delete()
+
+    A_TrayMenu.Add("How to use", ToggleWindowCascadeHelp)
+    A_TrayMenu.Add()
+    A_TrayMenu.Add("Pause cascading", ToggleCascading)
+    A_TrayMenu.Add("Reset cascade", ResetCascade)
+    A_TrayMenu.Add("Show focus tabs", ToggleFocusCornerVisibility)
+    A_TrayMenu.Add("Check compatibility", CheckCompatibilitySettings)
+    A_TrayMenu.Add()
+    A_TrayMenu.Add("Run at startup", ToggleStartup)
+    A_TrayMenu.Add()
+    A_TrayMenu.AddStandard()
+
+    UpdateTrayMenu()
+}
+
+ToggleCascading(*)
+{
+    global placement_enabled
+
+    placement_enabled := !placement_enabled
+    UpdateTrayMenu()
+}
+
+ResetCascade(*)
+{
+    global cascade_reset_cursors
+
+    cascade_reset_cursors := Map()
+
+    Loop MonitorGetCount()
+        cascade_reset_cursors[A_Index] := 1
+}
+
+ToggleStartup(*)
+{
+    global startup_shortcut_path
+
+    try {
+        if FileExist(startup_shortcut_path) {
+            FileDelete(startup_shortcut_path)
+        } else if A_IsCompiled {
+            FileCreateShortcut(
+                A_ScriptFullPath,
+                startup_shortcut_path,
+                A_ScriptDir
+            )
+        } else {
+            FileCreateShortcut(
+                A_AhkPath,
+                startup_shortcut_path,
+                A_ScriptDir,
+                '"' A_ScriptFullPath '"'
+            )
+        }
+
+        UpdateTrayMenu()
+    }
+    catch Error as err {
+        MsgBox(
+            "Could not update the startup shortcut.`n`n"
+            . err.Message,
+            "Window Cascade",
+            "Iconx"
+        )
+    }
+}
+
+UpdateTrayMenu()
+{
+    global placement_enabled, startup_shortcut_path
+    global focus_corner_visible
+
+    if placement_enabled
+        A_TrayMenu.Uncheck("Pause cascading")
+    else
+        A_TrayMenu.Check("Pause cascading")
+
+    if focus_corner_visible
+        A_TrayMenu.Check("Show focus tabs")
+    else
+        A_TrayMenu.Uncheck("Show focus tabs")
+
+    if FileExist(startup_shortcut_path)
+        A_TrayMenu.Check("Run at startup")
+    else
+        A_TrayMenu.Uncheck("Run at startup")
+}
+
+
+; =============================================================================
+; script cleanup
+; =============================================================================
+
+HandleScriptExit(exit_reason, exit_code)
+{
+    StopWindowHooks()
+}
+
+
+; =============================================================================
+; managed window commands
+; =============================================================================
+
+CloseCascadeWindows()
+{
+    windows := GetCascadeWindowsForClose()
+
+    if windows.Length = 0
+        return
+
+    z_ranks := GetCascadeWindowZRanks()
+
+    ordered_windows := SortCascadeWindowsByZOrder(
+        windows,
+        z_ranks
+    )
+
+    ; Include windows that are still being placed, not only windows that have
+    ; already reached cascade history.
+    for hwnd in ordered_windows {
+        if !WinExist("ahk_id " hwnd)
+            continue
+
+        try WinClose("ahk_id " hwnd)
+    }
+}
+
+
+GetCascadeWindowsForClose()
+{
+    global pending_windows, placement_reservations
+
+    windows := GetAllLiveCascadeWindows()
+    seen := Map()
+
+    for hwnd in windows
+        seen[hwnd] := true
+
+    ; A rapidly opened window may still be waiting for placement and therefore
+    ; not exist in cascade_history yet.
+    for hwnd in pending_windows {
+        if seen.Has(hwnd)
+            continue
+
+        if !WinExist("ahk_id " hwnd)
+            continue
+
+        seen[hwnd] := true
+        windows.Push(hwnd)
+    }
+
+    ; Reservations cover windows whose slot has been selected but whose
+    ; asynchronous placement/stabilization has not finished yet.
+    for hwnd in placement_reservations {
+        if seen.Has(hwnd)
+            continue
+
+        if !WinExist("ahk_id " hwnd)
+            continue
+
+        seen[hwnd] := true
+        windows.Push(hwnd)
+    }
+
+    return windows
+}
+
+ToggleCascadeMinimize()
+{
+    static cascade_is_minimized := false
+    static minimized_windows := []
+
+    if cascade_is_minimized {
+        RestoreCascadeWindows(minimized_windows)
+
+        minimized_windows := []
+        cascade_is_minimized := false
+        return
+    }
+
+    minimized_windows := MinimizeCascadeWindows()
+
+    if minimized_windows.Length
+        cascade_is_minimized := true
+}
+
+MinimizeCascadeWindows()
+{
+    windows := GetAllLiveCascadeWindows()
+
+    if windows.Length = 0 {
+        return []
+    }
+
+    z_ranks := GetCascadeWindowZRanks()
+
+    ordered_windows := SortCascadeWindowsByZOrder(
+        windows,
+        z_ranks
+    )
+
+    windows_to_minimize := []
+
+    ; Only remember windows that were visible before this toggle.
+    ; Windows already minimized by the user stay minimized on restore.
+    for hwnd in ordered_windows {
+        if !WinExist("ahk_id " hwnd)
+            continue
+
+        try {
+            if WinGetMinMax("ahk_id " hwnd) = -1
+                continue
+        }
+        catch {
+            continue
+        }
+
+        windows_to_minimize.Push(hwnd)
+    }
+
+    if windows_to_minimize.Length = 0
+        return []
+
+    for hwnd in windows_to_minimize {
+        try WinMinimize("ahk_id " hwnd)
+    }
+
+    return windows_to_minimize
+}
+
+RestoreCascadeWindows(windows)
+{
+    if windows.Length = 0
+        return
+
+    top_restored_hwnd := 0
+
+    ; The saved list is top-to-bottom.
+    ; Restore bottom-to-top first.
+    Loop windows.Length {
+        index := windows.Length - A_Index + 1
+        hwnd := windows[index]
+
+        if !WinExist("ahk_id " hwnd)
+            continue
+
+        try {
+            WinRestore("ahk_id " hwnd)
+        }
+        catch {
+            continue
+        }
+    }
+
+    ; Rebuild the saved Z-order explicitly.
+    ; Processing bottom-to-top leaves windows[1] at the front.
+    flags :=
+        0x0001  ; SWP_NOSIZE
+        | 0x0002  ; SWP_NOMOVE
+        | 0x0010  ; SWP_NOACTIVATE
+        | 0x0200  ; SWP_NOOWNERZORDER
+
+    Loop windows.Length {
+        index := windows.Length - A_Index + 1
+        hwnd := windows[index]
+
+        if !WinExist("ahk_id " hwnd)
+            continue
+
+        try {
+            DllCall(
+                "SetWindowPos",
+                "ptr", hwnd,
+                "ptr", 0,  ; HWND_TOP
+                "int", 0,
+                "int", 0,
+                "int", 0,
+                "int", 0,
+                "uint", flags,
+                "int"
+            )
+        }
+        catch {
+            continue
+        }
+    }
+
+    ; Bring the cascade itself back to the foreground.
+    for hwnd in windows {
+        if !WinExist("ahk_id " hwnd)
+            continue
+
+        top_restored_hwnd := hwnd
+        break
+    }
+
+    if top_restored_hwnd {
+        try WinActivate("ahk_id " top_restored_hwnd)
+    }
+}

@@ -1,0 +1,11 @@
+# keep source files consistent across machines
+* text=auto
+
+*.ahk text eol=lf
+*.md text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+
+# binary files
+*.png binary
+*.ico binary
