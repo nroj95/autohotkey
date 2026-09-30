@@ -15,6 +15,9 @@ caps_layer_presence_mutex := DllCall(
 last_left_shift_release_ms := 0
 double_tap_window_ms := 180
 
+caps_layer_armed := false
+caps_layer_arm_window_ms := 3000
+
 startup_shortcut_path := A_Startup "\CapsLock Layer.lnk"
 
 window_cascade_focus_up_message := DllCall(
@@ -85,6 +88,8 @@ SetCapsLockState "Off"
 ; mission
 ; =============================================================================
 ; - use caps lock as a left-hand modifier layer producing f13-f24.
+; - allow tapping caps lock to arm one discrete keypress for a few seconds.
+; - hold virtual keys only while both caps lock and the mapped key are held.
 ; - keep caps lock itself from toggling capitalization.
 ; - toggle actual caps lock with a very fast double-tap of left shift.
 ; - expose f13-f24 as universal extra keys for apps and app-specific macros.
@@ -112,8 +117,8 @@ UpdateStartupMenu()
 ; caps lock modifier
 ; =============================================================================
 
-; Caps Lock itself is reserved as a modifier.
-CapsLock::return
+; Hold Caps Lock for normal chords, or tap it to arm one mapped key.
+CapsLock::ArmCapsLayer()
 
 
 ; Top row.
@@ -164,6 +169,112 @@ CapsLock & g::PostRegisteredCommand(window_hotkeys_cycle_steam_message)
 
 ; Diagnostics.
 CapsLock & F7::PostRegisteredCommand(debug_reset_logs_message)
+
+
+; =============================================================================
+; tapped caps lock layer
+; =============================================================================
+
+#HotIf caps_layer_armed
+
+; Top row.
+q::UseArmedVirtualKey("F13", "q")
+w::UseArmedVirtualKey("F14", "w")
+e::UseArmedVirtualKey("F15", "e")
+r::UseArmedVirtualKey("F16", "r")
+
+; Home row.
+a::UseArmedVirtualKey("F17", "a")
+s::UseArmedVirtualKey("F18", "s")
+d::UseArmedVirtualKey("F19", "d")
+f::UseArmedVirtualKey("F20", "f")
+
+; Bottom row.
+z::UseArmedVirtualKey("F21", "z")
+x::UseArmedVirtualKey("F22", "x")
+c::UseArmedVirtualKey("F23", "c")
+v::UseArmedVirtualKey("F24", "v")
+
+; Number row.
+0::UseArmedVirtualKey("Numpad0", "0")
+1::UseArmedVirtualKey("Numpad1", "1")
+2::UseArmedVirtualKey("Numpad2", "2")
+3::UseArmedVirtualKey("Numpad3", "3")
+4::UseArmedVirtualKey("Numpad4", "4")
+5::UseArmedVirtualKey("Numpad5", "5")
+6::UseArmedVirtualKey("Numpad6", "6")
+7::UseArmedVirtualKey("Numpad7", "7")
+8::UseArmedVirtualKey("Numpad8", "8")
+9::UseArmedVirtualKey("Numpad9", "9")
+
+; Optional Window Cascade navigation.
+PgUp::UseArmedRegisteredCommand(window_cascade_focus_up_message, "PgUp")
+PgDn::UseArmedRegisteredCommand(window_cascade_focus_down_message, "PgDn")
+Backspace::UseArmedRegisteredCommand(window_cascade_adopt_active_message, "Backspace")
+Tab::UseArmedRegisteredCommand(window_cascade_cycle_stacks_message, "Tab")
+Home::UseArmedRegisteredCommand(window_cascade_bring_forward_message, "Home")
+m::UseArmedRegisteredCommand(window_cascade_toggle_minimize_message, "m")
+F4::UseArmedRegisteredCommand(window_cascade_close_all_message, "F4")
+h::UseArmedRegisteredCommand(window_cascade_show_help_message, "h")
+
+; Window Hotkeys.
+g::UseArmedRegisteredCommand(window_hotkeys_cycle_steam_message, "g")
+
+; Diagnostics.
+F7::UseArmedRegisteredCommand(debug_reset_logs_message, "F7")
+
+#HotIf
+
+
+ArmCapsLayer()
+{
+    global caps_layer_armed, caps_layer_arm_window_ms
+
+    caps_layer_armed := true
+
+    ; Refresh the one-shot timeout on every tap.
+    SetTimer DisarmCapsLayer, 0
+    SetTimer DisarmCapsLayer, -caps_layer_arm_window_ms
+}
+
+DisarmCapsLayer()
+{
+    global caps_layer_armed
+
+    caps_layer_armed := false
+    SetTimer DisarmCapsLayer, 0
+}
+
+UseArmedVirtualKey(virtual_key, physical_key)
+{
+    ; A tapped layer produces one discrete virtual keypress, never a hold.
+    SetTimer DisarmCapsLayer, 0
+
+    previous_send_level := SendLevel(1)
+
+    try {
+        SendEvent "{" virtual_key "}"
+        KeyWait physical_key
+    }
+    finally {
+        SendLevel previous_send_level
+        DisarmCapsLayer()
+    }
+}
+
+UseArmedRegisteredCommand(message_id, physical_key)
+{
+    ; Keep swallowing the chosen physical key until it is released.
+    SetTimer DisarmCapsLayer, 0
+
+    try {
+        PostRegisteredCommand(message_id)
+        KeyWait physical_key
+    }
+    finally {
+        DisarmCapsLayer()
+    }
+}
 
 
 ; =============================================================================
@@ -218,6 +329,9 @@ ShowCapsLockLayerHelp(*)
 {
     help_text := (
         "CAPS LOCK LAYER`n"
+        "`n"
+        "Hold Caps + key         Use the layer normally`n"
+        "Tap Caps, then key      One-shot layer for 3 seconds`n"
         "`n"
         "EXTRA KEYS`n"
         "Caps + Q / W / E / R    F13 - F16`n"
@@ -305,7 +419,13 @@ HoldVirtualKey(virtual_key, physical_key)
 
     try {
         SendEvent "{" virtual_key " down}"
-        KeyWait physical_key
+
+        ; The virtual key is held only while both physical keys remain down.
+        while GetKeyState("CapsLock", "P")
+            && GetKeyState(physical_key, "P")
+        {
+            Sleep 10
+        }
     }
     finally {
         SendEvent "{" virtual_key " up}"

@@ -8,6 +8,9 @@ try TraySetIcon(A_ScriptDir "\icons\pause-command-mode.ico")
 startup_shortcut_path := A_Startup "\Pause Command Mode.lnk"
 pause_help_gui := 0
 
+pause_layer_armed := false
+pause_layer_arm_window_ms := 3000
+
 A_TrayMenu.Delete()
 A_TrayMenu.Add("How to use", ShowHelp)
 A_TrayMenu.Add()
@@ -24,13 +27,14 @@ OnMessage(0x0218, HandlePowerBroadcast)
 ; mission:
 ; - use Pause as a held modifier for personal text, speaker wake,
 ;   system sleep, and small utilities.
-; - keep commands active only while Pause is held.
+; - allow tapping Pause to arm one discrete command for a few seconds.
+; - keep held Pause chords available as the normal modifier behavior.
 ; =============================================================================
 
 speaker_wake_file := "C:\Windows\Media\Windows Balloon.wav"
 
-; Pause behaves like a modifier layer, matching the CapsLock layer.
-Pause::return
+; Hold Pause for normal chords, or tap it to arm one command.
+Pause::ArmPauseLayer()
 
 Pause & h::
 {
@@ -75,6 +79,130 @@ Pause & w::
 }
 
 Pause & Esc::SleepComputer()
+
+
+; =============================================================================
+; tapped Pause layer
+; =============================================================================
+
+#HotIf pause_layer_armed
+
+h::
+{
+    SetTimer DisarmPauseLayer, 0
+
+    try {
+        ShowHelp()
+        KeyWait "h"
+    }
+    finally {
+        DisarmPauseLayer()
+    }
+}
+
+s::
+{
+    SetTimer DisarmPauseLayer, 0
+
+    try {
+        Send "ß"
+        KeyWait "s"
+    }
+    finally {
+        DisarmPauseLayer()
+    }
+}
+
+-::
+{
+    SetTimer DisarmPauseLayer, 0
+
+    try {
+        Send "–"
+        KeyWait "-"
+    }
+    finally {
+        DisarmPauseLayer()
+    }
+}
+
+'::
+{
+    SetTimer DisarmPauseLayer, 0
+
+    try {
+        Send "’"
+        KeyWait "'"
+    }
+    finally {
+        DisarmPauseLayer()
+    }
+}
+
+n::
+{
+    SetTimer DisarmPauseLayer, 0
+
+    try {
+        SendText "&nbsp;"
+        KeyWait "n"
+    }
+    finally {
+        DisarmPauseLayer()
+    }
+}
+
+t::
+{
+    SetTimer DisarmPauseLayer, 0
+
+    try {
+        SendText FormatTime(, "yyyyMMdd-HHmmss")
+        KeyWait "t"
+    }
+    finally {
+        DisarmPauseLayer()
+    }
+}
+
+w::
+{
+    SetTimer DisarmPauseLayer, 0
+
+    try {
+        WakeSpeaker()
+        KeyWait "w"
+    }
+    finally {
+        DisarmPauseLayer()
+    }
+}
+
+Esc::
+{
+    DisarmPauseLayer()
+    SleepComputer()
+}
+
+#HotIf
+
+
+ArmPauseLayer() {
+    global pause_layer_armed, pause_layer_arm_window_ms
+
+    pause_layer_armed := true
+
+    ; Refresh the one-shot timeout on every tap.
+    SetTimer DisarmPauseLayer, 0
+    SetTimer DisarmPauseLayer, -pause_layer_arm_window_ms
+}
+
+DisarmPauseLayer() {
+    global pause_layer_armed
+
+    pause_layer_armed := false
+    SetTimer DisarmPauseLayer, 0
+}
 
 SleepComputer() {
     Tip("sleep")
@@ -137,6 +265,9 @@ ShowHelp(*) {
 
     help_text :=
     (
+    "Hold Pause + key    Run a command normally`n"
+    "Tap Pause, then key   One-shot command for 3 seconds`n"
+    "`n"
     "Pause + H          Toggle this help`n"
     "`n"
     "TEXT`n"
