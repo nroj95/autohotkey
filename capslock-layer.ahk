@@ -232,6 +232,9 @@ ArmCapsLayer()
 
     caps_layer_armed := true
 
+    ShowCapsLayerTip()
+    SetTimer ShowCapsLayerTip, 50
+
     ; Refresh the one-shot timeout on every tap.
     SetTimer DisarmCapsLayer, 0
     SetTimer DisarmCapsLayer, -caps_layer_arm_window_ms
@@ -243,11 +246,13 @@ DisarmCapsLayer()
 
     caps_layer_armed := false
     SetTimer DisarmCapsLayer, 0
+    HideCapsLayerTip()
 }
 
 UseArmedVirtualKey(virtual_key, physical_key)
 {
-    ; A tapped layer produces one discrete virtual keypress, never a hold.
+    ; The one-shot has been consumed, so hide its indicator immediately.
+    HideCapsLayerTip()
     SetTimer DisarmCapsLayer, 0
 
     previous_send_level := SendLevel(1)
@@ -264,7 +269,8 @@ UseArmedVirtualKey(virtual_key, physical_key)
 
 UseArmedRegisteredCommand(message_id, physical_key)
 {
-    ; Keep swallowing the chosen physical key until it is released.
+    ; The one-shot has been consumed, so hide its indicator immediately.
+    HideCapsLayerTip()
     SetTimer DisarmCapsLayer, 0
 
     try {
@@ -274,6 +280,27 @@ UseArmedRegisteredCommand(message_id, physical_key)
     finally {
         DisarmCapsLayer()
     }
+}
+
+ShowCapsLayerTip()
+{
+    global caps_layer_armed
+
+    if !caps_layer_armed {
+        HideCapsLayerTip()
+        return
+    }
+
+    CoordMode "Mouse", "Screen"
+    CoordMode "ToolTip", "Screen"
+    MouseGetPos &mouse_x, &mouse_y
+    ToolTip "Caps", mouse_x + 14, mouse_y + 18, 2
+}
+
+HideCapsLayerTip()
+{
+    SetTimer ShowCapsLayerTip, 0
+    ToolTip , , , 2
 }
 
 

@@ -89,6 +89,7 @@ Pause & Esc::SleepComputer()
 
 h::
 {
+    HidePauseLayerTip()
     SetTimer DisarmPauseLayer, 0
 
     try {
@@ -102,6 +103,7 @@ h::
 
 s::
 {
+    HidePauseLayerTip()
     SetTimer DisarmPauseLayer, 0
 
     try {
@@ -115,6 +117,7 @@ s::
 
 -::
 {
+    HidePauseLayerTip()
     SetTimer DisarmPauseLayer, 0
 
     try {
@@ -128,6 +131,7 @@ s::
 
 '::
 {
+    HidePauseLayerTip()
     SetTimer DisarmPauseLayer, 0
 
     try {
@@ -141,6 +145,7 @@ s::
 
 n::
 {
+    HidePauseLayerTip()
     SetTimer DisarmPauseLayer, 0
 
     try {
@@ -154,6 +159,7 @@ n::
 
 t::
 {
+    HidePauseLayerTip()
     SetTimer DisarmPauseLayer, 0
 
     try {
@@ -167,6 +173,7 @@ t::
 
 w::
 {
+    HidePauseLayerTip()
     SetTimer DisarmPauseLayer, 0
 
     try {
@@ -192,6 +199,9 @@ ArmPauseLayer() {
 
     pause_layer_armed := true
 
+    ShowPauseLayerTip()
+    SetTimer ShowPauseLayerTip, 50
+
     ; Refresh the one-shot timeout on every tap.
     SetTimer DisarmPauseLayer, 0
     SetTimer DisarmPauseLayer, -pause_layer_arm_window_ms
@@ -202,6 +212,26 @@ DisarmPauseLayer() {
 
     pause_layer_armed := false
     SetTimer DisarmPauseLayer, 0
+    HidePauseLayerTip()
+}
+
+ShowPauseLayerTip() {
+    global pause_layer_armed
+
+    if !pause_layer_armed {
+        HidePauseLayerTip()
+        return
+    }
+
+    CoordMode "Mouse", "Screen"
+    CoordMode "ToolTip", "Screen"
+    MouseGetPos &mouse_x, &mouse_y
+    ToolTip "Pause", mouse_x + 14, mouse_y + 18, 2
+}
+
+HidePauseLayerTip() {
+    SetTimer ShowPauseLayerTip, 0
+    ToolTip , , , 2
 }
 
 SleepComputer() {
@@ -265,10 +295,12 @@ ShowHelp(*) {
 
     help_text :=
     (
-    "Hold Pause + key    Run a command normally`n"
-    "Tap Pause, then key   One-shot command for 3 seconds`n"
-    "`n"
     "Pause + H          Toggle this help`n"
+    "`n"
+    "MODES`n"
+    "Hold Pause + key   Run a command normally`n"
+    "Tap Pause, then key`n"
+    "                   One-shot command for 3 seconds`n"
     "`n"
     "TEXT`n"
     "Pause + S          Insert ß`n"
