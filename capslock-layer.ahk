@@ -139,6 +139,13 @@ CapsLock & x::HoldVirtualKey("F22", "x")
 CapsLock & c::HoldVirtualKey("F23", "c")
 CapsLock & v::HoldVirtualKey("F24", "v")
 
+; Terminal-only personal macro trigger.
+; Shift+F19 keeps this separate from the normal Caps + D -> F19 mapping.
+#HotIf WinActive("ahk_exe WindowsTerminal.exe")
+CapsLock & k::HoldModifiedVirtualKey("F19", "Shift", "k")
+#HotIf
+CapsLock & k::return
+
 ; Number row.
 CapsLock & 0::HoldVirtualKey("Numpad0", "0")
 CapsLock & 1::HoldVirtualKey("Numpad1", "1")
@@ -194,6 +201,13 @@ z::UseArmedVirtualKey("F21", "z")
 x::UseArmedVirtualKey("F22", "x")
 c::UseArmedVirtualKey("F23", "c")
 v::UseArmedVirtualKey("F24", "v")
+
+; Terminal-only personal macro trigger.
+#HotIf caps_layer_armed && WinActive("ahk_exe WindowsTerminal.exe")
+k::UseArmedModifiedVirtualKey("F19", "Shift", "k")
+
+#HotIf caps_layer_armed
+k::UseArmedNoOpKey("k")
 
 ; Number row.
 0::UseArmedVirtualKey("Numpad0", "0")
@@ -263,6 +277,37 @@ UseArmedVirtualKey(virtual_key, physical_key)
     }
     finally {
         SendLevel previous_send_level
+        DisarmCapsLayer()
+    }
+}
+
+UseArmedModifiedVirtualKey(virtual_key, modifier_key, physical_key)
+{
+    ; The one-shot has been consumed, so hide its indicator immediately.
+    HideCapsLayerTip()
+    SetTimer DisarmCapsLayer, 0
+
+    previous_send_level := SendLevel(1)
+
+    try {
+        SendEvent "{" modifier_key " down}{" virtual_key "}{" modifier_key " up}"
+        KeyWait physical_key
+    }
+    finally {
+        SendLevel previous_send_level
+        DisarmCapsLayer()
+    }
+}
+
+UseArmedNoOpKey(physical_key)
+{
+    HideCapsLayerTip()
+    SetTimer DisarmCapsLayer, 0
+
+    try {
+        KeyWait physical_key
+    }
+    finally {
         DisarmCapsLayer()
     }
 }
@@ -508,6 +553,26 @@ HoldVirtualKey(virtual_key, physical_key)
     }
     finally {
         SendEvent "{" virtual_key " up}"
+        SendLevel previous_send_level
+    }
+}
+
+HoldModifiedVirtualKey(virtual_key, modifier_key, physical_key)
+{
+    ; Keep private macro triggers distinct from the public F13-F24 layer.
+    previous_send_level := SendLevel(1)
+
+    try {
+        SendEvent "{" modifier_key " down}{" virtual_key " down}"
+
+        while GetKeyState("CapsLock", "P")
+            && GetKeyState(physical_key, "P")
+        {
+            Sleep 10
+        }
+    }
+    finally {
+        SendEvent "{" virtual_key " up}{" modifier_key " up}"
         SendLevel previous_send_level
     }
 }
