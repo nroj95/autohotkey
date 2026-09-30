@@ -293,6 +293,23 @@ IsWindowToggleCandidate(hwnd)
     return true
 }
 
+IsCapsLockLayerRunning()
+{
+    mutex_handle := DllCall(
+        "OpenMutex",
+        "uint", 0x00100000, ; SYNCHRONIZE
+        "int", false,
+        "str", "Local\WindowCascade.CapsLockLayer",
+        "ptr"
+    )
+
+    if !mutex_handle
+        return false
+
+    DllCall("CloseHandle", "ptr", mutex_handle)
+    return true
+}
+
 ; =============================================================================
 ; help
 ; =============================================================================
@@ -335,10 +352,23 @@ ToggleWindowHotkeysHelp(*)
     "Win + Enter       Swap with next window clockwise`n"
     "`n"
     "WINDOW FOCUS`n"
-    "Alt + Win + Arrow     Focus nearest window`n"
-    "`n"
-    "FANCYZONES`n"
-    "Ctrl + Win + Arrow    Move between FancyZones"
+    "Alt + Win + Arrow     Focus nearest window"
+    )
+
+    if IsCapsLockLayerRunning() {
+        help_text .= (
+            "`n"
+            "`n"
+            "STEAM`n"
+            "Caps + G              Cycle running Steam games"
+        )
+    }
+
+    help_text .= (
+        "`n"
+        "`n"
+        "FANCYZONES`n"
+        "Ctrl + Win + Arrow    Move between FancyZones"
     )
 
     help_gui.SetFont("s10", "Cascadia Mono")
