@@ -8,6 +8,16 @@ The original artwork is licensed under Creative Commons Attribution 3.0
 
 ## Included icons
 
+### `capslock-layer.ico`
+
+Source artwork:
+
+- `layer_command.png` — 16x16
+- `layer_command.png` — 32x32
+
+The two original sizes are combined into a single Windows ICO and renamed for
+use by `capslock-layer.ahk`.
+
 ### `pause-command-mode.ico`
 
 Source artwork:

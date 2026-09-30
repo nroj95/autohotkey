@@ -90,3 +90,9 @@ run whichever `.ahk` scripts you want.
 each main script provides a tray menu with its own controls and a **Run at startup** option where applicable.
 
 the scripts are designed to remain useful independently, while some features integrate automatically when companion scripts are running.
+
+## icon attribution
+
+the included tray icons use artwork from the FatCow Farm-Fresh Web Icons 3.9.2 set.
+
+see [`icons/ATTRIBUTION.md`](icons/ATTRIBUTION.md) for source artwork and license details.
