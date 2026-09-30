@@ -131,8 +131,6 @@ bring_forward_message := 0
 close_all_message := 0
 show_help_message := 0
 
-window_cascade_help_gui := 0
-
 
 ; =============================================================================
 ; mission
@@ -360,8 +358,13 @@ HandleCloseAllMessage(*)
     CloseCascadeWindows()
 }
 
-HandleShowHelpMessage(*)
+HandleShowHelpMessage(w_param, l_param, message_id, target_hwnd)
 {
+    ; HWND_BROADCAST can also reach visible script GUIs. Handle the command
+    ; only on the script's hidden main window so one press toggles once.
+    if target_hwnd != A_ScriptHwnd
+        return
+
     ToggleWindowCascadeHelp()
 }
 
@@ -3635,20 +3638,25 @@ CheckCompatibilitySettings(*)
 
 ToggleWindowCascadeHelp(*)
 {
-    global window_cascade_help_gui
+    static help_gui := 0
 
-    if window_cascade_help_gui {
-        CloseWindowCascadeHelp()
+    if help_gui {
+        try help_gui.Destroy()
+        help_gui := 0
         return
     }
 
-    window_cascade_help_gui := Gui("+AlwaysOnTop", "Window Cascade")
-    window_cascade_help_gui.SetFont("s10", "Cascadia Mono")
+    help_gui := Gui("+AlwaysOnTop", "Window Cascade")
+    help_gui.SetFont("s10", "Cascadia Mono")
 
     if IsCapsLockLayerRunning() {
         help_text :=
         (
         "Caps + H             Toggle this help`n"
+        "`n"
+        "HINTS`n"
+        "Hold Caps + key      Run a command normally`n"
+        "Tap Caps, then key   One-shot command for 1.4 seconds`n"
         "`n"
         "CONTROLS`n"
         "Caps + PgUp          Previous cascade window`n"
@@ -3687,31 +3695,16 @@ ToggleWindowCascadeHelp(*)
     "Check compatibility  Check conflicting settings"
     )
 
-    window_cascade_help_gui.AddText("w610", help_text)
+    help_gui.AddText("w610", help_text)
 
-    window_cascade_help_gui.OnEvent(
-        "Close",
-        CloseWindowCascadeHelp
-    )
+    help_gui.OnEvent("Close", CloseHelp)
+    help_gui.OnEvent("Escape", CloseHelp)
+    help_gui.Show()
 
-    window_cascade_help_gui.OnEvent(
-        "Escape",
-        CloseWindowCascadeHelp
-    )
-
-    window_cascade_help_gui.Show()
-}
-
-
-CloseWindowCascadeHelp(*)
-{
-    global window_cascade_help_gui
-
-    if !window_cascade_help_gui
-        return
-
-    try window_cascade_help_gui.Destroy()
-    window_cascade_help_gui := 0
+    CloseHelp(*) {
+        try help_gui.Destroy()
+        help_gui := 0
+    }
 }
 
 ; =============================================================================

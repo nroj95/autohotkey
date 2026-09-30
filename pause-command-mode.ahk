@@ -6,8 +6,6 @@ A_IconTip := "Pause Command Mode"
 try TraySetIcon(A_ScriptDir "\icons\pause-command-mode.ico")
 
 startup_shortcut_path := A_Startup "\Pause Command Mode.lnk"
-pause_help_gui := 0
-
 pause_layer_armed := false
 pause_layer_arm_window_ms := 1400
 
@@ -358,24 +356,24 @@ WakeSpeaker() {
 }
 
 ShowHelp(*) {
-    global pause_help_gui
+    static help_gui := 0
 
-    if pause_help_gui {
-        CloseHelp()
+    if help_gui {
+        try help_gui.Destroy()
+        help_gui := 0
         return
     }
 
-    pause_help_gui := Gui("+AlwaysOnTop", "Pause Command Mode")
-    pause_help_gui.SetFont("s10", "Cascadia Mono")
+    help_gui := Gui("+AlwaysOnTop", "Pause Command Mode")
+    help_gui.SetFont("s10", "Cascadia Mono")
 
     help_text :=
     (
     "Pause + H          Toggle this help`n"
     "`n"
-    "MODES`n"
+    "HINTS`n"
     "Hold Pause + key   Run a command normally`n"
-    "Tap Pause, then key`n"
-    "                   One-shot command for 3 seconds`n"
+    "Tap Pause, then key  One-shot command for 1.4 seconds`n"
     "`n"
     "TEXT`n"
     "Pause + S          Insert ß`n"
@@ -389,21 +387,16 @@ ShowHelp(*) {
     "Pause + Esc        Sleep PC"
     )
 
-    pause_help_gui.AddText("w510", help_text)
+    help_gui.AddText("w510", help_text)
 
-    pause_help_gui.OnEvent("Close", CloseHelp)
-    pause_help_gui.OnEvent("Escape", CloseHelp)
-    pause_help_gui.Show()
-}
+    help_gui.OnEvent("Close", CloseHelp)
+    help_gui.OnEvent("Escape", CloseHelp)
+    help_gui.Show()
 
-CloseHelp(*) {
-    global pause_help_gui
-
-    if !pause_help_gui
-        return
-
-    try pause_help_gui.Destroy()
-    pause_help_gui := 0
+    CloseHelp(*) {
+        try help_gui.Destroy()
+        help_gui := 0
+    }
 }
 
 ToggleStartup(*) {

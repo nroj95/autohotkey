@@ -183,7 +183,11 @@ CapsLock & m::PostRegisteredCommand(window_cascade_toggle_minimize_message)
 CapsLock & F4::PostRegisteredCommand(window_cascade_close_all_message)
 
 
-CapsLock & h::PostRegisteredCommand(window_cascade_show_help_message)
+CapsLock & h::
+{
+    PostRegisteredCommand(window_cascade_show_help_message)
+    KeyWait "h"
+}
 
 ; Window Hotkeys.
 CapsLock & g::PostRegisteredCommand(window_hotkeys_cycle_steam_message)
@@ -465,46 +469,59 @@ PostRegisteredCommand(message_id)
 
 ShowCapsLockLayerHelp(*)
 {
-    help_text := (
-        "CAPS LOCK LAYER`n"
-        "`n"
-        "Hold Caps + key         Use the layer normally`n"
-        "Tap Caps, then key      One-shot layer for 3 seconds`n"
-        "`n"
-        "EXTRA KEYS`n"
-        "Caps + Q / W / E / R    F13 - F16`n"
-        "Caps + A / S / D / F    F17 - F20`n"
-        "Caps + Z / X / C / V    F21 - F24`n"
-        "Caps + 0 - 9            Numpad 0 - 9`n"
-        "`n"
-        "CAPS LOCK`n"
-        "Double-tap Left Shift   Toggle actual Caps Lock`n"
-        "`n"
-        "WINDOW CASCADE`n"
-        "Caps + PgUp             Previous cascade window`n"
-        "Caps + PgDn             Next cascade window`n"
-        "Caps + Backspace        Adopt active window`n"
-        "Caps + Tab              Rotate stacked windows`n"
-        "Caps + Home             Bring cascade to front`n"
-        "Caps + M                Minimize / restore cascade`n"
-        "Caps + F4               Close all cascade windows`n"
-        "Caps + H                Window Cascade help`n"
-        "`n"
-        "WINDOW HOTKEYS`n"
-        "Caps + G                Cycle Steam games`n"
-        "`n"
-        "DIAGNOSTICS`n"
-        "Caps + F7               Reset script debug logs`n"
-        "`n"
-        "Window Cascade and Window Hotkeys commands silently do nothing "
-        "when their companion script is not running."
+    static help_gui := 0
+
+    if help_gui {
+        try help_gui.Destroy()
+        help_gui := 0
+        return
+    }
+
+    help_gui := Gui("+AlwaysOnTop", "CapsLock Layer")
+    help_gui.SetFont("s10", "Cascadia Mono")
+
+    help_text :=
+    (
+    "HINTS`n"
+    "Hold Caps + key         Use the layer normally`n"
+    "Tap Caps, then key      One-shot layer for 1.4 seconds`n"
+    "`n"
+    "EXTRA KEYS`n"
+    "Caps + Q / W / E / R    F13 - F16`n"
+    "Caps + A / S / D / F    F17 - F20`n"
+    "Caps + Z / X / C / V    F21 - F24`n"
+    "Caps + 0 - 9            Numpad 0 - 9`n"
+    "`n"
+    "CAPS LOCK`n"
+    "Double-tap Left Shift   Toggle actual Caps Lock`n"
+    "`n"
+    "WINDOW CASCADE`n"
+    "Caps + PgUp             Previous cascade window`n"
+    "Caps + PgDn             Next cascade window`n"
+    "Caps + Backspace        Adopt active window`n"
+    "Caps + Tab              Rotate stacked windows`n"
+    "Caps + Home             Bring cascade to front`n"
+    "Caps + M                Minimize / restore cascade`n"
+    "Caps + F4               Close all cascade windows`n"
+    "Caps + H                Window Cascade help`n"
+    "`n"
+    "WINDOW HOTKEYS`n"
+    "Caps + G                Cycle Steam games`n"
+    "`n"
+    "DIAGNOSTICS`n"
+    "Caps + F7               Reset script debug logs"
     )
 
-    MsgBox(
-        help_text,
-        "CapsLock Layer - How to use",
-        "Iconi"
-    )
+    help_gui.AddText("w610", help_text)
+
+    help_gui.OnEvent("Close", CloseHelp)
+    help_gui.OnEvent("Escape", CloseHelp)
+    help_gui.Show()
+
+    CloseHelp(*) {
+        try help_gui.Destroy()
+        help_gui := 0
+    }
 }
 
 ; =============================================================================
