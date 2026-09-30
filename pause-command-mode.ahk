@@ -9,7 +9,21 @@ startup_shortcut_path := A_Startup "\Pause Command Mode.lnk"
 pause_help_gui := 0
 
 pause_layer_armed := false
-pause_layer_arm_window_ms := 3000
+pause_layer_arm_window_ms := 1400
+
+caps_layer_disarm_message := DllCall(
+    "RegisterWindowMessage",
+    "str", "nroj.CapsLockLayer.Disarm",
+    "uint"
+)
+
+pause_layer_disarm_message := DllCall(
+    "RegisterWindowMessage",
+    "str", "nroj.PauseCommandMode.Disarm",
+    "uint"
+)
+
+OnMessage(pause_layer_disarm_message, HandlePauseLayerDisarm)
 
 A_TrayMenu.Delete()
 A_TrayMenu.Add("How to use", ShowHelp)
@@ -196,11 +210,14 @@ Esc::
 
 ArmPauseLayer() {
     global pause_layer_armed, pause_layer_arm_window_ms
+    global caps_layer_disarm_message
+
+    ; Only one one-shot command layer should remain armed at a time.
+    PostRegisteredCommand(caps_layer_disarm_message)
 
     pause_layer_armed := true
 
     ShowPauseLayerTip()
-    SetTimer ShowPauseLayerTip, 50
 
     ; Refresh the one-shot timeout on every tap.
     SetTimer DisarmPauseLayer, 0
@@ -215,27 +232,23 @@ DisarmPauseLayer() {
     HidePauseLayerTip()
 }
 
+HandlePauseLayerDisarm(*) {
+    DisarmPauseLayer()
+}
+
 ShowPauseLayerTip() {
-    global pause_layer_armed
-
-    if !pause_layer_armed {
-        HidePauseLayerTip()
+    if ActiveWindowBlocksLayerTip()
         return
-    }
-
-    if ActiveWindowBlocksLayerTip() {
-        ToolTip , , , 2
-        return
-    }
 
     CoordMode "Mouse", "Screen"
     CoordMode "ToolTip", "Screen"
     MouseGetPos &mouse_x, &mouse_y
+
+    ; Capture the cursor position once instead of following it.
     ToolTip "pause mode", mouse_x + 14, mouse_y + 18, 2
 }
 
 HidePauseLayerTip() {
-    SetTimer ShowPauseLayerTip, 0
     ToolTip , , , 2
 }
 
@@ -244,7 +257,7 @@ ActiveWindowBlocksLayerTip() {
     if !active_hwnd
         return false
 
-    ; Maximized windows do not need the armed-layer indicator.
+    ; Suppress the mode indicator in maximized windows.
     if WinGetMinMax("ahk_id " active_hwnd) = 1
         return true
 
@@ -283,6 +296,17 @@ ActiveWindowBlocksLayerTip() {
     }
 
     return false
+}
+
+PostRegisteredCommand(message_id) {
+    DllCall(
+        "PostMessage",
+        "ptr", 0xFFFF, ; HWND_BROADCAST
+        "uint", message_id,
+        "uptr", 0,
+        "ptr", 0,
+        "int"
+    )
 }
 
 SleepComputer() {

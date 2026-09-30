@@ -16,7 +16,7 @@ last_left_shift_release_ms := 0
 double_tap_window_ms := 180
 
 caps_layer_armed := false
-caps_layer_arm_window_ms := 3000
+caps_layer_arm_window_ms := 1400
 
 startup_shortcut_path := A_Startup "\CapsLock Layer.lnk"
 
@@ -79,6 +79,20 @@ debug_reset_logs_message := DllCall(
     "str", "WindowDebug.ResetLogs",
     "uint"
 )
+
+caps_layer_disarm_message := DllCall(
+    "RegisterWindowMessage",
+    "str", "nroj.CapsLockLayer.Disarm",
+    "uint"
+)
+
+pause_layer_disarm_message := DllCall(
+    "RegisterWindowMessage",
+    "str", "nroj.PauseCommandMode.Disarm",
+    "uint"
+)
+
+OnMessage(caps_layer_disarm_message, HandleCapsLayerDisarm)
 
 ; Start with Caps Lock off, but allow the Shift gesture to toggle it.
 SetCapsLockState "Off"
@@ -243,11 +257,14 @@ F7::UseArmedRegisteredCommand(debug_reset_logs_message, "F7")
 ArmCapsLayer()
 {
     global caps_layer_armed, caps_layer_arm_window_ms
+    global pause_layer_disarm_message
+
+    ; Only one one-shot command layer should remain armed at a time.
+    PostRegisteredCommand(pause_layer_disarm_message)
 
     caps_layer_armed := true
 
     ShowCapsLayerTip()
-    SetTimer ShowCapsLayerTip, 50
 
     ; Refresh the one-shot timeout on every tap.
     SetTimer DisarmCapsLayer, 0
@@ -261,6 +278,11 @@ DisarmCapsLayer()
     caps_layer_armed := false
     SetTimer DisarmCapsLayer, 0
     HideCapsLayerTip()
+}
+
+HandleCapsLayerDisarm(*)
+{
+    DisarmCapsLayer()
 }
 
 UseArmedVirtualKey(virtual_key, physical_key)
@@ -329,27 +351,19 @@ UseArmedRegisteredCommand(message_id, physical_key)
 
 ShowCapsLayerTip()
 {
-    global caps_layer_armed
-
-    if !caps_layer_armed {
-        HideCapsLayerTip()
+    if ActiveWindowBlocksLayerTip()
         return
-    }
-
-    if ActiveWindowBlocksLayerTip() {
-        ToolTip , , , 2
-        return
-    }
 
     CoordMode "Mouse", "Screen"
     CoordMode "ToolTip", "Screen"
     MouseGetPos &mouse_x, &mouse_y
+
+    ; Capture the cursor position once instead of following it.
     ToolTip "caps mode", mouse_x + 14, mouse_y + 18, 2
 }
 
 HideCapsLayerTip()
 {
-    SetTimer ShowCapsLayerTip, 0
     ToolTip , , , 2
 }
 
@@ -359,7 +373,7 @@ ActiveWindowBlocksLayerTip()
     if !active_hwnd
         return false
 
-    ; Maximized windows do not need the armed-layer indicator.
+    ; Suppress the mode indicator in maximized windows.
     if WinGetMinMax("ahk_id " active_hwnd) = 1
         return true
 
