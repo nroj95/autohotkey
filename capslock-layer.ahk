@@ -3,6 +3,7 @@
 #Warn
 
 A_IconTip := "CapsLock Layer"
+try TraySetIcon(A_ScriptDir "\icons\capslock-layer.ico")
 
 caps_layer_presence_mutex := DllCall(
     "CreateMutex",
