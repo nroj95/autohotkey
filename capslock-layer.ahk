@@ -310,7 +310,7 @@ UseArmedVirtualKey(virtual_key, physical_key)
     previous_send_level := SendLevel(1)
 
     try {
-        SendEvent "{" virtual_key "}"
+        SendEvent "{Blind}{" virtual_key "}"
         KeyWait physical_key
     }
     finally {
@@ -328,7 +328,7 @@ UseArmedModifiedVirtualKey(virtual_key, modifier_key, physical_key)
     previous_send_level := SendLevel(1)
 
     try {
-        SendEvent "{" modifier_key " down}{" virtual_key "}{" modifier_key " up}"
+        SendEvent "{Blind}{" modifier_key " down}{" virtual_key "}{" modifier_key " up}"
         KeyWait physical_key
     }
     finally {
@@ -575,7 +575,7 @@ HoldVirtualKey(virtual_key, physical_key)
     previous_send_level := SendLevel(1)
 
     try {
-        SendEvent "{" virtual_key " down}"
+        SendEvent "{Blind}{" virtual_key " down}"
 
         ; The virtual key is held only while both physical keys remain down.
         while GetKeyState("CapsLock", "P")
@@ -585,7 +585,7 @@ HoldVirtualKey(virtual_key, physical_key)
         }
     }
     finally {
-        SendEvent "{" virtual_key " up}"
+        SendEvent "{Blind}{" virtual_key " up}"
         SendLevel previous_send_level
     }
 }
@@ -596,7 +596,7 @@ HoldModifiedVirtualKey(virtual_key, modifier_key, physical_key)
     previous_send_level := SendLevel(1)
 
     try {
-        SendEvent "{" modifier_key " down}{" virtual_key " down}"
+        SendEvent "{Blind}{" modifier_key " down}{" virtual_key " down}"
 
         while GetKeyState("CapsLock", "P")
             && GetKeyState(physical_key, "P")
@@ -605,7 +605,7 @@ HoldModifiedVirtualKey(virtual_key, modifier_key, physical_key)
         }
     }
     finally {
-        SendEvent "{" virtual_key " up}{" modifier_key " up}"
+        SendEvent "{Blind}{" virtual_key " up}{" modifier_key " up}"
         SendLevel previous_send_level
     }
 }
