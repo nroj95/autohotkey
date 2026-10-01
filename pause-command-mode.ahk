@@ -37,9 +37,10 @@ OnMessage(0x0218, HandlePowerBroadcast)
 
 ; =============================================================================
 ; mission:
-; - use Pause as a held modifier for personal text, speaker wake,
-;   system sleep, and small utilities.
+; - use Pause as a held modifier for personal text, system sleep,
+;   and small utilities.
 ; - allow tapping Pause to arm one discrete command for a few seconds.
+; - wake speakers by pressing Pause again while one-shot mode is armed.
 ; - keep held Pause chords available as the normal modifier behavior.
 ; =============================================================================
 
@@ -84,12 +85,6 @@ Pause & t::
     KeyWait "t"
 }
 
-Pause & w::
-{
-    WakeSpeaker()
-    KeyWait "w"
-}
-
 Pause & Esc::SleepComputer()
 
 
@@ -98,6 +93,20 @@ Pause & Esc::SleepComputer()
 ; =============================================================================
 
 #HotIf pause_layer_armed
+
+Pause::
+{
+    HidePauseLayerTip()
+    SetTimer DisarmPauseLayer, 0
+
+    try {
+        WakeSpeaker()
+        KeyWait "Pause"
+    }
+    finally {
+        DisarmPauseLayer()
+    }
+}
 
 h::
 {
@@ -177,20 +186,6 @@ t::
     try {
         SendText FormatTime(, "yyyyMMdd-HHmmss")
         KeyWait "t"
-    }
-    finally {
-        DisarmPauseLayer()
-    }
-}
-
-w::
-{
-    HidePauseLayerTip()
-    SetTimer DisarmPauseLayer, 0
-
-    try {
-        WakeSpeaker()
-        KeyWait "w"
     }
     finally {
         DisarmPauseLayer()
@@ -308,8 +303,6 @@ PostRegisteredCommand(message_id) {
 }
 
 SleepComputer() {
-    Tip("sleep")
-
     ; false = sleep rather than hibernate; keep wake events enabled.
     DllCall(
         "PowrProf\SetSuspendState",
@@ -332,10 +325,8 @@ ReloadAfterResume() {
 WakeSpeaker() {
     global speaker_wake_file
 
-    if !FileExist(speaker_wake_file) {
-        Tip("speaker wake: missing file")
+    if !FileExist(speaker_wake_file)
         return
-    }
 
     original_volume := SoundGetVolume()
     wake_volume := 16
@@ -347,7 +338,6 @@ WakeSpeaker() {
             Sleep 100
         }
 
-        Tip("speaker wake")
         SoundPlay speaker_wake_file, true
     }
     finally {
@@ -383,7 +373,7 @@ ShowHelp(*) {
     "`n"
     "UTILITIES`n"
     "Pause + T          Insert timestamp`n"
-    "Pause + W          Wake speakers`n"
+    "Pause, then Pause  Wake speakers`n"
     "Pause + Esc        Sleep PC"
     )
 
@@ -439,16 +429,4 @@ UpdateStartupMenu() {
         A_TrayMenu.Check("Run at startup")
     else
         A_TrayMenu.Uncheck("Run at startup")
-}
-
-Tip(message, duration_ms := 2000) {
-    ToolTip message
-
-    ; replace any previous clear timer so a stale timer cannot erase a new tip.
-    SetTimer ClearTip, 0
-    SetTimer ClearTip, -duration_ms
-}
-
-ClearTip() {
-    ToolTip
 }
