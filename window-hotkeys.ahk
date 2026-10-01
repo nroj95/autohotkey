@@ -28,6 +28,8 @@ focus_highlight_guis := []
 focus_highlight_duration_ms := 1500
 focus_highlight_thickness := 12
 focus_highlight_overlap := 2
+focus_navigation_active := false
+focus_navigation_hwnd := 0
 
 startup_shortcut_path := A_Startup "\Window Hotkeys.lnk"
 
@@ -352,7 +354,7 @@ ToggleWindowHotkeysHelp(*)
     "Win + Enter       Swap with next window clockwise`n"
     "`n"
     "WINDOW FOCUS`n"
-    "Alt + Win + Arrow     Focus nearest window"
+    "Alt + Win + Arrow     Start / move spatial focus"
     )
 
     if IsCapsLockLayerRunning() {
@@ -392,10 +394,25 @@ ToggleWindowHotkeysHelp(*)
 
 FocusNearestWindow(direction)
 {
+    global focus_navigation_active, focus_navigation_hwnd
+
     active_hwnd := WinExist("A")
 
     if !active_hwnd
         return
+
+    ; The first directional-focus press starts on the current window instead
+    ; of immediately leaving it. A manual focus change also starts a new
+    ; session from that newly focused window.
+    if !focus_navigation_active
+        || active_hwnd != focus_navigation_hwnd
+    {
+        ForgetLastMinimizedWindow()
+        focus_navigation_active := true
+        focus_navigation_hwnd := active_hwnd
+        HighlightFocusedWindow(active_hwnd)
+        return
+    }
 
     try {
         WinGetPos(
@@ -497,6 +514,7 @@ FocusNearestWindow(direction)
 
     try {
         WinActivate("ahk_id " target_hwnd)
+        focus_navigation_hwnd := target_hwnd
         HighlightFocusedWindow(target_hwnd)
     }
 }
@@ -509,10 +527,14 @@ HighlightFocusedWindow(hwnd)
     global focus_highlight_thickness
     global focus_highlight_overlap
 
+    ; Refresh the focus-navigation session timeout on every focused window.
+    SetTimer EndFocusNavigationSession, 0
     ClearFocusHighlight()
 
-    if !hwnd || !WinExist("ahk_id " hwnd)
+    if !hwnd || !WinExist("ahk_id " hwnd) {
+        EndFocusNavigationSession()
         return
+    }
 
     if !GetVisibleWindowBounds(
         hwnd,
@@ -521,6 +543,7 @@ HighlightFocusedWindow(hwnd)
         &window_width,
         &window_height
     ) {
+        EndFocusNavigationSession()
         return
     }
 
@@ -531,6 +554,7 @@ HighlightFocusedWindow(hwnd)
     if window_width <= thickness * 2
         || window_height <= thickness * 2
     {
+        EndFocusNavigationSession()
         return
     }
 
@@ -584,17 +608,25 @@ HighlightFocusedWindow(hwnd)
     }
 
     SetTimer(
-        ClearFocusHighlight,
+        EndFocusNavigationSession,
         -focus_highlight_duration_ms
     )
+}
+
+
+EndFocusNavigationSession()
+{
+    global focus_navigation_active, focus_navigation_hwnd
+
+    focus_navigation_active := false
+    focus_navigation_hwnd := 0
+    ClearFocusHighlight()
 }
 
 
 ClearFocusHighlight()
 {
     global focus_highlight_guis
-
-    SetTimer ClearFocusHighlight, 0
 
     for highlight_gui in focus_highlight_guis {
         try highlight_gui.Destroy()
