@@ -164,7 +164,7 @@ CapsLock & Tab::PostPlainWindowCascadeCommandOnce(
     cascade_command_rotate_layers,
     "Tab"
 )
-CapsLock & Home::PostShiftOnlyWindowCascadeCommandOnce(
+CapsLock & Home::PostPlainWindowCascadeCommandOnce(
     cascade_command_bring_forward,
     "Home"
 )
@@ -178,9 +178,9 @@ CapsLock & F4::PostWindowCascadeCommandOnce(
     "F4",
     GetKeyState("Shift", "P")
 )
-CapsLock & Insert::PostShiftOnlyWindowCascadeCommandOnce(
+CapsLock & F7::PostShiftOnlyWindowCascadeCommandOnce(
     cascade_command_gather_to_monitor,
-    "Insert"
+    "F7"
 )
 CapsLock & Delete::PostPlainWindowCascadeCommandOnce(
     cascade_command_close_active,
@@ -197,7 +197,7 @@ CapsLock & h::
 CapsLock & g::PostRegisteredCommand(window_hotkeys_cycle_steam_message)
 
 ; Diagnostics.
-CapsLock & F7::PostRegisteredCommand(debug_reset_logs_message)
+CapsLock & F5::PostRegisteredCommand(debug_reset_logs_message)
 
 
 ; =============================================================================
@@ -253,6 +253,7 @@ PgUp::UseArmedWindowCascadeCommand(cascade_command_focus_previous, "PgUp")
 PgDn::UseArmedWindowCascadeCommand(cascade_command_focus_next, "PgDn")
 Backspace::UseArmedWindowCascadeCommand(cascade_command_adopt_active, "Backspace")
 Tab::UseArmedWindowCascadeCommand(cascade_command_rotate_layers, "Tab")
+Home::UseArmedWindowCascadeCommand(cascade_command_bring_forward, "Home")
 m::UseArmedWindowCascadeCommand(cascade_command_toggle_minimize, "m")
 F4::UseArmedWindowCascadeCommand(cascade_command_close_scope, "F4")
 Delete::UseArmedWindowCascadeCommand(cascade_command_close_active, "Delete")
@@ -262,7 +263,7 @@ h::UseArmedWindowCascadeCommand(cascade_command_show_help, "h")
 g::UseArmedRegisteredCommand(window_hotkeys_cycle_steam_message, "g")
 
 ; Diagnostics.
-F7::UseArmedRegisteredCommand(debug_reset_logs_message, "F7")
+F5::UseArmedRegisteredCommand(debug_reset_logs_message, "F5")
 
 #HotIf
 

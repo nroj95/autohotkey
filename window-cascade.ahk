@@ -231,7 +231,7 @@ SetTimer(CheckCompatibilitySettings, -500)
     KeyWait "Tab"
 }
 
-<!+Home::
+<!Home::
 {
     BringCommandMonitorCascadeForward()
     KeyWait "Home"
@@ -249,10 +249,10 @@ SetTimer(CheckCompatibilitySettings, -500)
     KeyWait "m"
 }
 
-<!+Insert::
+<!+F7::
 {
     GatherCascadesToCommandMonitor()
-    KeyWait "Insert"
+    KeyWait "F7"
 }
 
 #HotIf
@@ -4189,10 +4189,10 @@ ToggleWindowCascadeHelp(*)
         "Caps + M                  Minimize / restore current layer`n"
         "Caps + F4                 Close current layer`n"
         "Caps + Delete             Close active window`n"
-        "Caps + Shift + Home       Bring this monitor's cascade to front`n"
+        "Caps + Home               Bring this monitor's cascade to front`n"
         "Caps + Shift + M          Minimize / restore all layers on monitor`n"
         "Caps + Shift + F4         Close all layers on monitor`n"
-        "Caps + Shift + Insert     Gather other monitors' cascades here"
+        "Caps + Shift + F7         Gather other monitors' cascades here"
         )
     } else {
         help_text :=
@@ -4205,8 +4205,8 @@ ToggleWindowCascadeHelp(*)
         "Left Alt + Shift + Tab     Rotate layers`n"
         "Left Alt + M               Minimize / restore current layer`n"
         "Left Alt + Shift + M       Minimize / restore all layers on monitor`n"
-        "Left Alt + Shift + Home    Bring this monitor's cascade to front`n"
-        "Left Alt + Shift + Insert  Gather other monitors' cascades here"
+        "Left Alt + Home            Bring this monitor's cascade to front`n"
+        "Left Alt + Shift + F7      Gather other monitors' cascades here"
         )
     }
 
