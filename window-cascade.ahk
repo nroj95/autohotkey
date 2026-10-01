@@ -128,6 +128,7 @@ adopt_active_message := 0
 cycle_stacks_message := 0
 toggle_minimize_message := 0
 bring_forward_message := 0
+close_active_message := 0
 close_all_message := 0
 show_help_message := 0
 
@@ -188,8 +189,8 @@ SetTimer(CheckCompatibilitySettings, -500)
 <!PgUp::NavigateCascade(-1)
 <!PgDn::NavigateCascade(1)
 <!Backspace::AdoptActiveWindow()
-<!End::CycleCascadeStacks()
-<!Home::BringCascadeForward()
+<!F7::CycleCascadeStacks()
+<!Home::BringMouseMonitorCascadeForward()
 <!m::ToggleCascadeMinimize()
 
 #HotIf
@@ -262,7 +263,8 @@ RegisterIntegrationMessages()
 {
     global focus_up_message, focus_down_message, adopt_active_message
     global cycle_stacks_message, toggle_minimize_message
-    global bring_forward_message, close_all_message, show_help_message
+    global bring_forward_message, close_active_message
+    global close_all_message, show_help_message
 
     focus_up_message := DllCall(
         "RegisterWindowMessage",
@@ -300,6 +302,12 @@ RegisterIntegrationMessages()
         "uint"
     )
 
+    close_active_message := DllCall(
+        "RegisterWindowMessage",
+        "str", "WindowCascade.CloseActive",
+        "uint"
+    )
+
     close_all_message := DllCall(
         "RegisterWindowMessage",
         "str", "WindowCascade.CloseAll",
@@ -318,6 +326,7 @@ RegisterIntegrationMessages()
     OnMessage(cycle_stacks_message, HandleCycleStacksMessage)
     OnMessage(toggle_minimize_message, HandleToggleMinimizeMessage)
     OnMessage(bring_forward_message, HandleBringForwardMessage)
+    OnMessage(close_active_message, HandleCloseActiveMessage)
     OnMessage(close_all_message, HandleCloseAllMessage)
     OnMessage(show_help_message, HandleShowHelpMessage)
 
@@ -350,7 +359,17 @@ HandleToggleMinimizeMessage(*)
 
 HandleBringForwardMessage(*)
 {
-    BringCascadeForward()
+    BringMouseMonitorCascadeForward()
+}
+
+HandleCloseActiveMessage(w_param, l_param, message_id, target_hwnd)
+{
+    ; HWND_BROADCAST can also reach visible script GUIs. Handle the command
+    ; only on the script's hidden main window so one press closes one window.
+    if target_hwnd != A_ScriptHwnd
+        return
+
+    Send "!{F4}"
 }
 
 HandleCloseAllMessage(*)
@@ -806,9 +825,24 @@ ActivateCascadeWindow(hwnd)
     }
 }
 
-BringCascadeForward()
+BringMouseMonitorCascadeForward()
 {
-    windows := GetAllLiveCascadeWindows()
+    MouseGetPos(&mouse_x, &mouse_y)
+
+    monitor_index := GetMonitorForPoint(
+        mouse_x,
+        mouse_y
+    )
+
+    if !monitor_index
+        return
+
+    BringCascadeForward(monitor_index)
+}
+
+BringCascadeForward(monitor_index)
+{
+    windows := GetLiveCascadeHistory(monitor_index)
 
     if windows.Length = 0
         return
@@ -3663,8 +3697,9 @@ ToggleWindowCascadeHelp(*)
         "Caps + PgDn          Next cascade window`n"
         "Caps + Backspace     Adopt active window into cascade`n"
         "Caps + Tab           Rotate stacked cascade windows`n"
-        "Caps + Home          Bring cascade to front`n"
+        "Caps + Home          Bring this monitor's cascade to front`n"
         "Caps + M             Minimize / restore cascade windows`n"
+        "Caps + Delete        Close active window`n"
         "Caps + F4            Close all managed cascade windows"
         )
     } else {
@@ -3674,8 +3709,8 @@ ToggleWindowCascadeHelp(*)
         "Left Alt + PgUp      Previous cascade window`n"
         "Left Alt + PgDn      Next cascade window`n"
         "Left Alt + Backspace Adopt active window into cascade`n"
-        "Left Alt + End       Rotate stacked cascade windows`n"
-        "Left Alt + Home      Bring cascade to front`n"
+        "Left Alt + F7        Rotate stacked cascade windows`n"
+        "Left Alt + Home      Bring this monitor's cascade to front`n"
         "Left Alt + M         Minimize / restore cascade windows"
         )
     }

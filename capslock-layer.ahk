@@ -57,6 +57,12 @@ window_cascade_bring_forward_message := DllCall(
     "uint"
 )
 
+window_cascade_close_active_message := DllCall(
+    "RegisterWindowMessage",
+    "str", "WindowCascade.CloseActive",
+    "uint"
+)
+
 window_cascade_close_all_message := DllCall(
     "RegisterWindowMessage",
     "str", "WindowCascade.CloseAll",
@@ -182,6 +188,10 @@ CapsLock & Tab::PostRegisteredCommand(window_cascade_cycle_stacks_message)
 CapsLock & Home::PostRegisteredCommand(window_cascade_bring_forward_message)
 CapsLock & m::PostRegisteredCommand(window_cascade_toggle_minimize_message)
 CapsLock & F4::PostRegisteredCommand(window_cascade_close_all_message)
+CapsLock & Delete::PostRegisteredCommandOnce(
+    window_cascade_close_active_message,
+    "Delete"
+)
 
 
 CapsLock & h::
@@ -248,6 +258,7 @@ Tab::UseArmedRegisteredCommand(window_cascade_cycle_stacks_message, "Tab")
 Home::UseArmedRegisteredCommand(window_cascade_bring_forward_message, "Home")
 m::UseArmedRegisteredCommand(window_cascade_toggle_minimize_message, "m")
 F4::UseArmedRegisteredCommand(window_cascade_close_all_message, "F4")
+Delete::UseArmedRegisteredCommand(window_cascade_close_active_message, "Delete")
 h::UseArmedRegisteredCommand(window_cascade_show_help_message, "h")
 
 ; Window Hotkeys.
@@ -352,6 +363,12 @@ UseArmedRegisteredCommand(message_id, physical_key)
     finally {
         DisarmCapsLayer()
     }
+}
+
+PostRegisteredCommandOnce(message_id, physical_key)
+{
+    PostRegisteredCommand(message_id)
+    KeyWait physical_key
 }
 
 ShowCapsLayerTip()
