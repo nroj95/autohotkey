@@ -21,59 +21,27 @@ caps_layer_arm_window_ms := 1400
 
 startup_shortcut_path := A_Startup "\CapsLock Layer.lnk"
 
-window_cascade_focus_up_message := DllCall(
+window_cascade_command_message := DllCall(
     "RegisterWindowMessage",
-    "str", "WindowCascade.FocusUp",
+    "str", "WindowCascade.Command",
     "uint"
 )
 
-window_cascade_focus_down_message := DllCall(
-    "RegisterWindowMessage",
-    "str", "WindowCascade.FocusDown",
-    "uint"
-)
-
-window_cascade_adopt_active_message := DllCall(
-    "RegisterWindowMessage",
-    "str", "WindowCascade.AdoptActive",
-    "uint"
-)
-
-window_cascade_cycle_stacks_message := DllCall(
-    "RegisterWindowMessage",
-    "str", "WindowCascade.CycleStacks",
-    "uint"
-)
-
-window_cascade_toggle_minimize_message := DllCall(
-    "RegisterWindowMessage",
-    "str", "WindowCascade.ToggleMinimize",
-    "uint"
-)
-
-window_cascade_bring_forward_message := DllCall(
-    "RegisterWindowMessage",
-    "str", "WindowCascade.BringForward",
-    "uint"
-)
-
-window_cascade_close_active_message := DllCall(
-    "RegisterWindowMessage",
-    "str", "WindowCascade.CloseActive",
-    "uint"
-)
-
-window_cascade_close_all_message := DllCall(
-    "RegisterWindowMessage",
-    "str", "WindowCascade.CloseAll",
-    "uint"
-)
-
-window_cascade_show_help_message := DllCall(
-    "RegisterWindowMessage",
-    "str", "WindowCascade.ShowHelp",
-    "uint"
-)
+; Keep these command IDs in sync with window-cascade.ahk.
+cascade_command_focus_previous := 1
+cascade_command_focus_next := 2
+cascade_command_rotate_slot_previous := 3
+cascade_command_rotate_slot_next := 4
+cascade_command_swap_window_up := 5
+cascade_command_swap_window_down := 6
+cascade_command_adopt_active := 7
+cascade_command_rotate_layers := 8
+cascade_command_toggle_minimize := 9
+cascade_command_bring_forward := 10
+cascade_command_close_active := 11
+cascade_command_close_scope := 12
+cascade_command_gather_to_monitor := 13
+cascade_command_show_help := 14
 
 window_hotkeys_cycle_steam_message := DllCall(
     "RegisterWindowMessage",
@@ -179,24 +147,49 @@ CapsLock & 7::HoldVirtualKey("Numpad7", "7")
 CapsLock & 8::HoldVirtualKey("Numpad8", "8")
 CapsLock & 9::HoldVirtualKey("Numpad9", "9")
 
-; Optional Window Cascade navigation.
+; Optional Window Cascade controls.
+; Plain Caps stays slot/layer-local. Shift adds monitor/cross-monitor scope.
 ; These chords silently do nothing when Window Cascade is not running.
-CapsLock & PgUp::PostRegisteredCommand(window_cascade_focus_up_message)
-CapsLock & PgDn::PostRegisteredCommand(window_cascade_focus_down_message)
-CapsLock & Backspace::PostRegisteredCommand(window_cascade_adopt_active_message)
-CapsLock & Tab::PostRegisteredCommand(window_cascade_cycle_stacks_message)
-CapsLock & Home::PostRegisteredCommand(window_cascade_bring_forward_message)
-CapsLock & m::PostRegisteredCommand(window_cascade_toggle_minimize_message)
-CapsLock & F4::PostRegisteredCommand(window_cascade_close_all_message)
-CapsLock & Delete::PostRegisteredCommandOnce(
-    window_cascade_close_active_message,
+CapsLock & Up::PostPlainWindowCascadeCommand(cascade_command_swap_window_up)
+CapsLock & Down::PostPlainWindowCascadeCommand(cascade_command_swap_window_down)
+CapsLock & Left::PostPlainWindowCascadeCommand(cascade_command_rotate_slot_previous)
+CapsLock & Right::PostPlainWindowCascadeCommand(cascade_command_rotate_slot_next)
+CapsLock & PgUp::PostPlainWindowCascadeCommand(cascade_command_focus_previous)
+CapsLock & PgDn::PostPlainWindowCascadeCommand(cascade_command_focus_next)
+CapsLock & Backspace::PostPlainWindowCascadeCommandOnce(
+    cascade_command_adopt_active,
+    "Backspace"
+)
+CapsLock & Tab::PostPlainWindowCascadeCommandOnce(
+    cascade_command_rotate_layers,
+    "Tab"
+)
+CapsLock & Home::PostShiftOnlyWindowCascadeCommandOnce(
+    cascade_command_bring_forward,
+    "Home"
+)
+CapsLock & m::PostWindowCascadeCommandOnce(
+    cascade_command_toggle_minimize,
+    "m",
+    GetKeyState("Shift", "P")
+)
+CapsLock & F4::PostWindowCascadeCommandOnce(
+    cascade_command_close_scope,
+    "F4",
+    GetKeyState("Shift", "P")
+)
+CapsLock & Insert::PostShiftOnlyWindowCascadeCommandOnce(
+    cascade_command_gather_to_monitor,
+    "Insert"
+)
+CapsLock & Delete::PostPlainWindowCascadeCommandOnce(
+    cascade_command_close_active,
     "Delete"
 )
 
-
 CapsLock & h::
 {
-    PostRegisteredCommand(window_cascade_show_help_message)
+    PostPlainWindowCascadeCommand(cascade_command_show_help)
     KeyWait "h"
 }
 
@@ -211,7 +204,7 @@ CapsLock & F7::PostRegisteredCommand(debug_reset_logs_message)
 ; tapped caps lock layer
 ; =============================================================================
 
-#HotIf caps_layer_armed
+#HotIf CapsLayerOneShotReady()
 
 ; Top row.
 q::UseArmedVirtualKey("F13", "q")
@@ -232,10 +225,10 @@ c::UseArmedVirtualKey("F23", "c")
 v::UseArmedVirtualKey("F24", "v")
 
 ; Terminal-only personal macro trigger.
-#HotIf caps_layer_armed && WinActive("ahk_exe WindowsTerminal.exe")
+#HotIf CapsLayerOneShotReady() && WinActive("ahk_exe WindowsTerminal.exe")
 k::UseArmedModifiedVirtualKey("F19", "Shift", "k")
 
-#HotIf caps_layer_armed
+#HotIf CapsLayerOneShotReady()
 k::UseArmedNoOpKey("k")
 
 ; Number row.
@@ -250,16 +243,20 @@ k::UseArmedNoOpKey("k")
 8::UseArmedVirtualKey("Numpad8", "8")
 9::UseArmedVirtualKey("Numpad9", "9")
 
-; Optional Window Cascade navigation.
-PgUp::UseArmedRegisteredCommand(window_cascade_focus_up_message, "PgUp")
-PgDn::UseArmedRegisteredCommand(window_cascade_focus_down_message, "PgDn")
-Backspace::UseArmedRegisteredCommand(window_cascade_adopt_active_message, "Backspace")
-Tab::UseArmedRegisteredCommand(window_cascade_cycle_stacks_message, "Tab")
-Home::UseArmedRegisteredCommand(window_cascade_bring_forward_message, "Home")
-m::UseArmedRegisteredCommand(window_cascade_toggle_minimize_message, "m")
-F4::UseArmedRegisteredCommand(window_cascade_close_all_message, "F4")
-Delete::UseArmedRegisteredCommand(window_cascade_close_active_message, "Delete")
-h::UseArmedRegisteredCommand(window_cascade_show_help_message, "h")
+; Optional Window Cascade controls.
+; One-shot Caps exposes only unmodified slot/layer-local commands.
+Up::UseArmedWindowCascadeCommand(cascade_command_swap_window_up, "Up")
+Down::UseArmedWindowCascadeCommand(cascade_command_swap_window_down, "Down")
+Left::UseArmedWindowCascadeCommand(cascade_command_rotate_slot_previous, "Left")
+Right::UseArmedWindowCascadeCommand(cascade_command_rotate_slot_next, "Right")
+PgUp::UseArmedWindowCascadeCommand(cascade_command_focus_previous, "PgUp")
+PgDn::UseArmedWindowCascadeCommand(cascade_command_focus_next, "PgDn")
+Backspace::UseArmedWindowCascadeCommand(cascade_command_adopt_active, "Backspace")
+Tab::UseArmedWindowCascadeCommand(cascade_command_rotate_layers, "Tab")
+m::UseArmedWindowCascadeCommand(cascade_command_toggle_minimize, "m")
+F4::UseArmedWindowCascadeCommand(cascade_command_close_scope, "F4")
+Delete::UseArmedWindowCascadeCommand(cascade_command_close_active, "Delete")
+h::UseArmedWindowCascadeCommand(cascade_command_show_help, "h")
 
 ; Window Hotkeys.
 g::UseArmedRegisteredCommand(window_hotkeys_cycle_steam_message, "g")
@@ -269,6 +266,20 @@ F7::UseArmedRegisteredCommand(debug_reset_logs_message, "F7")
 
 #HotIf
 
+
+CapsLayerOneShotReady()
+{
+    global caps_layer_armed
+
+    return (
+        caps_layer_armed
+        && !GetKeyState("Shift", "P")
+        && !GetKeyState("Ctrl", "P")
+        && !GetKeyState("Alt", "P")
+        && !GetKeyState("LWin", "P")
+        && !GetKeyState("RWin", "P")
+    )
+}
 
 ArmCapsLayer()
 {
@@ -365,9 +376,58 @@ UseArmedRegisteredCommand(message_id, physical_key)
     }
 }
 
-PostRegisteredCommandOnce(message_id, physical_key)
+UseArmedWindowCascadeCommand(command_id, physical_key)
 {
-    PostRegisteredCommand(message_id)
+    ; Monitor/cross-monitor parameters are intentionally unavailable here.
+    HideCapsLayerTip()
+    SetTimer DisarmCapsLayer, 0
+
+    try {
+        PostWindowCascadeCommand(command_id)
+        KeyWait physical_key
+    }
+    finally {
+        DisarmCapsLayer()
+    }
+}
+
+PostPlainWindowCascadeCommand(command_id)
+{
+    if !GetKeyState("Shift", "P")
+        PostWindowCascadeCommand(command_id)
+}
+
+PostPlainWindowCascadeCommandOnce(command_id, physical_key)
+{
+    PostPlainWindowCascadeCommand(command_id)
+    KeyWait physical_key
+}
+
+PostWindowCascadeCommand(command_id, parameter := 0)
+{
+    global window_cascade_command_message
+
+    DllCall(
+        "PostMessage",
+        "ptr", 0xFFFF, ; HWND_BROADCAST
+        "uint", window_cascade_command_message,
+        "uptr", command_id,
+        "ptr", parameter,
+        "int"
+    )
+}
+
+PostWindowCascadeCommandOnce(command_id, physical_key, parameter := 0)
+{
+    PostWindowCascadeCommand(command_id, parameter)
+    KeyWait physical_key
+}
+
+PostShiftOnlyWindowCascadeCommandOnce(command_id, physical_key)
+{
+    if GetKeyState("Shift", "P")
+        PostWindowCascadeCommand(command_id)
+
     KeyWait physical_key
 }
 
@@ -503,6 +563,7 @@ ShowCapsLockLayerHelp(*)
     "HINTS`n"
     "Hold Caps + key         Use the layer normally`n"
     "Tap Caps, then key      One-shot layer for 1.4 seconds`n"
+    "Extra modifiers         Bypass one-shot Caps`n"
     "`n"
     "EXTRA KEYS`n"
     "Caps + Q / W / E / R    F13 - F16`n"

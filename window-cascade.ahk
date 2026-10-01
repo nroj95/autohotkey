@@ -99,6 +99,9 @@ known_windows := Map()
 missed_window_poll_ms := 1000
 cascade_history := Map()
 cascade_reset_cursors := Map()
+cascade_compaction_pending := Map()
+layer_minimized_windows_by_monitor := Map()
+monitor_minimized_windows_by_monitor := Map()
 
 focus_corner_overlays := Map()
 focus_corner_targets := Map()
@@ -122,15 +125,34 @@ foreground_hook := 0
 window_show_hook := 0
 window_destroy_hook := 0
 
-focus_up_message := 0
-focus_down_message := 0
-adopt_active_message := 0
-cycle_stacks_message := 0
-toggle_minimize_message := 0
-bring_forward_message := 0
-close_active_message := 0
-close_all_message := 0
-show_help_message := 0
+cascade_command_message := 0
+
+; Keep these command IDs in sync with capslock-layer.ahk.
+cascade_command_focus_previous := 1
+cascade_command_focus_next := 2
+cascade_command_rotate_slot_previous := 3
+cascade_command_rotate_slot_next := 4
+cascade_command_swap_window_up := 5
+cascade_command_swap_window_down := 6
+cascade_command_adopt_active := 7
+cascade_command_rotate_layers := 8
+cascade_command_toggle_minimize := 9
+cascade_command_bring_forward := 10
+cascade_command_close_active := 11
+cascade_command_close_scope := 12
+cascade_command_gather_to_monitor := 13
+cascade_command_show_help := 14
+
+
+; =============================================================================
+; terminology
+; =============================================================================
+; - cascade: all managed cascade windows on one monitor.
+; - slot: one canonical cascade position on that monitor.
+; - stack: all windows currently sharing one slot.
+; - layer: one depth across the slot stacks; depth 1 is the exposed layer.
+; - slots and layers compact automatically so earlier positions stay filled.
+; =============================================================================
 
 
 ; =============================================================================
@@ -146,11 +168,15 @@ show_help_message := 0
 ; - define fixed cascade slots: center, then left/up, then right/down.
 ; - inspect actual window positions whenever a new window opens.
 ; - fill the least-used canonical slot so gaps are repaired before a new layer grows.
-; - allow multiple windows per slot and rotate those stacks on command.
+; - treat stack depth as layers: one window per slot at each depth.
+; - keep plain management commands slot/layer-local and Shift commands monitor-wide.
+; - compact holes forward across slots and layers after managed windows disappear.
+; - rotate one slot across layers or rotate every slot to expose the next layer.
+; - focus and swap current-layer windows by physical top-to-bottom order.
 ; - let manually moved windows relinquish their old slot automatically.
 ; - reject obvious child/helper windows before queueing placement.
 ; - forget destroyed window handles so recycled hwnd values remain safe.
-; - optionally accept focus-up/focus-down commands from CapsLock Layer.
+; - optionally accept slot/layer/monitor commands from CapsLock Layer.
 ; - remain fully functional when CapsLock Layer is not installed or running.
 ; =============================================================================
 
@@ -186,12 +212,48 @@ SetTimer(CheckCompatibilitySettings, -500)
 
 #HotIf !IsCapsLockLayerRunning()
 
-<!PgUp::NavigateCascade(-1)
-<!PgDn::NavigateCascade(1)
-<!Backspace::AdoptActiveWindow()
-<!F7::CycleCascadeStacks()
-<!Home::BringMouseMonitorCascadeForward()
-<!m::ToggleCascadeMinimize()
+<!Up::SwapActiveCascadeWindow(-1)
+<!Down::SwapActiveCascadeWindow(1)
+<!Left::RotateCurrentCascadeSlot(-1)
+<!Right::RotateCurrentCascadeSlot(1)
+<!PgUp::FocusCascadeLayerWindow(-1)
+<!PgDn::FocusCascadeLayerWindow(1)
+
+<!Backspace::
+{
+    AdoptActiveWindow()
+    KeyWait "Backspace"
+}
+
+<!+Tab::
+{
+    RotateCascadeLayers(1)
+    KeyWait "Tab"
+}
+
+<!+Home::
+{
+    BringCommandMonitorCascadeForward()
+    KeyWait "Home"
+}
+
+<!m::
+{
+    ToggleCurrentCascadeLayerMinimize()
+    KeyWait "m"
+}
+
+<!+m::
+{
+    ToggleCommandMonitorCascadeMinimize()
+    KeyWait "m"
+}
+
+<!+Insert::
+{
+    GatherCascadesToCommandMonitor()
+    KeyWait "Insert"
+}
 
 #HotIf
 
@@ -261,130 +323,81 @@ CaptureDesktopMonitorHint()
 
 RegisterIntegrationMessages()
 {
-    global focus_up_message, focus_down_message, adopt_active_message
-    global cycle_stacks_message, toggle_minimize_message
-    global bring_forward_message, close_active_message
-    global close_all_message, show_help_message
+    global cascade_command_message
 
-    focus_up_message := DllCall(
+    cascade_command_message := DllCall(
         "RegisterWindowMessage",
-        "str", "WindowCascade.FocusUp",
+        "str", "WindowCascade.Command",
         "uint"
     )
 
-    focus_down_message := DllCall(
-        "RegisterWindowMessage",
-        "str", "WindowCascade.FocusDown",
-        "uint"
-    )
-
-    adopt_active_message := DllCall(
-        "RegisterWindowMessage",
-        "str", "WindowCascade.AdoptActive",
-        "uint"
-    )
-
-    cycle_stacks_message := DllCall(
-        "RegisterWindowMessage",
-        "str", "WindowCascade.CycleStacks",
-        "uint"
-    )
-
-    toggle_minimize_message := DllCall(
-        "RegisterWindowMessage",
-        "str", "WindowCascade.ToggleMinimize",
-        "uint"
-    )
-
-    bring_forward_message := DllCall(
-        "RegisterWindowMessage",
-        "str", "WindowCascade.BringForward",
-        "uint"
-    )
-
-    close_active_message := DllCall(
-        "RegisterWindowMessage",
-        "str", "WindowCascade.CloseActive",
-        "uint"
-    )
-
-    close_all_message := DllCall(
-        "RegisterWindowMessage",
-        "str", "WindowCascade.CloseAll",
-        "uint"
-    )
-
-    show_help_message := DllCall(
-        "RegisterWindowMessage",
-        "str", "WindowCascade.ShowHelp",
-        "uint"
-    )
-
-    OnMessage(focus_up_message, HandleFocusUpMessage)
-    OnMessage(focus_down_message, HandleFocusDownMessage)
-    OnMessage(adopt_active_message, HandleAdoptActiveMessage)
-    OnMessage(cycle_stacks_message, HandleCycleStacksMessage)
-    OnMessage(toggle_minimize_message, HandleToggleMinimizeMessage)
-    OnMessage(bring_forward_message, HandleBringForwardMessage)
-    OnMessage(close_active_message, HandleCloseActiveMessage)
-    OnMessage(close_all_message, HandleCloseAllMessage)
-    OnMessage(show_help_message, HandleShowHelpMessage)
-
+    OnMessage(cascade_command_message, HandleCascadeCommandMessage)
 }
 
-HandleFocusUpMessage(*)
+HandleCascadeCommandMessage(command_id, parameter, message_id, target_hwnd)
 {
-    NavigateCascade(-1)
-}
+    global cascade_command_focus_previous, cascade_command_focus_next
+    global cascade_command_rotate_slot_previous, cascade_command_rotate_slot_next
+    global cascade_command_swap_window_up, cascade_command_swap_window_down
+    global cascade_command_adopt_active, cascade_command_rotate_layers
+    global cascade_command_toggle_minimize, cascade_command_bring_forward
+    global cascade_command_close_active, cascade_command_close_scope
+    global cascade_command_gather_to_monitor, cascade_command_show_help
 
-HandleFocusDownMessage(*)
-{
-    NavigateCascade(1)
-}
-
-HandleAdoptActiveMessage(*)
-{
-    AdoptActiveWindow()
-}
-
-HandleCycleStacksMessage(*)
-{
-    CycleCascadeStacks()
-}
-
-HandleToggleMinimizeMessage(*)
-{
-    ToggleCascadeMinimize()
-}
-
-HandleBringForwardMessage(*)
-{
-    BringMouseMonitorCascadeForward()
-}
-
-HandleCloseActiveMessage(w_param, l_param, message_id, target_hwnd)
-{
-    ; HWND_BROADCAST can also reach visible script GUIs. Handle the command
-    ; only on the script's hidden main window so one press closes one window.
+    ; HWND_BROADCAST also reaches script-owned GUIs. Run each command only
+    ; once through AutoHotkey's hidden main window.
     if target_hwnd != A_ScriptHwnd
         return
 
-    Send "!{F4}"
-}
+    switch command_id {
+        case cascade_command_focus_previous:
+            FocusCascadeLayerWindow(-1)
 
-HandleCloseAllMessage(*)
-{
-    CloseCascadeWindows()
-}
+        case cascade_command_focus_next:
+            FocusCascadeLayerWindow(1)
 
-HandleShowHelpMessage(w_param, l_param, message_id, target_hwnd)
-{
-    ; HWND_BROADCAST can also reach visible script GUIs. Handle the command
-    ; only on the script's hidden main window so one press toggles once.
-    if target_hwnd != A_ScriptHwnd
-        return
+        case cascade_command_rotate_slot_previous:
+            RotateCurrentCascadeSlot(-1)
 
-    ToggleWindowCascadeHelp()
+        case cascade_command_rotate_slot_next:
+            RotateCurrentCascadeSlot(1)
+
+        case cascade_command_swap_window_up:
+            SwapActiveCascadeWindow(-1)
+
+        case cascade_command_swap_window_down:
+            SwapActiveCascadeWindow(1)
+
+        case cascade_command_adopt_active:
+            AdoptActiveWindow()
+
+        case cascade_command_rotate_layers:
+            RotateCascadeLayers(1)
+
+        case cascade_command_toggle_minimize:
+            if parameter
+                ToggleCommandMonitorCascadeMinimize()
+            else
+                ToggleCurrentCascadeLayerMinimize()
+
+        case cascade_command_bring_forward:
+            BringCommandMonitorCascadeForward()
+
+        case cascade_command_close_active:
+            Send "!{F4}"
+
+        case cascade_command_close_scope:
+            if parameter
+                CloseCommandMonitorCascade()
+            else
+                CloseCurrentCascadeLayer()
+
+        case cascade_command_gather_to_monitor:
+            GatherCascadesToCommandMonitor()
+
+        case cascade_command_show_help:
+            ToggleWindowCascadeHelp()
+    }
 }
 
 GetManagedCascadeMonitor(hwnd)
@@ -434,35 +447,37 @@ IsWindowInCascadeLayout(hwnd)
 
 AdoptActiveWindow()
 {
+    hwnd := WinExist("A")
+
+    if !hwnd || IsShellSurfaceWindow(hwnd)
+        return
+
+    target_monitor := GetMonitorForWindow(hwnd)
+
+    if target_monitor
+        PlaceCascadeWindowOnMonitor(hwnd, target_monitor)
+}
+
+PlaceCascadeWindowOnMonitor(hwnd, target_monitor)
+{
     global handled_windows, known_windows
     global window_width_ratio, window_height_ratio
     global edge_margin, minimum_width, minimum_height
 
-    hwnd := WinExist("A")
-
-    if !hwnd
-        return
-
-    if IsShellSurfaceWindow(hwnd) {
-        return
-    }
+    if !hwnd || !target_monitor || !WinExist("ahk_id " hwnd)
+        return false
 
     window := "ahk_id " hwnd
+    previous_monitor := GetManagedCascadeMonitor(hwnd)
 
     try {
-        target_monitor := GetMonitorForWindow(hwnd)
-
-        if !target_monitor {
-            return
-        }
-
-        ; A maximized window must become ordinary before cascade geometry can
-        ; be applied. The command itself is an explicit request to windowize it.
+        ; Explicit adoption/gathering is allowed to restore a window before
+        ; applying canonical cascade geometry on the destination monitor.
         if WinGetMinMax(window) != 0
             WinRestore(window)
 
         if !IsCascadeWindow(hwnd)
-            return
+            return false
 
         MonitorGetWorkArea(
             target_monitor,
@@ -491,9 +506,8 @@ AdoptActiveWindow()
             work_height - edge_margin * 2
         )
 
-        ; Exclude the active window from slot counting before choosing its
-        ; destination. This fills an earlier gap when one exists, while keeping
-        ; a window in its current slot when no earlier logical slot is missing.
+        ; Exclude this window before choosing a destination. The normal
+        ; least-used-slot allocator then fills the current layer first.
         RemoveCascadeWindowFromHistory(hwnd)
 
         position := GetNextCascadePosition(
@@ -538,6 +552,10 @@ AdoptActiveWindow()
             window_height
         )
 
+        if previous_monitor && previous_monitor != target_monitor
+            QueueCascadeCompaction(previous_monitor)
+
+        return true
     }
     catch Error as err {
         error_number := 0
@@ -548,47 +566,157 @@ AdoptActiveWindow()
         if err.What = "WinMove" && error_number = 5 {
             handled_windows[hwnd] := true
             known_windows[hwnd] := true
-            return
         }
 
-        return
+        ; A failed re-slot/gather must not silently drop an already managed
+        ; window from its original monitor history.
+        if previous_monitor
+            && !GetManagedCascadeMonitor(hwnd)
+            && WinExist("ahk_id " hwnd)
+        {
+            RecordCascadeWindow(previous_monitor, hwnd)
+        }
+
+        return false
     }
 }
 
-NavigateCascade(direction)
+GatherCascadesToCommandMonitor()
+{
+    global cascade_history
+    global layer_minimized_windows_by_monitor
+    global monitor_minimized_windows_by_monitor
+
+    target_monitor := GetCommandMonitor()
+
+    if !target_monitor
+        return
+
+    windows_to_gather := []
+    source_monitors := Map()
+    seen := Map()
+
+    ; Snapshot source histories first because successful placement moves each
+    ; window into the destination history.
+    for monitor_index, history in cascade_history {
+        if monitor_index = target_monitor
+            continue
+
+        source_monitors[monitor_index] := true
+
+        for hwnd in history {
+            if seen.Has(hwnd) || !WinExist("ahk_id " hwnd)
+                continue
+
+            seen[hwnd] := true
+            windows_to_gather.Push(hwnd)
+        }
+    }
+
+    if windows_to_gather.Length = 0
+        return
+
+    ; Restore script-hidden destination layers before counting occupancy so
+    ; imported windows fill the real current layer instead of overlapping it.
+    if monitor_minimized_windows_by_monitor.Has(target_monitor) {
+        RestoreCascadeWindows(
+            monitor_minimized_windows_by_monitor[target_monitor]
+        )
+        monitor_minimized_windows_by_monitor.Delete(target_monitor)
+    }
+
+    if layer_minimized_windows_by_monitor.Has(target_monitor) {
+        RestoreCascadeWindows(
+            layer_minimized_windows_by_monitor[target_monitor]
+        )
+        layer_minimized_windows_by_monitor.Delete(target_monitor)
+    }
+
+    for hwnd in windows_to_gather
+        PlaceCascadeWindowOnMonitor(hwnd, target_monitor)
+
+    ; Every managed source window was gathered, so old per-monitor restore
+    ; state must not retain handles that now belong to the destination monitor.
+    for monitor_index in source_monitors {
+        if layer_minimized_windows_by_monitor.Has(monitor_index)
+            layer_minimized_windows_by_monitor.Delete(monitor_index)
+
+        if monitor_minimized_windows_by_monitor.Has(monitor_index)
+            monitor_minimized_windows_by_monitor.Delete(monitor_index)
+    }
+
+    BringCascadeForward(target_monitor)
+    QueueFocusCornerUpdate()
+}
+
+GetCommandMonitor()
 {
     active_hwnd := WinExist("A")
-    monitor_index := 0
 
-    ; A normal active window determines which monitor to navigate.
     if active_hwnd
         && !IsShellSurfaceWindow(active_hwnd)
     {
         monitor_index := GetMonitorForWindow(active_hwnd)
+
+        if monitor_index
+            return monitor_index
     }
 
-    ; Desktop/shell focus uses the monitor under the mouse instead.
-    if !monitor_index {
-        MouseGetPos(&mouse_x, &mouse_y)
-        monitor_index := GetMonitorForPoint(mouse_x, mouse_y)
-    }
+    MouseGetPos(&mouse_x, &mouse_y)
+    return GetMonitorForPoint(mouse_x, mouse_y)
+}
 
-    if !monitor_index {
-        return
-    }
+GetCascadeSlotStacksForMonitor(monitor_index)
+{
+    global cascade_slot_tolerance
 
     windows := GetLiveCascadeHistory(monitor_index)
 
     if windows.Length = 0
-        return
+        return []
 
-    navigation_windows := GetCascadeNavigationWindows(windows)
+    return BuildCascadeSlotStacks(
+        windows,
+        cascade_slot_tolerance
+    )
+}
 
-    if navigation_windows.Length = 0 {
-        return
+GetCurrentCascadeLayerWindows(monitor_index)
+{
+    stacks := GetCascadeSlotStacksForMonitor(monitor_index)
+
+    if stacks.Length = 0
+        return []
+
+    z_ranks := GetCascadeWindowZRanks()
+    layer_windows := []
+
+    for stack_info in stacks {
+        ordered_stack := SortCascadeWindowsByZOrder(
+            stack_info["windows"],
+            z_ranks
+        )
+
+        if ordered_stack.Length
+            layer_windows.Push(ordered_stack[1])
     }
 
-    ordered_windows := GetSpatialCascadeOrder(navigation_windows)
+    return GetSpatialCascadeOrder(layer_windows)
+}
+
+FocusCascadeLayerWindow(direction)
+{
+    monitor_index := GetCommandMonitor()
+
+    if !monitor_index
+        return
+
+    ordered_windows := GetCurrentCascadeLayerWindows(monitor_index)
+
+    if ordered_windows.Length = 0
+        return
+
+    active_hwnd := WinExist("A")
     active_index := 0
 
     Loop ordered_windows.Length {
@@ -607,11 +735,10 @@ NavigateCascade(direction)
             target_index := 1
 
         ActivateCascadeWindow(ordered_windows[target_index])
-
         return
     }
 
-    ; If focus is outside the managed cascade, enter at the nearest window
+    ; If focus is outside the exposed layer, enter at the nearest window
     ; physically above/below the active window.
     target_hwnd := GetNearestSpatialCascadeWindow(
         ordered_windows,
@@ -619,65 +746,243 @@ NavigateCascade(direction)
         direction
     )
 
-    if target_hwnd {
+    if target_hwnd
         ActivateCascadeWindow(target_hwnd)
-    }
 }
 
-GetCascadeNavigationWindows(windows)
+SwapActiveCascadeWindow(direction)
 {
-    global cascade_slot_tolerance
+    active_hwnd := WinExist("A")
 
-    stacks := BuildCascadeSlotStacks(
-        windows,
-        cascade_slot_tolerance
+    if !active_hwnd || IsShellSurfaceWindow(active_hwnd)
+        return
+
+    monitor_index := GetMonitorForWindow(active_hwnd)
+
+    if !monitor_index
+        return
+
+    ordered_windows := GetCurrentCascadeLayerWindows(monitor_index)
+
+    if ordered_windows.Length < 2
+        return
+
+    active_index := 0
+
+    Loop ordered_windows.Length {
+        if ordered_windows[A_Index] = active_hwnd {
+            active_index := A_Index
+            break
+        }
+    }
+
+    ; Only an exposed current-layer window can move between slots.
+    if !active_index
+        return
+
+    target_index := active_index + (direction < 0 ? -1 : 1)
+
+    if target_index < 1
+        target_index := ordered_windows.Length
+    else if target_index > ordered_windows.Length
+        target_index := 1
+
+    target_hwnd := ordered_windows[target_index]
+
+    if !TryGetVisibleFrameRect(
+        active_hwnd,
+        &active_x,
+        &active_y,
+        &active_width,
+        &active_height,
+        &active_inset_left,
+        &active_inset_top,
+        &active_inset_right,
+        &active_inset_bottom
+    ) {
+        return
+    }
+
+    if !TryGetVisibleFrameRect(
+        target_hwnd,
+        &target_x,
+        &target_y,
+        &target_width,
+        &target_height,
+        &target_inset_left,
+        &target_inset_top,
+        &target_inset_right,
+        &target_inset_bottom
+    ) {
+        return
+    }
+
+    ; Swap only the two exposed layer windows. Deeper windows remain in place.
+    if !MoveCascadeWindowToSlot(target_hwnd, active_x, active_y)
+        return
+
+    if !MoveCascadeWindowToSlot(active_hwnd, target_x, target_y) {
+        MoveCascadeWindowToSlot(target_hwnd, target_x, target_y)
+        return
+    }
+
+    ; Keep both swapped windows above the deeper layers in their new slots,
+    ; while preserving focus on the active window.
+    z_flags := (
+        0x0001  ; SWP_NOSIZE
+        | 0x0002  ; SWP_NOMOVE
+        | 0x0010  ; SWP_NOACTIVATE
+        | 0x0200  ; SWP_NOOWNERZORDER
     )
 
+    try DllCall(
+        "SetWindowPos",
+        "ptr", target_hwnd,
+        "ptr", active_hwnd,
+        "int", 0,
+        "int", 0,
+        "int", 0,
+        "int", 0,
+        "uint", z_flags,
+        "int"
+    )
+
+    QueueFocusCornerUpdate()
+}
+
+MoveCascadeWindowToSlot(hwnd, target_x, target_y)
+{
+    if !TryGetVisibleFrameRect(
+        hwnd,
+        &current_x,
+        &current_y,
+        &current_width,
+        &current_height,
+        &inset_left,
+        &inset_top,
+        &inset_right,
+        &inset_bottom
+    ) {
+        return false
+    }
+
+    raw_target := GetRawRectForVisibleTarget(
+        hwnd,
+        target_x,
+        target_y,
+        current_width,
+        current_height
+    )
+
+    try {
+        WinMove(
+            raw_target[1],
+            raw_target[2],
+            raw_target[3],
+            raw_target[4],
+            "ahk_id " hwnd
+        )
+    }
+    catch {
+        return false
+    }
+
+    return true
+}
+
+RotateCurrentCascadeSlot(direction)
+{
+    active_hwnd := WinExist("A")
+
+    if !active_hwnd || IsShellSurfaceWindow(active_hwnd)
+        return
+
+    monitor_index := GetMonitorForWindow(active_hwnd)
+
+    if !monitor_index
+        return
+
+    stacks := GetCascadeSlotStacksForMonitor(monitor_index)
     z_ranks := GetCascadeWindowZRanks()
-    navigation_windows := []
-    grouped_windows := Map()
 
-    ; Each canonical slot contributes only its currently exposed top window.
     for stack_info in stacks {
-        stack_windows := stack_info["windows"]
-
-        if stack_windows.Length = 0
-            continue
-
         ordered_stack := SortCascadeWindowsByZOrder(
-            stack_windows,
+            stack_info["windows"],
             z_ranks
         )
 
-        if ordered_stack.Length
-            navigation_windows.Push(ordered_stack[1])
+        ; The focused window must be the exposed member of this slot.
+        if ordered_stack.Length < 2 || ordered_stack[1] != active_hwnd
+            continue
 
-        for hwnd in stack_windows
-            grouped_windows[hwnd] := true
+        next_hwnd := RotateCascadeStackWindows(
+            ordered_stack,
+            direction
+        )
+
+        if next_hwnd
+            ActivateCascadeWindow(next_hwnd)
+
+        QueueFocusCornerUpdate()
+        return
     }
-
-    ; A manually moved managed window that no longer belongs to a canonical
-    ; slot remains independently navigable.
-    for hwnd in windows {
-        if grouped_windows.Has(hwnd)
-            continue
-
-        if !WinExist("ahk_id " hwnd)
-            continue
-
-        try {
-            if WinGetMinMax("ahk_id " hwnd) = -1
-                continue
-        }
-        catch {
-            continue
-        }
-
-        navigation_windows.Push(hwnd)
-    }
-
-    return navigation_windows
 }
+
+RotateCascadeStackWindows(ordered_windows, direction)
+{
+    if ordered_windows.Length < 2
+        return 0
+
+    flags := (
+        0x0001  ; SWP_NOSIZE
+        | 0x0002  ; SWP_NOMOVE
+        | 0x0010  ; SWP_NOACTIVATE
+        | 0x0200  ; SWP_NOOWNERZORDER
+    )
+
+    try {
+        if direction < 0 {
+            ; Previous layer: bring the deepest window to the front.
+            target_hwnd := ordered_windows[ordered_windows.Length]
+
+            succeeded := DllCall(
+                "SetWindowPos",
+                "ptr", target_hwnd,
+                "ptr", 0, ; HWND_TOP
+                "int", 0,
+                "int", 0,
+                "int", 0,
+                "int", 0,
+                "uint", flags,
+                "int"
+            )
+
+            return succeeded ? target_hwnd : 0
+        }
+
+        ; Next layer: move the exposed window behind the deepest window.
+        current_hwnd := ordered_windows[1]
+        deepest_hwnd := ordered_windows[ordered_windows.Length]
+
+        succeeded := DllCall(
+            "SetWindowPos",
+            "ptr", current_hwnd,
+            "ptr", deepest_hwnd,
+            "int", 0,
+            "int", 0,
+            "int", 0,
+            "int", 0,
+            "uint", flags,
+            "int"
+        )
+
+        return succeeded ? ordered_windows[2] : 0
+    }
+    catch {
+        return 0
+    }
+}
+
 GetSpatialCascadeOrder(windows)
 {
     spatial_items := []
@@ -819,14 +1124,9 @@ ActivateCascadeWindow(hwnd)
     }
 }
 
-BringMouseMonitorCascadeForward()
+BringCommandMonitorCascadeForward()
 {
-    MouseGetPos(&mouse_x, &mouse_y)
-
-    monitor_index := GetMonitorForPoint(
-        mouse_x,
-        mouse_y
-    )
+    monitor_index := GetCommandMonitor()
 
     if !monitor_index
         return
@@ -925,81 +1225,46 @@ BringCascadeForward(monitor_index)
     ActivateCascadeWindow(last_used_hwnd)
 }
 
-CycleCascadeStacks()
+RotateCascadeLayers(direction := 1)
 {
-    global cascade_slot_tolerance
+    monitor_index := GetCommandMonitor()
 
-    windows := GetAllLiveCascadeWindows()
-
-    if windows.Length < 2
+    if !monitor_index
         return
 
-    stacks := BuildCascadeSlotStacks(
-        windows,
-        cascade_slot_tolerance
-    )
+    stacks := GetCascadeSlotStacksForMonitor(monitor_index)
+
+    if stacks.Length = 0
+        return
 
     z_ranks := GetCascadeWindowZRanks()
     active_hwnd := WinExist("A")
     next_active_hwnd := 0
 
     for stack_info in stacks {
-        stack_windows := stack_info["windows"]
-
-        if stack_windows.Length < 2
-            continue
-
-        ordered_windows := SortCascadeWindowsByZOrder(
-            stack_windows,
+        ordered_stack := SortCascadeWindowsByZOrder(
+            stack_info["windows"],
             z_ranks
         )
 
-        if ordered_windows.Length < 2
+        if ordered_stack.Length < 2
             continue
 
-        top_hwnd := ordered_windows[1]
-        new_top_hwnd := ordered_windows[2]
-        bottom_hwnd := ordered_windows[ordered_windows.Length]
-
-        flags := (
-            0x0001  ; SWP_NOSIZE
-            | 0x0002  ; SWP_NOMOVE
-            | 0x0010  ; SWP_NOACTIVATE
-            | 0x0200  ; SWP_NOOWNERZORDER
+        was_active := ordered_stack[1] = active_hwnd
+        new_top_hwnd := RotateCascadeStackWindows(
+            ordered_stack,
+            direction
         )
 
-        try {
-            succeeded := DllCall(
-                "SetWindowPos",
-                "ptr", top_hwnd,
-                "ptr", bottom_hwnd,
-                "int", 0,
-                "int", 0,
-                "int", 0,
-                "int", 0,
-                "uint", flags,
-                "int"
-            )
-
-            if !succeeded {
-                continue
-            }
-
-            if active_hwnd = top_hwnd
-                next_active_hwnd := new_top_hwnd
-        }
-        catch {
-            continue
-        }
+        if was_active && new_top_hwnd
+            next_active_hwnd := new_top_hwnd
     }
 
     if next_active_hwnd
-        && WinExist("ahk_id " next_active_hwnd)
-    {
-        try WinActivate("ahk_id " next_active_hwnd)
-    }
-}
+        ActivateCascadeWindow(next_active_hwnd)
 
+    QueueFocusCornerUpdate()
+}
 
 BuildCascadeSlotStacks(windows, tolerance)
 {
@@ -1108,6 +1373,7 @@ BuildCascadeSlotStacks(windows, tolerance)
         }
 
         stack_info := Map(
+            "slot_index", best_slot_index,
             "windows", [hwnd]
         )
 
@@ -1117,54 +1383,206 @@ BuildCascadeSlotStacks(windows, tolerance)
 
     return stacks
 }
-GetAllLiveCascadeWindows()
+
+QueueCascadeCompaction(monitor_index)
 {
-    global cascade_history
+    global cascade_compaction_pending
 
-    windows := []
-    seen := Map()
+    if !monitor_index
+        return
 
-    for monitor_index, history in cascade_history {
-        live_history := []
+    cascade_compaction_pending[monitor_index] := true
 
-        for hwnd in history {
-            if seen.Has(hwnd)
-                continue
+    ; Batch closes/destruction into one final compaction.
+    SetTimer FlushCascadeCompactions, -120
+}
 
-            if !WinExist("ahk_id " hwnd)
-                continue
+FlushCascadeCompactions()
+{
+    global cascade_compaction_pending
 
-            ; Minimized windows have no useful cascade geometry. Preserve their
-            ; recorded membership until they are restored.
+    monitors := []
+
+    for monitor_index in cascade_compaction_pending
+        monitors.Push(monitor_index)
+
+    cascade_compaction_pending := Map()
+
+    for monitor_index in monitors
+        CompactCascadeLayout(monitor_index)
+}
+
+CompactCascadeLayout(monitor_index)
+{
+    global cascade_slot_tolerance
+    global layer_minimized_windows_by_monitor
+    global monitor_minimized_windows_by_monitor
+    global window_width_ratio, window_height_ratio
+    global edge_margin, minimum_width, minimum_height
+
+    ; A fully hidden monitor has nothing visible to compact.
+    if monitor_minimized_windows_by_monitor.Has(monitor_index)
+        return
+
+    windows := GetLiveCascadeHistory(monitor_index)
+
+    ; Keep a script-hidden layer out of compaction while packing the layers
+    ; that remain visible. Restoring the hidden layer compacts everything.
+    if layer_minimized_windows_by_monitor.Has(monitor_index) {
+        visible_windows := []
+
+        for hwnd in windows {
             try {
-                if WinGetMinMax("ahk_id " hwnd) = -1 {
-                    seen[hwnd] := true
-                    live_history.Push(hwnd)
-                    windows.Push(hwnd)
+                if WinGetMinMax("ahk_id " hwnd) = -1
                     continue
-                }
             }
             catch {
                 continue
             }
 
-            ; Moving to another monitor or deliberately away from every
-            ; canonical slot releases the window from the cascade.
-            if GetMonitorForWindow(hwnd) != monitor_index
-                continue
-
-            if !IsWindowInCascadeLayout(hwnd)
-                continue
-
-            seen[hwnd] := true
-            live_history.Push(hwnd)
-            windows.Push(hwnd)
+            visible_windows.Push(hwnd)
         }
 
-        cascade_history[monitor_index] := live_history
+        windows := visible_windows
     }
 
-    return windows
+    if windows.Length = 0
+        return
+
+    stacks := BuildCascadeSlotStacks(
+        windows,
+        cascade_slot_tolerance
+    )
+
+    if stacks.Length = 0
+        return
+
+    MonitorGetWorkArea(
+        monitor_index,
+        &work_left,
+        &work_top,
+        &work_right,
+        &work_bottom
+    )
+
+    work_width := work_right - work_left
+    work_height := work_bottom - work_top
+
+    window_width := Max(
+        minimum_width,
+        Floor(work_width * window_width_ratio)
+    )
+
+    window_height := Max(
+        minimum_height,
+        Floor(work_height * window_height_ratio)
+    )
+
+    window_width := Min(
+        window_width,
+        work_width - edge_margin * 2
+    )
+
+    window_height := Min(
+        window_height,
+        work_height - edge_margin * 2
+    )
+
+    slots := BuildCascadeSlots(
+        work_left,
+        work_top,
+        work_right,
+        work_bottom,
+        window_width,
+        window_height
+    )
+
+    if slots.Length = 0
+        return
+
+    z_ranks := GetCascadeWindowZRanks()
+    stacks_by_slot := Map()
+    maximum_depth := 0
+
+    for stack_info in stacks {
+        ordered_stack := SortCascadeWindowsByZOrder(
+            stack_info["windows"],
+            z_ranks
+        )
+
+        stacks_by_slot[stack_info["slot_index"]] := ordered_stack
+        maximum_depth := Max(maximum_depth, ordered_stack.Length)
+    }
+
+    ; Read the current cascade layer-first and slot-first. Repacking this order
+    ; makes every earlier slot/layer dense without changing layer order.
+    ordered_windows := []
+
+    Loop maximum_depth {
+        layer_index := A_Index
+
+        Loop slots.Length {
+            slot_index := A_Index
+
+            if !stacks_by_slot.Has(slot_index)
+                continue
+
+            stack_windows := stacks_by_slot[slot_index]
+
+            if layer_index <= stack_windows.Length
+                ordered_windows.Push(stack_windows[layer_index])
+        }
+    }
+
+    target_stacks := []
+
+    Loop slots.Length
+        target_stacks.Push([])
+
+    for linear_index, hwnd in ordered_windows {
+        target_slot_index := Mod(linear_index - 1, slots.Length) + 1
+        target_slot := slots[target_slot_index]
+
+        MoveCascadeWindowToSlot(
+            hwnd,
+            target_slot[1],
+            target_slot[2]
+        )
+
+        target_stacks[target_slot_index].Push(hwnd)
+    }
+
+    ; Keep each target stack in the same top-to-bottom layer order.
+    z_flags := (
+        0x0001  ; SWP_NOSIZE
+        | 0x0002  ; SWP_NOMOVE
+        | 0x0010  ; SWP_NOACTIVATE
+        | 0x0200  ; SWP_NOOWNERZORDER
+    )
+
+    for stack_windows in target_stacks {
+        if stack_windows.Length < 2
+            continue
+
+        Loop stack_windows.Length - 1 {
+            upper_hwnd := stack_windows[A_Index]
+            lower_hwnd := stack_windows[A_Index + 1]
+
+            try DllCall(
+                "SetWindowPos",
+                "ptr", lower_hwnd,
+                "ptr", upper_hwnd,
+                "int", 0,
+                "int", 0,
+                "int", 0,
+                "int", 0,
+                "uint", z_flags,
+                "int"
+            )
+        }
+    }
+
+    QueueFocusCornerUpdate()
 }
 
 GetCascadeWindowZRanks()
@@ -1220,6 +1638,8 @@ GetLiveCascadeHistory(monitor_index)
     if !cascade_history.Has(monitor_index)
         return live_history
 
+    previous_count := cascade_history[monitor_index].Length
+
     for hwnd in cascade_history[monitor_index] {
         if !WinExist("ahk_id " hwnd)
             continue
@@ -1246,6 +1666,9 @@ GetLiveCascadeHistory(monitor_index)
     }
 
     cascade_history[monitor_index] := live_history
+
+    if live_history.Length < previous_count
+        QueueCascadeCompaction(monitor_index)
 
     return live_history
 }
@@ -1677,6 +2100,8 @@ ForgetWindow(hwnd)
     global startup_windows, known_windows
     global current_foreground_hwnd, previous_foreground_hwnd
 
+    affected_monitor := GetManagedCascadeMonitor(hwnd)
+
     if startup_windows.Has(hwnd)
         startup_windows.Delete(hwnd)
 
@@ -1700,6 +2125,7 @@ ForgetWindow(hwnd)
     if previous_foreground_hwnd = hwnd
         previous_foreground_hwnd := 0
 
+    RemoveWindowFromMinimizeState(hwnd)
 
     ; Remove the destroyed handle from per-monitor histories. This also avoids
     ; stale hwnd reuse after the application has been closed for a while.
@@ -1714,6 +2140,46 @@ ForgetWindow(hwnd)
         }
     }
 
+    if affected_monitor
+        QueueCascadeCompaction(affected_monitor)
+}
+
+RemoveWindowFromMinimizeState(hwnd)
+{
+    global layer_minimized_windows_by_monitor
+    global monitor_minimized_windows_by_monitor
+
+    RemoveWindowFromMonitorWindowLists(
+        layer_minimized_windows_by_monitor,
+        hwnd
+    )
+
+    RemoveWindowFromMonitorWindowLists(
+        monitor_minimized_windows_by_monitor,
+        hwnd
+    )
+}
+
+RemoveWindowFromMonitorWindowLists(window_lists, hwnd)
+{
+    empty_monitors := []
+
+    for monitor_index, windows in window_lists {
+        index := windows.Length
+
+        while index >= 1 {
+            if windows[index] = hwnd
+                windows.RemoveAt(index)
+
+            index -= 1
+        }
+
+        if windows.Length = 0
+            empty_monitors.Push(monitor_index)
+    }
+
+    for monitor_index in empty_monitors
+        window_lists.Delete(monitor_index)
 }
 
 
@@ -2977,9 +3443,11 @@ BuildCascadeSlots(
         window_height
     )
 
+    ; Slot 1 is the optimally centered position. Fill every position upward
+    ; from center before continuing downward from center.
     slots := [[center_x, center_y]]
 
-    ; First branch: left and upward from center.
+    ; Slots 2...N: left and upward from center until no more positions fit.
     step := 1
 
     Loop {
@@ -3003,7 +3471,7 @@ BuildCascadeSlots(
         step += 1
     }
 
-    ; Second branch: right and downward from center.
+    ; Remaining slots: right and downward from center until the work area ends.
     step := 1
 
     Loop {
@@ -3713,25 +4181,32 @@ ToggleWindowCascadeHelp(*)
         "Tap Caps, then key   One-shot command for 1.4 seconds`n"
         "`n"
         "CONTROLS`n"
-        "Caps + PgUp          Previous cascade window`n"
-        "Caps + PgDn          Next cascade window`n"
-        "Caps + Backspace     Adopt / re-slot active window`n"
-        "Caps + Tab           Rotate stacked cascade windows`n"
-        "Caps + Home          Bring this monitor's cascade to front`n"
-        "Caps + M             Minimize / restore cascade windows`n"
-        "Caps + Delete        Close active window`n"
-        "Caps + F4            Close all managed cascade windows"
+        "Caps + Up / Down          Swap visible window up / down`n"
+        "Caps + Left / Right       Previous / next layer in this slot`n"
+        "Caps + PgUp / PgDn        Focus visible window up / down`n"
+        "Caps + Backspace          Adopt / re-slot active window`n"
+        "Caps + Tab                Rotate layers`n"
+        "Caps + M                  Minimize / restore current layer`n"
+        "Caps + F4                 Close current layer`n"
+        "Caps + Delete             Close active window`n"
+        "Caps + Shift + Home       Bring this monitor's cascade to front`n"
+        "Caps + Shift + M          Minimize / restore all layers on monitor`n"
+        "Caps + Shift + F4         Close all layers on monitor`n"
+        "Caps + Shift + Insert     Gather other monitors' cascades here"
         )
     } else {
         help_text :=
         (
         "CONTROLS`n"
-        "Left Alt + PgUp      Previous cascade window`n"
-        "Left Alt + PgDn      Next cascade window`n"
-        "Left Alt + Backspace Adopt / re-slot active window`n"
-        "Left Alt + F7        Rotate stacked cascade windows`n"
-        "Left Alt + Home      Bring this monitor's cascade to front`n"
-        "Left Alt + M         Minimize / restore cascade windows"
+        "Left Alt + Up / Down       Swap visible window up / down`n"
+        "Left Alt + Left / Right    Previous / next layer in this slot`n"
+        "Left Alt + PgUp / PgDn     Focus visible window up / down`n"
+        "Left Alt + Backspace       Adopt / re-slot active window`n"
+        "Left Alt + Shift + Tab     Rotate layers`n"
+        "Left Alt + M               Minimize / restore current layer`n"
+        "Left Alt + Shift + M       Minimize / restore all layers on monitor`n"
+        "Left Alt + Shift + Home    Bring this monitor's cascade to front`n"
+        "Left Alt + Shift + Insert  Gather other monitors' cascades here"
         )
     }
 
@@ -3750,7 +4225,7 @@ ToggleWindowCascadeHelp(*)
     "Check compatibility  Check conflicting settings"
     )
 
-    help_gui.AddText("w610", help_text)
+    help_gui.AddText("w720", help_text)
 
     help_gui.OnEvent("Close", CloseHelp)
     help_gui.OnEvent("Escape", CloseHelp)
@@ -3872,61 +4347,56 @@ HandleScriptExit(exit_reason, exit_code)
 ; managed window commands
 ; =============================================================================
 
-CloseCascadeWindows()
+CloseCurrentCascadeLayer()
 {
-    windows := GetCascadeWindowsForClose()
+    monitor_index := GetCommandMonitor()
 
-    if windows.Length = 0
+    if !monitor_index
         return
 
-    z_ranks := GetCascadeWindowZRanks()
-
-    ordered_windows := SortCascadeWindowsByZOrder(
-        windows,
-        z_ranks
+    CloseCascadeWindowList(
+        GetCurrentCascadeLayerWindows(monitor_index)
     )
-
-    ; Include windows that are still being placed, not only windows that have
-    ; already reached cascade history.
-    for hwnd in ordered_windows {
-        if !WinExist("ahk_id " hwnd)
-            continue
-
-        try WinClose("ahk_id " hwnd)
-    }
 }
 
-
-GetCascadeWindowsForClose()
+CloseCommandMonitorCascade()
 {
-    global pending_windows, placement_reservations
+    global layer_minimized_windows_by_monitor
+    global monitor_minimized_windows_by_monitor
 
-    windows := GetAllLiveCascadeWindows()
+    monitor_index := GetCommandMonitor()
+
+    if !monitor_index
+        return
+
+    windows := GetCascadeWindowsForMonitorClose(monitor_index)
+    CloseCascadeWindowList(windows)
+
+    ; Closing a monitor cascade invalidates any script-owned restore state.
+    if layer_minimized_windows_by_monitor.Has(monitor_index)
+        layer_minimized_windows_by_monitor.Delete(monitor_index)
+
+    if monitor_minimized_windows_by_monitor.Has(monitor_index)
+        monitor_minimized_windows_by_monitor.Delete(monitor_index)
+}
+
+GetCascadeWindowsForMonitorClose(monitor_index)
+{
+    global placement_reservations
+
+    windows := GetLiveCascadeHistory(monitor_index)
     seen := Map()
 
     for hwnd in windows
         seen[hwnd] := true
 
-    ; A rapidly opened window may still be waiting for placement and therefore
-    ; not exist in cascade_history yet.
-    for hwnd in pending_windows {
-        if seen.Has(hwnd)
+    ; Include windows already reserved for this monitor even if asynchronous
+    ; placement has not reached cascade history yet.
+    for hwnd, reservation in placement_reservations {
+        if reservation["monitor"] != monitor_index
             continue
 
-        if !WinExist("ahk_id " hwnd)
-            continue
-
-        seen[hwnd] := true
-        windows.Push(hwnd)
-    }
-
-    ; Reservations cover windows whose slot has been selected but whose
-    ; asynchronous placement/stabilization has not finished yet.
-    for hwnd in placement_reservations {
-        if seen.Has(hwnd)
-            continue
-
-        if !WinExist("ahk_id " hwnd)
+        if seen.Has(hwnd) || !WinExist("ahk_id " hwnd)
             continue
 
         seen[hwnd] := true
@@ -3936,35 +4406,117 @@ GetCascadeWindowsForClose()
     return windows
 }
 
-ToggleCascadeMinimize()
+CloseCascadeWindowList(windows)
 {
-    static cascade_is_minimized := false
-    static minimized_windows := []
+    if windows.Length = 0
+        return
 
-    if cascade_is_minimized {
-        RestoreCascadeWindows(minimized_windows)
+    z_ranks := GetCascadeWindowZRanks()
+    ordered_windows := SortCascadeWindowsByZOrder(
+        windows,
+        z_ranks
+    )
 
-        minimized_windows := []
-        cascade_is_minimized := false
+    for hwnd in ordered_windows {
+        if !WinExist("ahk_id " hwnd)
+            continue
+
+        try WinClose("ahk_id " hwnd)
+    }
+}
+
+ToggleCurrentCascadeLayerMinimize()
+{
+    global layer_minimized_windows_by_monitor
+    global monitor_minimized_windows_by_monitor
+
+    monitor_index := GetCommandMonitor()
+
+    if !monitor_index
+        return
+
+    ; A fully minimized monitor must be restored with the monitor-wide command.
+    if monitor_minimized_windows_by_monitor.Has(monitor_index)
+        return
+
+    if layer_minimized_windows_by_monitor.Has(monitor_index) {
+        windows := layer_minimized_windows_by_monitor[monitor_index]
+        layer_minimized_windows_by_monitor.Delete(monitor_index)
+        RestoreCascadeWindows(windows)
+        QueueCascadeCompaction(monitor_index)
+        QueueFocusCornerUpdate()
         return
     }
 
-    minimized_windows := MinimizeCascadeWindows()
+    windows := GetCurrentCascadeLayerWindows(monitor_index)
+    minimized_windows := MinimizeCascadeWindows(windows)
 
     if minimized_windows.Length
-        cascade_is_minimized := true
+        layer_minimized_windows_by_monitor[monitor_index] := minimized_windows
+
+    QueueFocusCornerUpdate()
 }
 
-MinimizeCascadeWindows()
+ToggleCommandMonitorCascadeMinimize()
 {
-    windows := GetAllLiveCascadeWindows()
+    global layer_minimized_windows_by_monitor
+    global monitor_minimized_windows_by_monitor
 
-    if windows.Length = 0 {
-        return []
+    monitor_index := GetCommandMonitor()
+
+    if !monitor_index
+        return
+
+    if monitor_minimized_windows_by_monitor.Has(monitor_index) {
+        windows := monitor_minimized_windows_by_monitor[monitor_index]
+        monitor_minimized_windows_by_monitor.Delete(monitor_index)
+        RestoreCascadeWindows(windows)
+        QueueCascadeCompaction(monitor_index)
+        QueueFocusCornerUpdate()
+        return
     }
 
-    z_ranks := GetCascadeWindowZRanks()
+    ; If one layer was already hidden, absorb it into the monitor-wide toggle
+    ; so Shift+M restores the complete cascade in one step.
+    saved_windows := []
+    seen := Map()
 
+    if layer_minimized_windows_by_monitor.Has(monitor_index) {
+        for hwnd in layer_minimized_windows_by_monitor[monitor_index] {
+            if !WinExist("ahk_id " hwnd) || seen.Has(hwnd)
+                continue
+
+            seen[hwnd] := true
+            saved_windows.Push(hwnd)
+        }
+
+        layer_minimized_windows_by_monitor.Delete(monitor_index)
+    }
+
+    visible_windows := MinimizeCascadeWindows(
+        GetLiveCascadeHistory(monitor_index)
+    )
+
+    for hwnd in visible_windows {
+        if seen.Has(hwnd)
+            continue
+
+        seen[hwnd] := true
+        saved_windows.Push(hwnd)
+    }
+
+    if saved_windows.Length
+        monitor_minimized_windows_by_monitor[monitor_index] := saved_windows
+
+    QueueFocusCornerUpdate()
+}
+
+MinimizeCascadeWindows(windows)
+{
+    if windows.Length = 0
+        return []
+
+    z_ranks := GetCascadeWindowZRanks()
     ordered_windows := SortCascadeWindowsByZOrder(
         windows,
         z_ranks
@@ -3972,8 +4524,8 @@ MinimizeCascadeWindows()
 
     windows_to_minimize := []
 
-    ; Only remember windows that were visible before this toggle.
-    ; Windows already minimized by the user stay minimized on restore.
+    ; Remember only windows visible before this toggle. Windows minimized by
+    ; the user independently are never restored by Window Cascade.
     for hwnd in ordered_windows {
         if !WinExist("ahk_id " hwnd)
             continue
@@ -3989,9 +4541,6 @@ MinimizeCascadeWindows()
         windows_to_minimize.Push(hwnd)
     }
 
-    if windows_to_minimize.Length = 0
-        return []
-
     for hwnd in windows_to_minimize {
         try WinMinimize("ahk_id " hwnd)
     }
@@ -4006,8 +4555,7 @@ RestoreCascadeWindows(windows)
 
     top_restored_hwnd := 0
 
-    ; The saved list is top-to-bottom.
-    ; Restore bottom-to-top first.
+    ; The saved list is top-to-bottom. Restore bottom-to-top first.
     Loop windows.Length {
         index := windows.Length - A_Index + 1
         hwnd := windows[index]
@@ -4015,21 +4563,16 @@ RestoreCascadeWindows(windows)
         if !WinExist("ahk_id " hwnd)
             continue
 
-        try {
-            WinRestore("ahk_id " hwnd)
-        }
-        catch {
-            continue
-        }
+        try WinRestore("ahk_id " hwnd)
     }
 
     ; Rebuild the saved Z-order explicitly.
-    ; Processing bottom-to-top leaves windows[1] at the front.
-    flags :=
+    flags := (
         0x0001  ; SWP_NOSIZE
         | 0x0002  ; SWP_NOMOVE
         | 0x0010  ; SWP_NOACTIVATE
         | 0x0200  ; SWP_NOOWNERZORDER
+    )
 
     Loop windows.Length {
         index := windows.Length - A_Index + 1
@@ -4038,25 +4581,19 @@ RestoreCascadeWindows(windows)
         if !WinExist("ahk_id " hwnd)
             continue
 
-        try {
-            DllCall(
-                "SetWindowPos",
-                "ptr", hwnd,
-                "ptr", 0,  ; HWND_TOP
-                "int", 0,
-                "int", 0,
-                "int", 0,
-                "int", 0,
-                "uint", flags,
-                "int"
-            )
-        }
-        catch {
-            continue
-        }
+        try DllCall(
+            "SetWindowPos",
+            "ptr", hwnd,
+            "ptr", 0, ; HWND_TOP
+            "int", 0,
+            "int", 0,
+            "int", 0,
+            "int", 0,
+            "uint", flags,
+            "int"
+        )
     }
 
-    ; Bring the cascade itself back to the foreground.
     for hwnd in windows {
         if !WinExist("ahk_id " hwnd)
             continue
@@ -4065,7 +4602,6 @@ RestoreCascadeWindows(windows)
         break
     }
 
-    if top_restored_hwnd {
-        try WinActivate("ahk_id " top_restored_hwnd)
-    }
+    if top_restored_hwnd
+        ActivateCascadeWindow(top_restored_hwnd)
 }
