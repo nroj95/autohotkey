@@ -207,49 +207,68 @@ SetTimer(CheckCompatibilitySettings, -500)
 ; =============================================================================
 ; standalone hotkeys
 ; =============================================================================
-; These work without CapsLock Layer. Use Left Alt specifically so AltGr remains
-; available on keyboard layouts that use Right Alt for alternate characters.
+; Left Ctrl + Left Alt keeps the standalone layer away from common Alt-only
+; app shortcuts and avoids treating Right Alt / AltGr as a cascade modifier.
 
 #HotIf !IsCapsLockLayerRunning()
 
-<!Up::SwapActiveCascadeWindow(-1)
-<!Down::SwapActiveCascadeWindow(1)
-<!Left::RotateCurrentCascadeSlot(-1)
-<!Right::RotateCurrentCascadeSlot(1)
-<!PgUp::FocusCascadeLayerWindow(-1)
-<!PgDn::FocusCascadeLayerWindow(1)
+<^<!Up::SwapActiveCascadeWindow(-1)
+<^<!Down::SwapActiveCascadeWindow(1)
+<^<!Left::RotateCurrentCascadeSlot(-1)
+<^<!Right::RotateCurrentCascadeSlot(1)
+<^<!PgUp::FocusCascadeLayerWindow(-1)
+<^<!PgDn::FocusCascadeLayerWindow(1)
 
-<!Backspace::
+<^<!Backspace::
 {
     AdoptActiveWindow()
     KeyWait "Backspace"
 }
 
-<!+Tab::
+; Ctrl + Alt + Tab is a Windows task-switcher shortcut, so use Space instead.
+<^<!Space::
 {
     RotateCascadeLayers(1)
-    KeyWait "Tab"
+    KeyWait "Space"
 }
 
-<!Home::
+<^<!Home::
 {
     BringCommandMonitorCascadeForward()
     KeyWait "Home"
 }
 
-<!m::
+<^<!m::
 {
     ToggleCurrentCascadeLayerMinimize()
     KeyWait "m"
 }
 
-<!+m::
+<^<!F4::
+{
+    CloseCurrentCascadeLayer()
+    KeyWait "F4"
+}
+
+<^<!h::
+{
+    ToggleWindowCascadeHelp()
+    KeyWait "h"
+}
+
+<^<!+m::
 {
     ToggleCommandMonitorCascadeMinimize()
     KeyWait "m"
 }
 
-<!+F7::
+<^<!+F4::
+{
+    CloseCommandMonitorCascade()
+    KeyWait "F4"
+}
+
+<^<!+F7::
 {
     GatherCascadesToCommandMonitor()
     KeyWait "F7"
@@ -4197,16 +4216,24 @@ ToggleWindowCascadeHelp(*)
     } else {
         help_text :=
         (
+        "Ctrl + Alt + H              Toggle this help`n"
+        "`n"
+        "HINTS`n"
+        "Use Left Ctrl + Left Alt    Standalone cascade prefix`n"
+        "Add Shift                   Monitor / cross-monitor scope`n"
+        "`n"
         "CONTROLS`n"
-        "Left Alt + Up / Down       Swap visible window up / down`n"
-        "Left Alt + Left / Right    Previous / next layer in this slot`n"
-        "Left Alt + PgUp / PgDn     Focus visible window up / down`n"
-        "Left Alt + Backspace       Adopt / re-slot active window`n"
-        "Left Alt + Shift + Tab     Rotate layers`n"
-        "Left Alt + M               Minimize / restore current layer`n"
-        "Left Alt + Shift + M       Minimize / restore all layers on monitor`n"
-        "Left Alt + Home            Bring this monitor's cascade to front`n"
-        "Left Alt + Shift + F7      Gather other monitors' cascades here"
+        "Ctrl + Alt + Up / Down      Swap visible window up / down`n"
+        "Ctrl + Alt + Left / Right   Previous / next layer in this slot`n"
+        "Ctrl + Alt + PgUp / PgDn    Focus visible window up / down`n"
+        "Ctrl + Alt + Backspace      Adopt / re-slot active window`n"
+        "Ctrl + Alt + Space          Rotate layers`n"
+        "Ctrl + Alt + M              Minimize / restore current layer`n"
+        "Ctrl + Alt + F4             Close current layer`n"
+        "Ctrl + Alt + Home           Bring this monitor's cascade to front`n"
+        "Ctrl + Alt + Shift + M      Minimize / restore all layers on monitor`n"
+        "Ctrl + Alt + Shift + F4     Close all layers on monitor`n"
+        "Ctrl + Alt + Shift + F7     Gather other monitors' cascades here"
         )
     }
 
