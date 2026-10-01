@@ -4272,6 +4272,7 @@ ToggleWindowCascadeHelp(*)
         "Hold Caps + key      Run a command normally`n"
         "Tap Caps, then key   One-shot command for 1.4 seconds`n"
         "`n"
+
         "CONTROLS`n"
         "Caps + Up / Down          Swap visible window up / down`n"
         "Caps + Left / Right       Previous / next layer in this slot`n"
@@ -4284,7 +4285,10 @@ ToggleWindowCascadeHelp(*)
         "Caps + Home               Bring this monitor's cascade to front`n"
         "Caps + Shift + M          Minimize / restore all layers on monitor`n"
         "Caps + Shift + F4         Close all layers on monitor`n"
-        "Caps + Shift + F7         Gather other monitors' cascades here"
+        "Caps + Shift + F7         Gather other monitors' cascades here`n"
+        "`n"
+        "NOTE`n"
+        "Cascade hotkeys are disabled while the active window is maximized or fullscreen."
         )
     } else {
         help_text :=
@@ -4303,7 +4307,10 @@ ToggleWindowCascadeHelp(*)
         "Ctrl + Alt + Home           Bring this monitor's cascade to front`n"
         "Ctrl + Alt + Shift + M      Minimize / restore all layers on monitor`n"
         "Ctrl + Alt + Shift + F4     Close all layers on monitor`n"
-        "Ctrl + Alt + Shift + F7     Gather other monitors' cascades here"
+        "Ctrl + Alt + Shift + F7     Gather other monitors' cascades here`n"
+        "`n"
+        "NOTE`n"
+        "Cascade hotkeys are disabled while the active window is maximized or fullscreen."
         )
     }
 
