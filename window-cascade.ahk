@@ -182,7 +182,7 @@ cascade_command_show_help := 14
 ; - inspect actual window positions whenever a new window opens.
 ; - fill the least-used canonical slot so gaps are repaired before a new layer grows.
 ; - treat stack depth as layers: one window per slot at each depth.
-; - keep plain management commands slot/layer-local and Shift commands monitor-wide.
+; - keep plain management commands slot/layer-local and Alt commands monitor-wide.
 ; - compact holes forward across slots and layers after managed windows disappear.
 ; - rotate one slot across layers or rotate every slot to expose the next layer.
 ; - focus and swap current-layer windows by physical top-to-bottom order.
@@ -4283,9 +4283,9 @@ ToggleWindowCascadeHelp(*)
         "Caps + F4                 Close current layer`n"
         "Caps + Delete             Close active window`n"
         "Caps + Home               Bring this monitor's cascade to front`n"
-        "Caps + Shift + M          Minimize / restore all layers on monitor`n"
-        "Caps + Shift + F4         Close all layers on monitor`n"
-        "Caps + Shift + F7         Gather other monitors' cascades here`n"
+        "Caps + Alt + M            Minimize / restore all layers on monitor`n"
+        "Caps + Alt + F4           Close all layers on monitor`n"
+        "Caps + Alt + F7           Gather other monitors' cascades here`n"
         "`n"
         "NOTE`n"
         "Cascade hotkeys are disabled while the active window is maximized or fullscreen."
@@ -4621,7 +4621,7 @@ ToggleCommandMonitorCascadeMinimize()
     }
 
     ; If one layer was already hidden, absorb it into the monitor-wide toggle
-    ; so Shift+M restores the complete cascade in one step.
+    ; so the monitor-wide command restores the complete cascade in one step.
     saved_windows := []
     seen := Map()
 

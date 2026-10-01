@@ -149,7 +149,7 @@ CapsLock & 8::HoldVirtualKey("Numpad8", "8")
 CapsLock & 9::HoldVirtualKey("Numpad9", "9")
 
 ; Optional Window Cascade controls.
-; Plain Caps stays slot/layer-local. Shift adds monitor/cross-monitor scope.
+; Plain Caps stays slot/layer-local. Alt adds monitor/cross-monitor scope.
 ; These chords silently do nothing when Window Cascade is not running.
 CapsLock & Up::PostPlainWindowCascadeCommand(cascade_command_swap_window_up)
 CapsLock & Down::PostPlainWindowCascadeCommand(cascade_command_swap_window_down)
@@ -177,17 +177,15 @@ CapsLock & Home::PostPlainWindowCascadeCommandOnce(
     cascade_command_bring_forward,
     "Home"
 )
-CapsLock & m::PostWindowCascadeCommandOnce(
+CapsLock & m::PostAltScopedWindowCascadeCommandOnce(
     cascade_command_toggle_minimize,
-    "m",
-    GetKeyState("Shift", "P")
+    "m"
 )
-CapsLock & F4::PostWindowCascadeCommandOnce(
+CapsLock & F4::PostAltScopedWindowCascadeCommandOnce(
     cascade_command_close_scope,
-    "F4",
-    GetKeyState("Shift", "P")
+    "F4"
 )
-CapsLock & F7::PostShiftOnlyWindowCascadeCommandOnce(
+CapsLock & F7::PostAltOnlyWindowCascadeCommandOnce(
     cascade_command_gather_to_monitor,
     "F7"
 )
@@ -437,7 +435,7 @@ UseArmedWindowCascadeCommand(command_id, physical_key)
 
 PostPlainWindowCascadeCommand(command_id)
 {
-    if !GetKeyState("Shift", "P")
+    if !GetKeyState("Shift", "P") && !GetKeyState("Alt", "P")
         PostWindowCascadeCommand(command_id)
 }
 
@@ -467,10 +465,25 @@ PostWindowCascadeCommandOnce(command_id, physical_key, parameter := 0)
     KeyWait physical_key
 }
 
-PostShiftOnlyWindowCascadeCommandOnce(command_id, physical_key)
+PostAltScopedWindowCascadeCommandOnce(command_id, physical_key)
 {
-    if GetKeyState("Shift", "P")
+    if !GetKeyState("Shift", "P") {
+        PostWindowCascadeCommand(
+            command_id,
+            GetKeyState("Alt", "P")
+        )
+    }
+
+    KeyWait physical_key
+}
+
+PostAltOnlyWindowCascadeCommandOnce(command_id, physical_key)
+{
+    if GetKeyState("Alt", "P")
+        && !GetKeyState("Shift", "P")
+    {
         PostWindowCascadeCommand(command_id)
+    }
 
     KeyWait physical_key
 }
