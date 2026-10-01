@@ -319,7 +319,7 @@ ActiveWindowBlocksCascadeHotkeys()
 {
     active_hwnd := WinExist("A")
 
-    if !active_hwnd
+    if !active_hwnd || IsShellSurfaceWindow(active_hwnd)
         return false
 
     try {
