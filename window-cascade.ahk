@@ -4256,10 +4256,6 @@ ToggleWindowCascadeHelp(*)
         (
         "Ctrl + Alt + H              Toggle this help`n"
         "`n"
-        "HINTS`n"
-        "Use Left Ctrl + Left Alt    Standalone cascade prefix`n"
-        "Add Shift                   Monitor / cross-monitor scope`n"
-        "`n"
         "CONTROLS`n"
         "Ctrl + Alt + Up / Down      Swap visible window up / down`n"
         "Ctrl + Alt + Left / Right   Previous / next layer in this slot`n"
