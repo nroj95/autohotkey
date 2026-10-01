@@ -20,6 +20,7 @@ caps_layer_armed := false
 caps_layer_arm_window_ms := 1400
 
 startup_shortcut_path := A_Startup "\CapsLock Layer.lnk"
+window_cascade_settings_path := EnvGet("LOCALAPPDATA") "\Window Cascade\settings.ini"
 
 window_cascade_command_message := DllCall(
     "RegisterWindowMessage",
@@ -160,10 +161,18 @@ CapsLock & Backspace::PostPlainWindowCascadeCommandOnce(
     cascade_command_adopt_active,
     "Backspace"
 )
+#HotIf WindowCascadeRotateKeyIs("Space")
+CapsLock & Space::PostPlainWindowCascadeCommandOnce(
+    cascade_command_rotate_layers,
+    "Space"
+)
+
+#HotIf WindowCascadeRotateKeyIs("Tab")
 CapsLock & Tab::PostPlainWindowCascadeCommandOnce(
     cascade_command_rotate_layers,
     "Tab"
 )
+#HotIf
 CapsLock & Home::PostPlainWindowCascadeCommandOnce(
     cascade_command_bring_forward,
     "Home"
@@ -252,7 +261,14 @@ Right::UseArmedWindowCascadeCommand(cascade_command_rotate_slot_next, "Right")
 PgUp::UseArmedWindowCascadeCommand(cascade_command_focus_previous, "PgUp")
 PgDn::UseArmedWindowCascadeCommand(cascade_command_focus_next, "PgDn")
 Backspace::UseArmedWindowCascadeCommand(cascade_command_adopt_active, "Backspace")
+
+#HotIf CapsLayerOneShotReady() && WindowCascadeRotateKeyIs("Space")
+Space::UseArmedWindowCascadeCommand(cascade_command_rotate_layers, "Space")
+
+#HotIf CapsLayerOneShotReady() && WindowCascadeRotateKeyIs("Tab")
 Tab::UseArmedWindowCascadeCommand(cascade_command_rotate_layers, "Tab")
+
+#HotIf CapsLayerOneShotReady()
 Home::UseArmedWindowCascadeCommand(cascade_command_bring_forward, "Home")
 m::UseArmedWindowCascadeCommand(cascade_command_toggle_minimize, "m")
 F4::UseArmedWindowCascadeCommand(cascade_command_close_scope, "F4")
@@ -281,6 +297,33 @@ CapsLayerOneShotReady()
         && !GetKeyState("RWin", "P")
     )
 }
+
+WindowCascadeRotateKeyIs(expected_key)
+{
+    global window_cascade_settings_path
+
+    rotate_key := IniRead(
+        window_cascade_settings_path,
+        "Controls",
+        "RotateKey",
+        ""
+    )
+
+    ; Preserve the earlier standalone-only setting if it already exists.
+    if rotate_key = ""
+        rotate_key := IniRead(
+            window_cascade_settings_path,
+            "Standalone",
+            "RotateKey",
+            "Space"
+        )
+
+    if rotate_key != "Space" && rotate_key != "Tab"
+        rotate_key := "Space"
+
+    return rotate_key = expected_key
+}
+
 
 ArmCapsLayer()
 {

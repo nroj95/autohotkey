@@ -93,18 +93,16 @@ placement_enabled := true
 
 settings_directory := EnvGet("LOCALAPPDATA") "\Window Cascade"
 settings_path := settings_directory "\settings.ini"
-standalone_rotate_key := IniRead(
-    settings_path,
-    "Standalone",
-    "RotateKey",
-    "Space"
-)
+rotate_key := IniRead(settings_path, "Controls", "RotateKey", "")
 
-if standalone_rotate_key != "Space" && standalone_rotate_key != "Tab"
-    standalone_rotate_key := "Space"
+; Preserve the earlier standalone-only setting if it already exists.
+if rotate_key = ""
+    rotate_key := IniRead(settings_path, "Standalone", "RotateKey", "Space")
 
-standalone_rotate_menu := 0
-caps_lock_layer_running := IsCapsLockLayerRunning()
+if rotate_key != "Space" && rotate_key != "Tab"
+    rotate_key := "Space"
+
+rotate_key_menu := 0
 
 pending_windows := Map()
 handled_windows := Map()
@@ -218,17 +216,13 @@ SetTimer(UpdateFocusCornerOverlays, focus_corner_fallback_ms)
 ; FancyZones can directly compete with new-window placement.
 SetTimer(CheckCompatibilitySettings, -500)
 
-; Keep the context-sensitive tray menu in sync when CapsLock Layer starts/stops.
-SetTimer(CheckCapsLockLayerState, 1000)
-
-
 ; =============================================================================
 ; standalone hotkeys
 ; =============================================================================
 ; Left Ctrl + Left Alt keeps the standalone layer away from common Alt-only
 ; app shortcuts and avoids treating Right Alt / AltGr as a cascade modifier.
 
-#HotIf !IsCapsLockLayerRunning()
+#HotIf !IsCapsLockLayerRunning() && !ActiveWindowBlocksCascadeHotkeys()
 
 <^<!Up::SwapActiveCascadeWindow(-1)
 <^<!Down::SwapActiveCascadeWindow(1)
@@ -285,14 +279,14 @@ SetTimer(CheckCapsLockLayerState, 1000)
     KeyWait "F7"
 }
 
-#HotIf !IsCapsLockLayerRunning() && standalone_rotate_key = "Space"
+#HotIf !IsCapsLockLayerRunning() && !ActiveWindowBlocksCascadeHotkeys() && rotate_key = "Space"
 <^<!Space::
 {
     RotateCascadeLayers(1)
     KeyWait "Space"
 }
 
-#HotIf !IsCapsLockLayerRunning() && standalone_rotate_key = "Tab"
+#HotIf !IsCapsLockLayerRunning() && !ActiveWindowBlocksCascadeHotkeys() && rotate_key = "Tab"
 <^<!Tab::
 {
     RotateCascadeLayers(1)
@@ -321,18 +315,56 @@ IsCapsLockLayerRunning()
     return true
 }
 
-CheckCapsLockLayerState()
+ActiveWindowBlocksCascadeHotkeys()
 {
-    global caps_lock_layer_running
+    active_hwnd := WinExist("A")
 
-    running := IsCapsLockLayerRunning()
+    if !active_hwnd
+        return false
 
-    if running = caps_lock_layer_running
-        return
+    try {
+        ; Maximized windows are intentionally outside cascade management.
+        if WinGetMinMax("ahk_id " active_hwnd) = 1
+            return true
 
-    caps_lock_layer_running := running
-    BuildTrayMenu()
+        WinGetPos(
+            &window_x,
+            &window_y,
+            &window_width,
+            &window_height,
+            "ahk_id " active_hwnd
+        )
+    }
+    catch {
+        return false
+    }
+
+    window_right := window_x + window_width
+    window_bottom := window_y + window_height
+    tolerance_px := 2
+
+    ; Borderless/exclusive fullscreen normally covers one monitor exactly.
+    Loop MonitorGetCount() {
+        MonitorGet(
+            A_Index,
+            &monitor_left,
+            &monitor_top,
+            &monitor_right,
+            &monitor_bottom
+        )
+
+        if Abs(window_x - monitor_left) <= tolerance_px
+            && Abs(window_y - monitor_top) <= tolerance_px
+            && Abs(window_right - monitor_right) <= tolerance_px
+            && Abs(window_bottom - monitor_bottom) <= tolerance_px
+        {
+            return true
+        }
+    }
+
+    return false
 }
+
 
 ; =============================================================================
 ; desktop monitor selection
@@ -404,6 +436,9 @@ HandleCascadeCommandMessage(command_id, parameter, message_id, target_hwnd)
     ; HWND_BROADCAST also reaches script-owned GUIs. Run each command only
     ; once through AutoHotkey's hidden main window.
     if target_hwnd != A_ScriptHwnd
+        return
+
+    if ActiveWindowBlocksCascadeHotkeys()
         return
 
     switch command_id {
@@ -4242,7 +4277,7 @@ ToggleWindowCascadeHelp(*)
         "Caps + Left / Right       Previous / next layer in this slot`n"
         "Caps + PgUp / PgDn        Focus visible window up / down`n"
         "Caps + Backspace          Adopt / re-slot active window`n"
-        "Caps + Tab                Rotate layers`n"
+        "Caps + Space / Tab        Rotate layers (tray setting)`n"
         "Caps + M                  Minimize / restore current layer`n"
         "Caps + F4                 Close current layer`n"
         "Caps + Delete             Close active window`n"
@@ -4256,6 +4291,7 @@ ToggleWindowCascadeHelp(*)
         (
         "Ctrl + Alt + H              Toggle this help`n"
         "`n"
+
         "CONTROLS`n"
         "Ctrl + Alt + Up / Down      Swap visible window up / down`n"
         "Ctrl + Alt + Left / Right   Previous / next layer in this slot`n"
@@ -4304,7 +4340,7 @@ ToggleWindowCascadeHelp(*)
 
 BuildTrayMenu()
 {
-    global caps_lock_layer_running, standalone_rotate_menu
+    global rotate_key_menu
 
     A_TrayMenu.Delete()
 
@@ -4315,20 +4351,10 @@ BuildTrayMenu()
     A_TrayMenu.Add("Show focus tabs", ToggleFocusCornerVisibility)
     A_TrayMenu.Add("Check compatibility", CheckCompatibilitySettings)
 
-    if !caps_lock_layer_running {
-        standalone_rotate_menu := Menu()
-        standalone_rotate_menu.Add(
-            "Space",
-            SetStandaloneRotateKey.Bind("Space")
-        )
-        standalone_rotate_menu.Add(
-            "Tab",
-            SetStandaloneRotateKey.Bind("Tab")
-        )
-        A_TrayMenu.Add("Standalone rotate key", standalone_rotate_menu)
-    } else {
-        standalone_rotate_menu := 0
-    }
+    rotate_key_menu := Menu()
+    rotate_key_menu.Add("Space", SetRotateKey.Bind("Space"))
+    rotate_key_menu.Add("Tab", SetRotateKey.Bind("Tab"))
+    A_TrayMenu.Add("Rotate layers key", rotate_key_menu)
 
     A_TrayMenu.Add()
     A_TrayMenu.Add("Run at startup", ToggleStartup)
@@ -4338,16 +4364,16 @@ BuildTrayMenu()
     UpdateTrayMenu()
 }
 
-SetStandaloneRotateKey(rotate_key, *)
+SetRotateKey(new_rotate_key, *)
 {
-    global settings_directory, settings_path, standalone_rotate_key
+    global settings_directory, settings_path, rotate_key
 
-    if rotate_key != "Space" && rotate_key != "Tab"
+    if new_rotate_key != "Space" && new_rotate_key != "Tab"
         return
 
     try {
         DirCreate(settings_directory)
-        IniWrite(rotate_key, settings_path, "Standalone", "RotateKey")
+        IniWrite(new_rotate_key, settings_path, "Controls", "RotateKey")
     }
     catch Error as err {
         MsgBox(
@@ -4359,7 +4385,7 @@ SetStandaloneRotateKey(rotate_key, *)
         return
     }
 
-    standalone_rotate_key := rotate_key
+    rotate_key := new_rotate_key
     UpdateTrayMenu()
 }
 
@@ -4419,7 +4445,7 @@ UpdateTrayMenu()
 {
     global placement_enabled, startup_shortcut_path
     global focus_corner_visible
-    global standalone_rotate_key, standalone_rotate_menu
+    global rotate_key, rotate_key_menu
 
     if placement_enabled
         A_TrayMenu.Uncheck("Pause cascading")
@@ -4431,10 +4457,10 @@ UpdateTrayMenu()
     else
         A_TrayMenu.Uncheck("Show focus tabs")
 
-    if IsObject(standalone_rotate_menu) {
-        standalone_rotate_menu.Uncheck("Space")
-        standalone_rotate_menu.Uncheck("Tab")
-        standalone_rotate_menu.Check(standalone_rotate_key)
+    if IsObject(rotate_key_menu) {
+        rotate_key_menu.Uncheck("Space")
+        rotate_key_menu.Uncheck("Tab")
+        rotate_key_menu.Check(rotate_key)
     }
 
     if FileExist(startup_shortcut_path)
