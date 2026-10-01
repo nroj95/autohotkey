@@ -456,14 +456,6 @@ AdoptActiveWindow()
             return
         }
 
-        managed_monitor := GetManagedCascadeMonitor(hwnd)
-
-        if managed_monitor = target_monitor
-            && IsWindowInCascadeLayout(hwnd)
-        {
-            return
-        }
-
         ; A maximized window must become ordinary before cascade geometry can
         ; be applied. The command itself is an explicit request to windowize it.
         if WinGetMinMax(window) != 0
@@ -471,9 +463,6 @@ AdoptActiveWindow()
 
         if !IsCascadeWindow(hwnd)
             return
-
-        ; Remove any stale membership before calculating the next free slot.
-        RemoveCascadeWindowFromHistory(hwnd)
 
         MonitorGetWorkArea(
             target_monitor,
@@ -501,6 +490,11 @@ AdoptActiveWindow()
             window_height,
             work_height - edge_margin * 2
         )
+
+        ; Exclude the active window from slot counting before choosing its
+        ; destination. This fills an earlier gap when one exists, while keeping
+        ; a window in its current slot when no earlier logical slot is missing.
+        RemoveCascadeWindowFromHistory(hwnd)
 
         position := GetNextCascadePosition(
             target_monitor,
@@ -3721,7 +3715,7 @@ ToggleWindowCascadeHelp(*)
         "CONTROLS`n"
         "Caps + PgUp          Previous cascade window`n"
         "Caps + PgDn          Next cascade window`n"
-        "Caps + Backspace     Adopt active window into cascade`n"
+        "Caps + Backspace     Adopt / re-slot active window`n"
         "Caps + Tab           Rotate stacked cascade windows`n"
         "Caps + Home          Bring this monitor's cascade to front`n"
         "Caps + M             Minimize / restore cascade windows`n"
@@ -3734,7 +3728,7 @@ ToggleWindowCascadeHelp(*)
         "CONTROLS`n"
         "Left Alt + PgUp      Previous cascade window`n"
         "Left Alt + PgDn      Next cascade window`n"
-        "Left Alt + Backspace Adopt active window into cascade`n"
+        "Left Alt + Backspace Adopt / re-slot active window`n"
         "Left Alt + F7        Rotate stacked cascade windows`n"
         "Left Alt + Home      Bring this monitor's cascade to front`n"
         "Left Alt + M         Minimize / restore cascade windows"
