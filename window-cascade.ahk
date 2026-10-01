@@ -1140,6 +1140,20 @@ GetAllLiveCascadeWindows()
             if !WinExist("ahk_id " hwnd)
                 continue
 
+            ; Minimized windows have no useful cascade geometry. Preserve their
+            ; recorded membership until they are restored.
+            try {
+                if WinGetMinMax("ahk_id " hwnd) = -1 {
+                    seen[hwnd] := true
+                    live_history.Push(hwnd)
+                    windows.Push(hwnd)
+                    continue
+                }
+            }
+            catch {
+                continue
+            }
+
             ; Moving to another monitor or deliberately away from every
             ; canonical slot releases the window from the cascade.
             if GetMonitorForWindow(hwnd) != monitor_index
@@ -1215,6 +1229,18 @@ GetLiveCascadeHistory(monitor_index)
     for hwnd in cascade_history[monitor_index] {
         if !WinExist("ahk_id " hwnd)
             continue
+
+        ; A minimized window has no useful cascade geometry. Keep its recorded
+        ; membership so restoring it does not silently remove it from history.
+        try {
+            if WinGetMinMax("ahk_id " hwnd) = -1 {
+                live_history.Push(hwnd)
+                continue
+            }
+        }
+        catch {
+            continue
+        }
 
         if GetMonitorForWindow(hwnd) != monitor_index
             continue
