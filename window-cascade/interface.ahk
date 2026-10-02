@@ -152,7 +152,7 @@ ToggleWindowCascadeHelp(*)
     "`n"
     "HINTS`n"
     "Hold Caps + key      Run a command normally`n"
-    "Tap Caps, then key   One-shot command for 1.4 seconds`n"
+    "Tap Caps, then key   One-shot command for 1.4 seconds (plain keys only)`n"
     "`n"
     "CONTROLS`n"
     "Caps + Up / Down              Swap visible window up / down`n"

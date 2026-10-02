@@ -898,8 +898,8 @@ ShowCapsLockLayerHelp(*)
     help_text :=
     (
     "HINTS`n"
-    "Hold Caps + key         Use any Caps shortcut`n"
-    "Tap Caps, then key      Use a Caps + key shortcut without holding Caps`n"
+    "Hold Caps + key      Run a command normally`n"
+    "Tap Caps, then key   One-shot command for 1.4 seconds (plain keys only)`n"
     "`n"
     "EXTRA KEYS`n"
     "Caps + Q / W / E / R    F13 - F16`n"
