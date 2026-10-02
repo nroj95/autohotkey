@@ -35,7 +35,7 @@ ToggleWindowHotkeysHelp(*)
     "`n"
     "WINDOW STRETCH`n"
     "Shift + Win + Up       Stretch to full height`n"
-    "Shift + Win + Down     Restore vertical stretch`n"
+    "Shift + Win + Down     Reset all stretch`n"
     "Shift + Win + Left     Toggle stretch to left edge`n"
     "Shift + Win + Right    Toggle stretch to right edge`n"
     "`n"

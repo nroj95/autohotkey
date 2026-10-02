@@ -23,7 +23,7 @@
 
 ; Deterministic Shift+Win stretch controls.
 +#Up::StretchWindowVertically()
-+#Down::RestoreVerticalStretch()
++#Down::ResetWindowStretch()
 +#Left::ToggleHorizontalStretch("left")
 +#Right::ToggleHorizontalStretch("right")
 

@@ -81,16 +81,15 @@ StretchWindowVertically()
     }
 }
 
-RestoreVerticalStretch()
+ResetWindowStretch()
 {
+    global horizontal_stretch_windows
     global vertical_stretch_windows
 
     hwnd := GetWindowControlTarget()
 
-    if !hwnd || !vertical_stretch_windows.Has(hwnd)
+    if !hwnd
         return
-
-    state := vertical_stretch_windows[hwnd]
 
     current_monitor := DllCall(
         "MonitorFromWindow",
@@ -99,19 +98,68 @@ RestoreVerticalStretch()
         "ptr"
     )
 
-    ; Do not pull a window across monitors just to restore old vertical bounds.
-    if current_monitor != state["monitor"] {
+    ; Restore vertical stretch first. Horizontal restore preserves the resulting
+    ; Y/height, so both axes can be reset independently in one command.
+    if vertical_stretch_windows.Has(hwnd) {
+        vertical_state := vertical_stretch_windows[hwnd]
+
+        if current_monitor = vertical_state["monitor"] {
+            MoveWindowToVisibleVerticalBounds(
+                hwnd,
+                vertical_state["original_top"],
+                vertical_state["original_bottom"]
+            )
+        }
+
         vertical_stretch_windows.Delete(hwnd)
+    }
+
+    if !horizontal_stretch_windows.Has(hwnd)
+        return
+
+    horizontal_state := horizontal_stretch_windows[hwnd]
+
+    if current_monitor != horizontal_state["monitor"] {
+        horizontal_stretch_windows.Delete(hwnd)
         return
     }
 
-    if MoveWindowToVisibleVerticalBounds(
+    if !GetHorizontalStretchGeometry(
         hwnd,
-        state["original_top"],
-        state["original_bottom"]
+        &raw_x,
+        &raw_y,
+        &raw_width,
+        &raw_height,
+        &visible_left,
+        &visible_right,
+        &inset_left,
+        &inset_right
     ) {
-        vertical_stretch_windows.Delete(hwnd)
+        horizontal_stretch_windows.Delete(hwnd)
+        return
     }
+
+    ; Only restore edges that are actually stretched. The opposite live edge is
+    ; left untouched if only one side was stretched.
+    target_visible_left := (
+        horizontal_state["left_stretched"]
+        ? horizontal_state["original_left"]
+        : visible_left
+    )
+
+    target_visible_right := (
+        horizontal_state["right_stretched"]
+        ? horizontal_state["original_right"]
+        : visible_right
+    )
+
+    MoveWindowToVisibleHorizontalBounds(
+        hwnd,
+        target_visible_left,
+        target_visible_right
+    )
+
+    horizontal_stretch_windows.Delete(hwnd)
 }
 
 
