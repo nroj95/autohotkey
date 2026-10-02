@@ -43,6 +43,8 @@ cascade_command_close_active := 11
 cascade_command_close_scope := 12
 cascade_command_gather_to_monitor := 13
 cascade_command_show_help := 14
+cascade_command_move_monitor_left := 15
+cascade_command_move_monitor_right := 16
 
 window_hotkeys_cycle_steam_message := DllCall(
     "RegisterWindowMessage",
@@ -153,8 +155,35 @@ CapsLock & 9::HoldVirtualKey("Numpad9", "9")
 ; These chords silently do nothing when Window Cascade is not running.
 CapsLock & Up::PostPlainWindowCascadeCommand(cascade_command_swap_window_up)
 CapsLock & Down::PostPlainWindowCascadeCommand(cascade_command_swap_window_down)
-CapsLock & Left::PostPlainWindowCascadeCommand(cascade_command_rotate_slot_previous)
-CapsLock & Right::PostPlainWindowCascadeCommand(cascade_command_rotate_slot_next)
+CapsLock & Left::
+{
+    if GetKeyState("Alt", "P") {
+        PostWindowCascadeCommand(
+            cascade_command_move_monitor_left,
+            WinExist("A")
+        )
+        KeyWait "Left"
+        return
+    }
+
+    if !GetKeyState("Shift", "P")
+        PostWindowCascadeCommand(cascade_command_rotate_slot_previous)
+}
+
+CapsLock & Right::
+{
+    if GetKeyState("Alt", "P") {
+        PostWindowCascadeCommand(
+            cascade_command_move_monitor_right,
+            WinExist("A")
+        )
+        KeyWait "Right"
+        return
+    }
+
+    if !GetKeyState("Shift", "P")
+        PostWindowCascadeCommand(cascade_command_rotate_slot_next)
+}
 CapsLock & PgUp::PostPlainWindowCascadeCommand(cascade_command_focus_previous)
 CapsLock & PgDn::PostPlainWindowCascadeCommand(cascade_command_focus_next)
 CapsLock & Backspace::PostPlainWindowCascadeCommandOnce(
@@ -177,13 +206,15 @@ CapsLock & Home::PostPlainWindowCascadeCommandOnce(
     cascade_command_bring_forward,
     "Home"
 )
-CapsLock & m::PostAltScopedWindowCascadeCommandOnce(
+CapsLock & m::PostWindowCascadeCommandOnce(
     cascade_command_toggle_minimize,
-    "m"
+    "m",
+    GetKeyState("Alt", "P")
 )
-CapsLock & F4::PostAltScopedWindowCascadeCommandOnce(
+CapsLock & F4::PostWindowCascadeCommandOnce(
     cascade_command_close_scope,
-    "F4"
+    "F4",
+    GetKeyState("Alt", "P")
 )
 CapsLock & F7::PostAltOnlyWindowCascadeCommandOnce(
     cascade_command_gather_to_monitor,
@@ -465,25 +496,10 @@ PostWindowCascadeCommandOnce(command_id, physical_key, parameter := 0)
     KeyWait physical_key
 }
 
-PostAltScopedWindowCascadeCommandOnce(command_id, physical_key)
-{
-    if !GetKeyState("Shift", "P") {
-        PostWindowCascadeCommand(
-            command_id,
-            GetKeyState("Alt", "P")
-        )
-    }
-
-    KeyWait physical_key
-}
-
 PostAltOnlyWindowCascadeCommandOnce(command_id, physical_key)
 {
     if GetKeyState("Alt", "P")
-        && !GetKeyState("Shift", "P")
-    {
         PostWindowCascadeCommand(command_id)
-    }
 
     KeyWait physical_key
 }

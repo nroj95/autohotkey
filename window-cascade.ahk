@@ -47,11 +47,6 @@ cascade_release_tolerance := 56
 
 placement_delay_ms := 60
 
-; Debounce native Win + Shift + Left/Right monitor moves before handing the
-; moved window to the destination cascade's normal placement logic.
-cascade_transfer_delay_ms := 120
-native_monitor_move_intent_ms := 1000
-
 ; Some applications expose their real top-level window before it is ready for
 ; placement. Keep the original launch context while waiting briefly for it.
 placement_ready_retry_ms := 200
@@ -117,8 +112,6 @@ known_windows := Map()
 missed_window_poll_ms := 1000
 cascade_history := Map()
 cascade_compaction_pending := Map()
-cascade_transfer_pending := Map()
-native_monitor_move_intents := Map()
 layer_minimized_windows_by_monitor := Map()
 monitor_minimized_windows_by_monitor := Map()
 all_cascades_minimized := false
@@ -144,7 +137,6 @@ win_event_callback := 0
 foreground_hook := 0
 window_show_hook := 0
 window_destroy_hook := 0
-window_location_hook := 0
 
 cascade_command_message := 0
 
@@ -163,6 +155,8 @@ cascade_command_close_active := 11
 cascade_command_close_scope := 12
 cascade_command_gather_to_monitor := 13
 cascade_command_show_help := 14
+cascade_command_move_monitor_left := 15
+cascade_command_move_monitor_right := 16
 
 
 ; =============================================================================
@@ -195,7 +189,7 @@ cascade_command_show_help := 14
 ; - rotate one slot across layers or rotate every slot to expose the next layer.
 ; - focus and swap current-layer windows by physical top-to-bottom order.
 ; - let manually moved windows relinquish their old slot automatically.
-; - auto-adopt and smart-sort windows moved across monitors with native Win + Shift + Left/Right.
+; - move, auto-adopt, and smart-sort windows across monitors with Caps + Alt + Left/Right.
 ; - reject obvious child/helper windows before queueing placement.
 ; - forget destroyed window handles so recycled hwnd values remain safe.
 ; - optionally accept slot/layer/monitor commands from CapsLock Layer.
@@ -303,12 +297,6 @@ SetTimer(CheckCompatibilitySettings, -500)
 }
 
 #HotIf
-
-; Keep Windows' native monitor-move shortcut intact while marking eligible
-; windows for destination cascade adoption and smart sorting.
-~#+Left::MarkNativeCascadeMonitorMove()
-~#+Right::MarkNativeCascadeMonitorMove()
-
 
 IsCapsLockLayerRunning()
 {
@@ -446,6 +434,7 @@ HandleCascadeCommandMessage(command_id, parameter, message_id, target_hwnd)
     global cascade_command_toggle_minimize, cascade_command_bring_forward
     global cascade_command_close_active, cascade_command_close_scope
     global cascade_command_gather_to_monitor, cascade_command_show_help
+    global cascade_command_move_monitor_left, cascade_command_move_monitor_right
 
     ; HWND_BROADCAST also reaches script-owned GUIs. Run each command only
     ; once through AutoHotkey's hidden main window.
@@ -503,6 +492,12 @@ HandleCascadeCommandMessage(command_id, parameter, message_id, target_hwnd)
 
         case cascade_command_show_help:
             ToggleWindowCascadeHelp()
+
+        case cascade_command_move_monitor_left:
+            MoveCascadeWindowAcrossMonitor(parameter, "Left")
+
+        case cascade_command_move_monitor_right:
+            MoveCascadeWindowAcrossMonitor(parameter, "Right")
     }
 }
 
@@ -1923,12 +1918,10 @@ StartWindowHooks()
 {
     global win_event_callback
     global foreground_hook, window_show_hook, window_destroy_hook
-    global window_location_hook
 
     EVENT_SYSTEM_FOREGROUND := 0x0003
     EVENT_OBJECT_DESTROY := 0x8001
     EVENT_OBJECT_SHOW := 0x8002
-    EVENT_OBJECT_LOCATIONCHANGE := 0x800B
 
     WINEVENT_OUTOFCONTEXT := 0x0000
     WINEVENT_SKIPOWNPROCESS := 0x0002
@@ -1974,23 +1967,7 @@ StartWindowHooks()
         "ptr"
     )
 
-    window_location_hook := DllCall(
-        "SetWinEventHook",
-        "uint", EVENT_OBJECT_LOCATIONCHANGE,
-        "uint", EVENT_OBJECT_LOCATIONCHANGE,
-        "ptr", 0,
-        "ptr", win_event_callback,
-        "uint", 0,
-        "uint", 0,
-        "uint", flags,
-        "ptr"
-    )
-
-    if !foreground_hook
-        || !window_show_hook
-        || !window_destroy_hook
-        || !window_location_hook
-    {
+    if !foreground_hook || !window_show_hook || !window_destroy_hook {
 
         MsgBox(
             "Could not install all Windows event hooks.`n`n"
@@ -2005,12 +1982,10 @@ StopWindowHooks()
 {
     global win_event_callback
     global foreground_hook, window_show_hook, window_destroy_hook
-    global window_location_hook
 
     SetTimer(WatchForMissedWindows, 0)
     SetTimer(UpdateFocusCornerOverlays, 0)
     SetTimer(RunQueuedFocusCornerUpdate, 0)
-    SetTimer(FlushCascadeMonitorTransfers, 0)
 
 
     if foreground_hook {
@@ -2026,11 +2001,6 @@ StopWindowHooks()
     if window_destroy_hook {
         DllCall("UnhookWinEvent", "ptr", window_destroy_hook)
         window_destroy_hook := 0
-    }
-
-    if window_location_hook {
-        DllCall("UnhookWinEvent", "ptr", window_location_hook)
-        window_location_hook := 0
     }
 
     if win_event_callback {
@@ -2059,7 +2029,6 @@ HandleWinEvent(
         EVENT_SYSTEM_FOREGROUND := 0x0003
         EVENT_OBJECT_DESTROY := 0x8001
         EVENT_OBJECT_SHOW := 0x8002
-        EVENT_OBJECT_LOCATIONCHANGE := 0x800B
         OBJID_WINDOW := 0
         CHILDID_SELF := 0
 
@@ -2095,11 +2064,6 @@ HandleWinEvent(
         if object_id != OBJID_WINDOW || child_id != CHILDID_SELF || !hwnd
             return
 
-
-        if event = EVENT_OBJECT_LOCATIONCHANGE {
-            QueueNativeCascadeMonitorTransfer(hwnd)
-            return
-        }
 
         if event = EVENT_OBJECT_DESTROY {
             DebugLog(
@@ -2234,8 +2198,7 @@ IsPlausibleTopLevelWindow(hwnd)
 ForgetWindow(hwnd)
 {
     global pending_windows, handled_windows, placement_reservations
-    global cascade_history, cascade_transfer_pending
-    global native_monitor_move_intents
+    global cascade_history
     global startup_windows, known_windows
     global current_foreground_hwnd, previous_foreground_hwnd
 
@@ -2257,12 +2220,6 @@ ForgetWindow(hwnd)
 
     if placement_reservations.Has(hwnd)
         placement_reservations.Delete(hwnd)
-
-    if cascade_transfer_pending.Has(hwnd)
-        cascade_transfer_pending.Delete(hwnd)
-
-    if native_monitor_move_intents.Has(hwnd)
-        native_monitor_move_intents.Delete(hwnd)
 
     if current_foreground_hwnd = hwnd
         current_foreground_hwnd := 0
@@ -3775,80 +3732,7 @@ RecordCascadeWindow(monitor_index, hwnd)
     QueueFocusCornerUpdate()
 }
 
-MarkNativeCascadeMonitorMove()
-{
-    global native_monitor_move_intents, native_monitor_move_intent_ms
-
-    hwnd := WinExist("A")
-
-    if !hwnd || IsShellSurfaceWindow(hwnd) || !IsCascadeWindow(hwnd)
-        return
-
-    original_monitor := GetMonitorForWindow(hwnd)
-
-    if !original_monitor
-        return
-
-    intent_tick := A_TickCount
-    native_monitor_move_intents[hwnd] := Map(
-        "tick", intent_tick,
-        "original_monitor", original_monitor,
-        "managed_monitor", GetManagedCascadeMonitor(hwnd)
-    )
-
-    SetTimer(
-        ExpireNativeCascadeMonitorMoveIntent.Bind(hwnd, intent_tick),
-        -native_monitor_move_intent_ms
-    )
-}
-
-ExpireNativeCascadeMonitorMoveIntent(hwnd, intent_tick)
-{
-    global native_monitor_move_intents
-
-    if !native_monitor_move_intents.Has(hwnd)
-        return
-
-    intent := native_monitor_move_intents[hwnd]
-
-    if intent["tick"] = intent_tick
-        native_monitor_move_intents.Delete(hwnd)
-}
-
-QueueNativeCascadeMonitorTransfer(hwnd)
-{
-    global cascade_transfer_pending, cascade_transfer_delay_ms
-    global native_monitor_move_intents
-
-    ; Manual cross-monitor drags keep their existing release behavior. Only a
-    ; location change immediately following the native monitor-move shortcut
-    ; requests automatic destination re-slotting.
-    if !native_monitor_move_intents.Has(hwnd)
-        return
-
-    intent := native_monitor_move_intents[hwnd]
-
-    ; Consume the shortcut intent on the first location change, then inspect the
-    ; window's final monitor only after Windows has finished moving it.
-    native_monitor_move_intents.Delete(hwnd)
-    cascade_transfer_pending[hwnd] := intent
-    SetTimer(FlushCascadeMonitorTransfers, -cascade_transfer_delay_ms)
-}
-
-FlushCascadeMonitorTransfers()
-{
-    global cascade_transfer_pending
-
-    Critical "On"
-    pending_transfers := cascade_transfer_pending
-    cascade_transfer_pending := Map()
-    Critical "Off"
-
-    for hwnd, intent in pending_transfers
-        TryAutoSortNativeMonitorMove(hwnd, intent)
-}
-
-TryAutoSortNativeMonitorMove(hwnd, intent)
+MoveCascadeWindowAcrossMonitor(hwnd, direction)
 {
     global monitor_minimized_windows_by_monitor
     global all_cascades_minimized
@@ -3856,42 +3740,55 @@ TryAutoSortNativeMonitorMove(hwnd, intent)
     if !hwnd || !WinExist("ahk_id " hwnd)
         return
 
-    original_monitor := intent["original_monitor"]
-    managed_monitor := intent["managed_monitor"]
+    if IsShellSurfaceWindow(hwnd) || !IsCascadeWindow(hwnd)
+        return
 
-    ; Ignore stale queued events if an already-managed window was re-slotted by
-    ; another cascade command before the native monitor move settled.
-    if managed_monitor
-        && GetManagedCascadeMonitor(hwnd) != managed_monitor
-    {
+    ; The CapsLock layer sends the hwnd that was active when the chord fired.
+    ; Abort instead of moving a different window if focus changed meanwhile.
+    if WinExist("A") != hwnd {
+        DebugLog(
+            "Cascade monitor move ignored: active window changed."
+            . " | direction=" direction
+            . " | " DebugDescribeWindow(hwnd)
+        )
         return
     }
 
-    target_monitor := GetMonitorForWindow(hwnd)
+    source_monitor := GetMonitorForWindow(hwnd)
 
-    if !target_monitor || target_monitor = original_monitor
+    if !source_monitor
         return
 
-    ; original_monitor only validates that Windows actually crossed monitors.
-    ; The debounced final monitor remains authoritative for destination placement.
+    target_monitor := GetAdjacentMonitor(source_monitor, direction)
 
-    try {
-        if WinGetMinMax("ahk_id " hwnd) = -1
-            return
-    }
-    catch {
+    if !target_monitor {
+        DebugLog(
+            "Cascade monitor move ignored: no monitor in direction."
+            . " | direction=" direction
+            . " | source-monitor=" source_monitor
+            . " | " DebugDescribeWindow(hwnd)
+        )
         return
     }
 
-    ; Native Win + Shift + Left/Right hands the moved window to the
-    ; destination cascade, which then chooses its smart least-used slot.
+    managed_monitor := GetManagedCascadeMonitor(hwnd)
+
+    ; Hand the window directly to the destination cascade. Normal smart
+    ; placement chooses the shallowest slot and earliest slot number on ties.
     RemoveWindowFromMinimizeState(hwnd)
 
-    if !PlaceCascadeWindowOnMonitor(hwnd, target_monitor)
+    if !PlaceCascadeWindowOnMonitor(hwnd, target_monitor) {
+        DebugLog(
+            "Cascade monitor move destination placement failed."
+            . " | source-monitor=" source_monitor
+            . " | target-monitor=" target_monitor
+            . " | " DebugDescribeWindow(hwnd)
+        )
         return
+    }
 
-    ; Preserve an intentionally hidden destination cascade. A window moved
-    ; into that monitor becomes part of the same restore set immediately.
+    ; Preserve an intentionally hidden destination cascade. A moved window
+    ; becomes part of the same restore set immediately.
     if all_cascades_minimized
         || monitor_minimized_windows_by_monitor.Has(target_monitor)
     {
@@ -3903,14 +3800,74 @@ TryAutoSortNativeMonitorMove(hwnd, intent)
     }
 
     DebugLog(
-        "Window adopted and smart-sorted by destination cascade."
-        . " | original-monitor=" original_monitor
+        "Window moved, adopted, and smart-sorted by destination cascade."
+        . " | direction=" direction
+        . " | source-monitor=" source_monitor
         . " | managed-monitor=" managed_monitor
         . " | target-monitor=" target_monitor
         . " | " DebugDescribeWindow(hwnd)
     )
 
     QueueFocusCornerUpdate()
+}
+
+GetAdjacentMonitor(source_monitor, direction)
+{
+    if direction != "Left" && direction != "Right"
+        return 0
+
+    try MonitorGet(
+        source_monitor,
+        &source_left,
+        &source_top,
+        &source_right,
+        &source_bottom
+    )
+    catch
+        return 0
+
+    source_center_x := (source_left + source_right) / 2
+    source_center_y := (source_top + source_bottom) / 2
+
+    selected_monitor := 0
+    selected_distance := 0
+
+    Loop MonitorGetCount() {
+        monitor_index := A_Index
+
+        if monitor_index = source_monitor
+            continue
+
+        try MonitorGet(
+            monitor_index,
+            &candidate_left,
+            &candidate_top,
+            &candidate_right,
+            &candidate_bottom
+        )
+        catch
+            continue
+
+        candidate_center_x := (candidate_left + candidate_right) / 2
+        candidate_center_y := (candidate_top + candidate_bottom) / 2
+
+        if direction = "Left" && candidate_center_x >= source_center_x
+            continue
+
+        if direction = "Right" && candidate_center_x <= source_center_x
+            continue
+
+        delta_x := candidate_center_x - source_center_x
+        delta_y := candidate_center_y - source_center_y
+        distance := delta_x * delta_x + delta_y * delta_y
+
+        if !selected_monitor || distance < selected_distance {
+            selected_monitor := monitor_index
+            selected_distance := distance
+        }
+    }
+
+    return selected_monitor
 }
 
 
@@ -4462,7 +4419,7 @@ ToggleWindowCascadeHelp(*)
         "Caps + Alt + M            Minimize / restore cascades on all monitors`n"
         "Caps + Alt + F4           Close all layers on monitor`n"
         "Caps + Alt + F7           Gather other monitors' cascades here`n"
-        "Win + Shift + Left/Right   Native monitor move; auto-adopt + smart sort`n"
+        "Caps + Alt + Left/Right   Move to adjacent monitor + smart sort`n"
         "`n"
         "NOTE`n"
         "Cascade hotkeys are disabled while the active window is maximized or fullscreen."
@@ -4485,7 +4442,6 @@ ToggleWindowCascadeHelp(*)
         "Ctrl + Alt + Shift + M      Minimize / restore cascades on all monitors`n"
         "Ctrl + Alt + Shift + F4     Close all layers on monitor`n"
         "Ctrl + Alt + Shift + F7     Gather other monitors' cascades here`n"
-        "Win + Shift + Left/Right     Native monitor move; auto-adopt + smart sort`n"
         "`n"
         "NOTE`n"
         "Cascade hotkeys are disabled while the active window is maximized or fullscreen."
