@@ -46,10 +46,10 @@ UpdateFocusCornerOverlays()
     live_targets := Map()
     visible_bounds := Map()
 
-    highest_hwnd := 0
-    highest_y := 0
+    highest_hwnd_by_monitor := Map()
+    highest_y_by_monitor := Map()
 
-    ; Cache geometry and identify the cascade window with the smallest Y.
+    ; Cache geometry and identify the highest cascade window on each monitor.
     for hwnd in live_windows {
         live_targets[hwnd] := true
 
@@ -79,16 +79,24 @@ UpdateFocusCornerOverlays()
             continue
         }
 
+        monitor_index := GetMonitorForWindow(hwnd)
+
+        if !monitor_index
+            continue
+
         visible_bounds[hwnd] := [
             window_x,
             window_y,
             window_width,
-            window_height
+            window_height,
+            monitor_index
         ]
 
-        if !highest_hwnd || window_y < highest_y {
-            highest_hwnd := hwnd
-            highest_y := window_y
+        if !highest_hwnd_by_monitor.Has(monitor_index)
+            || window_y < highest_y_by_monitor[monitor_index]
+        {
+            highest_hwnd_by_monitor[monitor_index] := hwnd
+            highest_y_by_monitor[monitor_index] := window_y
         }
     }
 
@@ -102,6 +110,12 @@ UpdateFocusCornerOverlays()
         }
 
         bounds := visible_bounds[hwnd]
+        monitor_index := bounds[5]
+
+        is_highest_on_monitor := (
+            highest_hwnd_by_monitor.Has(monitor_index)
+            && highest_hwnd_by_monitor[monitor_index] = hwnd
+        )
 
         ShowFocusCornerOverlay(
             hwnd,
@@ -109,7 +123,7 @@ UpdateFocusCornerOverlays()
             bounds[2],
             bounds[3],
             bounds[4],
-            hwnd = highest_hwnd
+            is_highest_on_monitor
         )
     }
 
