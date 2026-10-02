@@ -7,6 +7,8 @@
 
 StretchWindowVertically()
 {
+    Critical "On"
+
     global borderless_windows
     global vertical_stretch_windows
 
@@ -76,13 +78,18 @@ StretchWindowVertically()
             work_bottom,
             1
         ) {
-            ForgetVerticalStretch(hwnd)
+            DebugLog(
+                "Vertical stretch move failed; preserving restore state. hwnd="
+                . hwnd
+            )
         }
     }
 }
 
 ResetWindowStretch()
 {
+    Critical "On"
+
     global horizontal_stretch_windows
     global vertical_stretch_windows
 
@@ -103,15 +110,23 @@ ResetWindowStretch()
     if vertical_stretch_windows.Has(hwnd) {
         vertical_state := vertical_stretch_windows[hwnd]
 
-        if current_monitor = vertical_state["monitor"] {
-            MoveWindowToVisibleVerticalBounds(
-                hwnd,
-                vertical_state["original_top"],
-                vertical_state["original_bottom"]
+        if current_monitor != vertical_state["monitor"] {
+            DebugLog(
+                "Vertical stretch reset skipped after monitor change; "
+                . "preserving state. hwnd=" . hwnd
+            )
+        } else if MoveWindowToVisibleVerticalBounds(
+            hwnd,
+            vertical_state["original_top"],
+            vertical_state["original_bottom"]
+        ) {
+            ForgetVerticalStretch(hwnd)
+        } else {
+            DebugLog(
+                "Vertical stretch reset failed; preserving state. hwnd="
+                . hwnd
             )
         }
-
-        vertical_stretch_windows.Delete(hwnd)
     }
 
     if !horizontal_stretch_windows.Has(hwnd)
@@ -120,7 +135,10 @@ ResetWindowStretch()
     horizontal_state := horizontal_stretch_windows[hwnd]
 
     if current_monitor != horizontal_state["monitor"] {
-        horizontal_stretch_windows.Delete(hwnd)
+        DebugLog(
+            "Horizontal stretch reset skipped after monitor change; "
+            . "preserving state. hwnd=" . hwnd
+        )
         return
     }
 
@@ -135,7 +153,10 @@ ResetWindowStretch()
         &inset_left,
         &inset_right
     ) {
-        horizontal_stretch_windows.Delete(hwnd)
+        DebugLog(
+            "Horizontal stretch reset could not read geometry; "
+            . "preserving state. hwnd=" . hwnd
+        )
         return
     }
 
@@ -153,18 +174,25 @@ ResetWindowStretch()
         : visible_right
     )
 
-    MoveWindowToVisibleHorizontalBounds(
+    if MoveWindowToVisibleHorizontalBounds(
         hwnd,
         target_visible_left,
         target_visible_right
-    )
-
-    horizontal_stretch_windows.Delete(hwnd)
+    ) {
+        ForgetHorizontalStretch(hwnd)
+    } else {
+        DebugLog(
+            "Horizontal stretch reset failed; preserving state. hwnd="
+            . hwnd
+        )
+    }
 }
 
 
 ToggleHorizontalStretch(side)
 {
+    Critical "On"
+
     global borderless_windows
     global horizontal_stretch_windows
 
@@ -239,48 +267,66 @@ ToggleHorizontalStretch(side)
         state := horizontal_stretch_windows[hwnd]
 
         if side = "left" {
-            if !state["left_stretched"]
-                state["original_left"] := visible_left
-
-            state["left_stretched"] := !state["left_stretched"]
+            next_stretched := !state["left_stretched"]
+            original_edge := (
+                state["left_stretched"]
+                ? state["original_left"]
+                : visible_left
+            )
 
             target_visible_left := (
-                state["left_stretched"]
+                next_stretched
                 ? work_left
-                : state["original_left"]
+                : original_edge
             )
 
             ; Left stretch owns only the left edge. Preserve the live right edge,
             ; including any active right stretch or manual resize.
             target_visible_right := visible_right
         } else {
-            if !state["right_stretched"]
-                state["original_right"] := visible_right
-
-            state["right_stretched"] := !state["right_stretched"]
+            next_stretched := !state["right_stretched"]
+            original_edge := (
+                state["right_stretched"]
+                ? state["original_right"]
+                : visible_right
+            )
 
             ; Right stretch owns only the right edge. Preserve the live left edge,
             ; including any active left stretch or manual resize.
             target_visible_left := visible_left
 
             target_visible_right := (
-                state["right_stretched"]
+                next_stretched
                 ? work_right
-                : state["original_right"]
+                : original_edge
             )
         }
 
+        ; Do not mutate or discard restore state until the geometry move succeeds.
+        ; Otherwise a transient move failure can leave the window stretched with
+        ; no remembered edge to restore.
         if !MoveWindowToVisibleHorizontalBounds(
             hwnd,
             target_visible_left,
             target_visible_right
         ) {
-            ForgetHorizontalStretch(hwnd)
+            DebugLog(
+                "Horizontal stretch toggle failed; preserving state. hwnd="
+                . hwnd . " side=" . side
+            )
             return
         }
 
+        if side = "left" {
+            state["original_left"] := original_edge
+            state["left_stretched"] := next_stretched
+        } else {
+            state["original_right"] := original_edge
+            state["right_stretched"] := next_stretched
+        }
+
         if !state["left_stretched"] && !state["right_stretched"]
-            horizontal_stretch_windows.Delete(hwnd)
+            ForgetHorizontalStretch(hwnd)
     }
 }
 
@@ -426,61 +472,6 @@ MoveWindowToVisibleHorizontalBounds(
         return false
     }
 
-    ; DWM frame insets can change slightly after a resize. Measure the visible
-    ; result and correct any remaining pixel error instead of using a fixed fudge.
-    Loop 3 {
-        Sleep 10
-
-        if !GetVisibleWindowBounds(
-            hwnd,
-            &visible_x,
-            &visible_y,
-            &visible_width,
-            &visible_height
-        ) {
-            ; The initial move succeeded; some windows simply do not expose DWM
-            ; frame bounds, so there is nothing reliable left to correct.
-            return true
-        }
-
-        actual_visible_left := visible_x
-        actual_visible_right := visible_x + visible_width
-
-        left_error := target_visible_left - actual_visible_left
-        right_error := target_visible_right - actual_visible_right
-
-        if left_error = 0 && right_error = 0
-            return true
-
-        try WinGetPos(
-            &current_raw_x,
-            &current_raw_y,
-            &current_raw_width,
-            &current_raw_height,
-            "ahk_id " hwnd
-        )
-        catch {
-            return false
-        }
-
-        corrected_raw_width :=
-            current_raw_width + right_error - left_error
-
-        if corrected_raw_width <= 0
-            return false
-
-        try WinMove(
-            current_raw_x + left_error,
-            current_raw_y,
-            corrected_raw_width,
-            current_raw_height,
-            "ahk_id " hwnd
-        )
-        catch {
-            return false
-        }
-    }
-
     return true
 }
 
@@ -603,8 +594,7 @@ ForgetVerticalStretch(hwnd)
 {
     global vertical_stretch_windows
 
-    if vertical_stretch_windows.Has(hwnd)
-        vertical_stretch_windows.Delete(hwnd)
+    try vertical_stretch_windows.Delete(hwnd)
 }
 
 PruneVerticalStretchWindows()
@@ -619,7 +609,7 @@ PruneVerticalStretchWindows()
     }
 
     for hwnd in stale_hwnds
-        vertical_stretch_windows.Delete(hwnd)
+        ForgetVerticalStretch(hwnd)
 }
 
 RestoreAllVerticalStretches()
@@ -666,8 +656,7 @@ ForgetHorizontalStretch(hwnd)
 {
     global horizontal_stretch_windows
 
-    if horizontal_stretch_windows.Has(hwnd)
-        horizontal_stretch_windows.Delete(hwnd)
+    try horizontal_stretch_windows.Delete(hwnd)
 }
 
 PruneHorizontalStretchWindows()
@@ -682,7 +671,7 @@ PruneHorizontalStretchWindows()
     }
 
     for hwnd in stale_hwnds
-        horizontal_stretch_windows.Delete(hwnd)
+        ForgetHorizontalStretch(hwnd)
 }
 
 RestoreAllHorizontalStretches()
