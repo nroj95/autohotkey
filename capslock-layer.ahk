@@ -900,7 +900,6 @@ ShowCapsLockLayerHelp(*)
     "HINTS`n"
     "Hold Caps + key         Use any Caps shortcut`n"
     "Tap Caps, then key      Use a Caps + key shortcut without holding Caps`n"
-    "With other modifiers    Hold Caps instead of using tap mode`n"
     "`n"
     "EXTRA KEYS`n"
     "Caps + Q / W / E / R    F13 - F16`n"
