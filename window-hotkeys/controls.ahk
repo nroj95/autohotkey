@@ -20,7 +20,6 @@
 #PgDn::PlaceWindowQuarter("bottom-right")
 
 #Enter::SwapWindowClockwise()
-^#h::ToggleWindowHotkeysHelp()
 
 ; FancyZones relative-position navigation.
 #HotIf IsFancyZonesRunning()
@@ -47,12 +46,6 @@
 
 #HotIf
 
-; Move focus spatially without moving windows.
-!#Left::FocusNearestWindow("left")
-!#Right::FocusNearestWindow("right")
-!#Up::FocusNearestWindow("up")
-!#Down::FocusNearestWindow("down")
-
 ; A mouse click means the user has deliberately moved on from the window that
 ; Win+Down most recently minimized.
 ~LButton::ForgetLastMinimizedWindow()
@@ -60,7 +53,7 @@
 ~MButton::ForgetLastMinimizedWindow()
 
 ; =============================================================================
-; CapsLock Layer presence
+; CapsLock Layer dependency and command dispatch
 ; =============================================================================
 
 IsCapsLockLayerRunning()
@@ -78,4 +71,84 @@ IsCapsLockLayerRunning()
 
     DllCall("CloseHandle", "ptr", mutex_handle)
     return true
+}
+
+RequireCapsLockLayer()
+{
+    global caps_layer_startup_wait_ms
+
+    wait_start := A_TickCount
+
+    while !IsCapsLockLayerRunning() {
+        if ((A_TickCount - wait_start) & 0xFFFFFFFF) >= caps_layer_startup_wait_ms {
+            DebugLog("Startup refused: CapsLock Layer is not running.")
+
+            MsgBox(
+                "Window Hotkeys requires CapsLock Layer.`n`n"
+                . "Start capslock-layer.ahk, then launch window-hotkeys.ahk.",
+                "Window Hotkeys",
+                "Iconx"
+            )
+
+            ExitApp 1
+        }
+
+        Sleep 100
+    }
+}
+
+WatchCapsLockLayer()
+{
+    global caps_layer_missing_since, caps_layer_reload_grace_ms
+    global caps_layer_dependency_lost
+
+    if IsCapsLockLayerRunning() {
+        caps_layer_missing_since := 0
+        return
+    }
+
+    ; A quick CapsLock Layer reload must not tear down Window Hotkeys.
+    if !caps_layer_missing_since {
+        caps_layer_missing_since := A_TickCount
+        return
+    }
+
+    if ((A_TickCount - caps_layer_missing_since) & 0xFFFFFFFF) < caps_layer_reload_grace_ms
+        return
+
+    caps_layer_dependency_lost := true
+    DebugLog("Stopping: CapsLock Layer remained unavailable after the reload grace period.")
+    ExitApp 1
+}
+
+HandleWindowHotkeysCommandMessage(command_id, parameter, message_id, target_hwnd)
+{
+    global window_hotkeys_command_focus_left, window_hotkeys_command_focus_right
+    global window_hotkeys_command_focus_up, window_hotkeys_command_focus_down
+    global window_hotkeys_command_show_help
+
+    ; HWND_BROADCAST also reaches script-owned GUIs. Execute once through the
+    ; AutoHotkey hidden main window.
+    if target_hwnd != A_ScriptHwnd
+        return
+
+    if !IsCapsLockLayerRunning()
+        return
+
+    switch command_id {
+        case window_hotkeys_command_focus_left:
+            FocusNearestWindow("left")
+
+        case window_hotkeys_command_focus_right:
+            FocusNearestWindow("right")
+
+        case window_hotkeys_command_focus_up:
+            FocusNearestWindow("up")
+
+        case window_hotkeys_command_focus_down:
+            FocusNearestWindow("down")
+
+        case window_hotkeys_command_show_help:
+            ToggleWindowHotkeysHelp()
+    }
 }

@@ -21,7 +21,10 @@ ToggleWindowHotkeysHelp(*)
 
     help_text :=
     (
-    "Ctrl + Win + H    Toggle this help`n"
+    "Caps + Win + H    Toggle this help`n"
+    "`n"
+    "CAPSLOCK LAYER REQUIRED`n"
+    "Keep capslock-layer.ahk running with Window Hotkeys.`n"
     "`n"
     "WINDOW STATE`n"
     "Win + Up          Maximize / borderless fullscreen`n"
@@ -45,17 +48,15 @@ ToggleWindowHotkeysHelp(*)
     "Win + Enter       Swap with next window clockwise`n"
     "`n"
     "WINDOW FOCUS`n"
-    "Alt + Win + Arrow     Start / move spatial focus"
+    "Caps + Win + Arrow    Start / move spatial focus"
     )
 
-    if IsCapsLockLayerRunning() {
-        help_text .= (
-            "`n"
-            "`n"
-            "STEAM`n"
-            "Caps + G              Cycle running Steam games"
-        )
-    }
+    help_text .= (
+        "`n"
+        "`n"
+        "STEAM`n"
+        "Caps + G              Cycle running Steam games"
+    )
 
     if IsFancyZonesRunning() {
         fancyzones_state := GetFancyZonesIntegrationState()

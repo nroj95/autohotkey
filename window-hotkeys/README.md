@@ -4,16 +4,17 @@ launch `../window-hotkeys.ahk`, not the files in this directory. the root launch
 owns the script identity, startup sequence, registered message, tray menu, and
 exit callback. these modules are included into that one AutoHotkey v2 process.
 
-Window Hotkeys remains independent of Window Cascade. CapsLock Layer is optional
-here: it supplies the existing `Caps + G` Steam-cycle command. this refactor does
-not add a CapsLock Layer requirement, change any bindings, or add a command mode.
+Window Hotkeys remains independent of Window Cascade, but CapsLock Layer is a
+required companion. it owns the expanding companion-control namespace: currently
+`Caps + Win + H`, `Caps + Win + Arrow`, and the existing `Caps + G` Steam cycle.
+Window Hotkeys intentionally has no standalone fallback for those controls.
 
 ## module map
 
 | file | responsibility |
 | --- | --- |
 | `settings.ahk` | existing defaults, runtime globals, Steam exclusions, paths, and debug settings. |
-| `controls.ahk` | the complete original hotkey block, including FancyZones `#HotIf` scope and mouse bindings; CapsLock Layer presence lookup. |
+| `controls.ahk` | direct Win/FancyZones hotkeys, mouse bindings, the required CapsLock Layer presence/watch logic, and `WindowHotkeys.Command` dispatch. |
 | `window-state.ahk` | Win+Home/Win+M group toggles, last-minimized target selection, maximize, minimize, and restore commands. |
 | `layouts.ahk` | side-layout cycling, third/half tiles, center tiles, matching, and placement preparation. |
 | `swapping.ahk` | clockwise window ordering, candidate selection, and rectangle swapping. |
@@ -32,10 +33,10 @@ modules do not include each other. `settings.ahk` still initializes globals at
 top level, before logging and callbacks; no assignments were moved into a
 function with a different scope. the startup statement order is unchanged.
 
-all 75 existing top-level function definitions, including their signatures,
-internal comments, nested callbacks, and embedded PowerShell strings, are
-unchanged. the 25 hotkey definitions retain their order and `#HotIf` contexts.
-only source organization, section comments, and this documentation change.
+the module split keeps feature boundaries explicit while CapsLock Layer owns
+companion commands that would otherwise consume more global shortcut space.
+the ordinary Win-key window-management shortcuts and FancyZones integration
+remain direct Window Hotkeys bindings.
 
 these are internal modules, not independent libraries. do not include Window
 Cascade's similarly named modules here: each root script has its own globals
@@ -43,12 +44,12 @@ and helper functions and must remain a separate process.
 
 ## preserved behavior and paths
 
-existing shortcuts, exclusions, window-state rules, delays, retry limits, and
-FancyZones confirmation prompts remain as supplied. the existing
-`OnExit RestoreAllBorderlessWindows` callback is registered in the same order.
+existing window-state rules, exclusions, delays, retry limits, and FancyZones
+confirmation prompts remain unchanged. exit cleanup still restores temporary
+borderless state, now through the root cleanup handler.
 
-`WindowHotkeys.CycleSteamGames`, `WindowDebug.ResetLogs`, and the CapsLock Layer
-presence-mutex name are unchanged. so are the paths for
+`WindowHotkeys.Command`, `WindowHotkeys.CycleSteamGames`, `WindowDebug.ResetLogs`,
+and the CapsLock Layer presence-mutex name form the companion integration. paths for
 `icons/window-hotkeys.ico`, `window-hotkeys-debug.log`, the startup shortcut,
 FancyZones settings, the PowerShell executable, and temporary files.
 
@@ -74,10 +75,12 @@ their includes. do not validate or launch modules separately. only reload
 
 check Win+Up/Down/Backspace from normal, maximized, minimized, and borderless
 states; Win+Home and Win+M restore sets; left/right layout cycles and tiles;
-Win+Enter clockwise swapping; Alt+Win+Arrow focus/highlight expiry; and the
-FancyZones shortcuts/help. where Steam games are available, check Caps+G with
-one and multiple games and a return window, including borderless minimize/resume.
-use test windows without unsaved work when checking exit/reload behavior.
+Win+Enter clockwise swapping; Caps+Win+Arrow focus/highlight expiry; Caps+Win+H
+help; and the FancyZones shortcuts/help. where Steam games are available, check
+Caps+G with one and multiple games and a return window, including borderless
+minimize/resume. also verify that Window Hotkeys refuses startup without
+CapsLock Layer, survives a quick CapsLock Layer reload, and exits after the
+reload grace period when the dependency stays unavailable.
 
 this is an organizational refactor, not a performance optimization. syntax/load
 checks do not substitute for Windows desktop behavior testing.
