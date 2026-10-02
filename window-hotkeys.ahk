@@ -400,8 +400,8 @@ CheckFancyZonesIntegration(*)
         "FancyZones is using Win + PgUp or Win + PgDn for window switching, "
         . "which conflicts with Window Hotkeys' tile shortcuts.`n`n"
         . "Change the conflicting FancyZones shortcuts to their "
-        . "Ctrl + Win versions?`n`n"
-        . "Yes: use Ctrl + Win + PgUp/PgDn`n"
+        . "Ctrl + Alt versions?`n`n"
+        . "Yes: use Ctrl + Alt + PgUp/PgDn`n"
         . "No: leave FancyZones unchanged",
         "Window Hotkeys",
         "YesNo Icon!"
@@ -668,11 +668,13 @@ RemapConflictingFancyZonesHotkeys()
     "$changed = $false; "
     "$previous = $properties.fancyzones_prevTab_hotkey.value; "
     "if (Test-Conflict $previous) { "
-    "$previous.ctrl = $true; $changed = $true "
+    "$previous.win = $false; $previous.ctrl = $true; "
+    "$previous.alt = $true; $changed = $true "
     "}; "
     "$next = $properties.fancyzones_nextTab_hotkey.value; "
     "if (Test-Conflict $next) { "
-    "$next.ctrl = $true; $changed = $true "
+    "$next.win = $false; $next.ctrl = $true; "
+    "$next.alt = $true; $changed = $true "
     "}; "
     "if (-not $changed) { exit 0 }; "
     "$json = $settings | ConvertTo-Json -Depth 20 -Compress; "
@@ -821,7 +823,10 @@ ToggleWindowHotkeysHelp(*)
             "`n"
             "`n"
             "FANCYZONES`n"
-            "Ctrl + Alt + Arrow    Move between FancyZones"
+            . FormatHelpShortcutLine(
+                "Ctrl + Alt + Arrow",
+                "Move between FancyZones"
+            )
         )
 
         if fancyzones_state
