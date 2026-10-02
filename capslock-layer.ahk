@@ -130,18 +130,25 @@ UpdateStartupMenu()
 ; Modified Caps presses are swallowed without arming the one-shot layer.
 *CapsLock::
 {
+    if GetKeyState("LWin", "P") || GetKeyState("RWin", "P") {
+        SuppressStartMenu()
+        return
+    }
+
     if (
         GetKeyState("Shift", "P")
         || GetKeyState("Ctrl", "P")
         || GetKeyState("Alt", "P")
-        || GetKeyState("LWin", "P")
-        || GetKeyState("RWin", "P")
     ) {
         return
     }
 
     ArmCapsLayer()
 }
+
+; Win is part of the Caps layer here, not a standalone Start-menu press.
+CapsLock & LWin::SuppressStartMenu()
+CapsLock & RWin::SuppressStartMenu()
 
 
 ; Top row.
@@ -417,6 +424,14 @@ CapsLayerOneShotReady()
         && !GetKeyState("RWin", "P")
     )
 }
+
+SuppressStartMenu()
+{
+    ; vkE8 is an unassigned virtual key used only to make Windows treat the
+    ; physically held Win key as part of a chord instead of opening Start.
+    Send "{Blind}{vkE8}"
+}
+
 
 ArmCapsLayer()
 {
