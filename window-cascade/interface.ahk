@@ -145,9 +145,10 @@ ToggleWindowCascadeHelp(*)
 
     help_text :=
     (
+    "Caps + H             Toggle this help`n"
+    "`n"
     "CAPSLOCK LAYER REQUIRED`n"
     "Start capslock-layer.ahk before Window Cascade. Keep both scripts running.`n"
-    "Caps + H             Toggle this help`n"
     "`n"
     "HINTS`n"
     "Hold Caps + key      Run a command normally`n"

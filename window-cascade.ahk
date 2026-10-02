@@ -134,7 +134,7 @@ HandleScriptExit(exit_reason, exit_code)
             . "Its minimized windows were restored where possible.`n"
             . "Start capslock-layer.ahk, then relaunch window-cascade.ahk.",
             "Window Cascade",
-            "Icon! T8"
+            "Icon!"
         )
     }
 }
