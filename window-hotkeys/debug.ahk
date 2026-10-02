@@ -1,0 +1,245 @@
+; Internal Window Hotkeys module. Launch ..\window-hotkeys.ahk instead.
+; Included into the same script; functions share the existing global state.
+
+; =============================================================================
+; logging and log reset
+; =============================================================================
+
+InitializeDebugLogging()
+{
+    global debug_enabled
+
+    if !debug_enabled
+        return
+
+    reset_message := DllCall(
+        "RegisterWindowMessage",
+        "str", "WindowDebug.ResetLogs",
+        "uint"
+    )
+
+    if reset_message {
+        OnMessage(
+            reset_message,
+            HandleDebugResetLogsMessage
+        )
+    }
+
+    OnError(LogWindowHotkeysUnhandledError)
+
+    DebugLogSession("started")
+}
+
+HandleDebugResetLogsMessage(*)
+{
+    ResetDebugLog()
+}
+
+ResetDebugLog()
+{
+    global debug_enabled, debug_log_path
+
+    if !debug_enabled
+        return
+
+    try {
+        if FileExist(debug_log_path)
+            FileDelete(debug_log_path)
+    }
+    catch Error as err {
+        DebugLog(
+            "Debug log reset failed."
+            . " | message=" err.Message
+        )
+        return
+    }
+
+    DebugLogSession("reset")
+}
+
+DebugLogSession(reason)
+{
+    process_id := DllCall(
+        "GetCurrentProcessId",
+        "uint"
+    )
+
+    DebugLog(
+        "Debug session " reason "."
+        . " | pid=" process_id
+        . " | ahk=" A_AhkVersion
+        . ' | script="' A_ScriptFullPath '"'
+    )
+}
+
+DebugLog(message)
+{
+    global debug_enabled, debug_log_path
+
+    if !debug_enabled
+        return
+
+    timestamp := FormatTime(
+        ,
+        "yyyy-MM-dd HH:mm:ss"
+    )
+
+    try FileAppend(
+        timestamp
+        . " | tick=" A_TickCount
+        . " | " message
+        . "`n",
+        debug_log_path,
+        "UTF-8-RAW"
+    )
+}
+
+; =============================================================================
+; error and window diagnostics
+; =============================================================================
+
+DebugError(context, err)
+{
+    DebugLog(
+        "ERROR in " context
+        . " | message=" err.Message
+        . " | what=" err.What
+        . " | file=" err.File
+        . " | line=" err.Line
+    )
+
+    if err.Stack != ""
+        DebugLog(
+            "STACK | "
+            . StrReplace(
+                StrReplace(err.Stack, "`r", ""),
+                "`n",
+                " | "
+            )
+        )
+}
+
+LogWindowHotkeysUnhandledError(err, mode)
+{
+    DebugError(
+        "Unhandled error, mode=" mode,
+        err
+    )
+
+    return 0
+}
+
+DebugDescribeWindow(hwnd)
+{
+    if !hwnd
+        return "hwnd=0"
+
+    if !DllCall("IsWindow", "ptr", hwnd, "int")
+        return "hwnd=" hwnd " [invalid]"
+
+    title := ""
+    class_name := ""
+    process_name := ""
+    process_path := ""
+    min_max := "?"
+    style := "?"
+    ex_style := "?"
+    x := "?"
+    y := "?"
+    width := "?"
+    height := "?"
+
+    try title := WinGetTitle(hwnd)
+    try class_name := WinGetClass(hwnd)
+    try process_name := WinGetProcessName(hwnd)
+    try process_path := WinGetProcessPath(hwnd)
+    try min_max := WinGetMinMax(hwnd)
+    try style := WinGetStyle(hwnd)
+    try ex_style := WinGetExStyle(hwnd)
+
+    try WinGetPos(
+        &x,
+        &y,
+        &width,
+        &height,
+        hwnd
+    )
+
+    title := StrReplace(
+        StrReplace(title, "`r", " "),
+        "`n",
+        " "
+    )
+
+    visible :=
+        DllCall(
+            "IsWindowVisible",
+            "ptr", hwnd,
+            "int"
+        )
+
+    iconic :=
+        DllCall(
+            "IsIconic",
+            "ptr", hwnd,
+            "int"
+        )
+
+    owner :=
+        DllCall(
+            "GetWindow",
+            "ptr", hwnd,
+            "uint", 4,
+            "ptr"
+        )
+
+    cloaked := false
+
+    try cloaked :=
+        IsWindowHotkeysCloaked(hwnd)
+
+    return (
+        "hwnd=" hwnd
+        . ' exe="' process_name '"'
+        . ' class="' class_name '"'
+        . ' title="' title '"'
+        . " minmax=" min_max
+        . " visible=" visible
+        . " iconic=" iconic
+        . " cloaked=" cloaked
+        . " owner=" owner
+        . " style=" style
+        . " exstyle=" ex_style
+        . " rect=(" x "," y " "
+        . width "x" height ")"
+        . ' path="' process_path '"'
+    )
+}
+
+DebugSteamGameState(label)
+{
+    global steam_game_cycle
+    global last_steam_game_hwnd
+    global steam_return_hwnd
+
+    DebugLog(
+        label
+        . " | cycle-count=" steam_game_cycle.Length
+        . " | last="
+        . DebugDescribeWindow(last_steam_game_hwnd)
+        . " | return="
+        . DebugDescribeWindow(steam_return_hwnd)
+        . " | foreground="
+        . DebugDescribeWindow(
+            DllCall("GetForegroundWindow", "ptr")
+        )
+    )
+
+    for index, hwnd in steam_game_cycle {
+        DebugLog(
+            "Steam cycle entry."
+            . " | index=" index
+            . " | " DebugDescribeWindow(hwnd)
+        )
+    }
+}
