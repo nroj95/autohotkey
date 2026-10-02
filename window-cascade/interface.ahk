@@ -158,7 +158,7 @@ ToggleWindowCascadeHelp(*)
     "Caps + Up / Down              Swap visible window up / down`n"
     "Caps + Left / Right           Previous / next layer in this slot`n"
     "Caps + PgUp / PgDn            Focus visible window up / down`n"
-    "Caps + Backspace              Adopt / re-slot active window`n"
+    "Caps + Insert                 Adopt / re-slot active window`n"
     "Caps + Space / Tab            Next layer (selected in the tray)`n"
     "Caps + Alt + Space / Tab      Previous layer (same selected key)`n"
     "Caps + M                      Minimize / restore all layers on monitor`n"

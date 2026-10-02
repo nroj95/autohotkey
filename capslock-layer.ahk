@@ -267,9 +267,9 @@ CapsLock & Right::
 }
 CapsLock & PgUp::PostPlainWindowCascadeCommand(cascade_command_focus_previous)
 CapsLock & PgDn::PostPlainWindowCascadeCommand(cascade_command_focus_next)
-CapsLock & Backspace::PostPlainWindowCascadeCommandOnce(
+CapsLock & Insert::PostPlainWindowCascadeCommandOnce(
     cascade_command_adopt_active,
-    "Backspace"
+    "Insert"
 )
 #HotIf WindowCascadeRotateKeyIs("Space")
 CapsLock & Space::PostWindowCascadeRotateCommandOnce("Space")
@@ -374,7 +374,7 @@ Left::UseArmedWindowCascadeCommand(cascade_command_rotate_slot_previous, "Left")
 Right::UseArmedWindowCascadeCommand(cascade_command_rotate_slot_next, "Right")
 PgUp::UseArmedWindowCascadeCommand(cascade_command_focus_previous, "PgUp")
 PgDn::UseArmedWindowCascadeCommand(cascade_command_focus_next, "PgDn")
-Backspace::UseArmedWindowCascadeCommand(cascade_command_adopt_active, "Backspace")
+Insert::UseArmedWindowCascadeCommand(cascade_command_adopt_active, "Insert")
 
 #HotIf CapsLayerOneShotReady() && WindowCascadeRotateKeyIs("Space")
 Space::UseArmedWindowCascadeCommand(cascade_command_rotate_layers, "Space")
