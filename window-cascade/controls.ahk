@@ -5,6 +5,14 @@
 ; desktop monitor selection
 ; =============================================================================
 
+; Any ordinary mouse click commits a just-adopted window. Wildcards make this
+; apply even while modifier keys are held; tilde preserves the native click.
+~*LButton::CancelPendingAdoptionUndo()
+~*RButton::CancelPendingAdoptionUndo()
+~*MButton::CancelPendingAdoptionUndo()
+~*XButton1::CancelPendingAdoptionUndo()
+~*XButton2::CancelPendingAdoptionUndo()
+
 ; Do not rely on foreground timing here. Windows may keep Progman focused while
 ; the user clicks between monitors, or may update foreground focus after the
 ; mouse-up event. Inspect the actual window under the cursor instead.
@@ -205,6 +213,9 @@ HandleCascadeCommandMessage(command_id, parameter, message_id, target_hwnd)
 
     if !IsCapsLockLayerRunning() || ActiveWindowBlocksCascadeCommands()
         return
+
+    if command_id != cascade_command_adopt_active
+        CancelPendingAdoptionUndo()
 
     switch command_id {
         case cascade_command_focus_previous:

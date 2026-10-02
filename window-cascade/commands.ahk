@@ -7,15 +7,145 @@
 
 AdoptActiveWindow()
 {
+    global pending_adoption_undo
+
     hwnd := WinExist("A")
 
     if !hwnd || IsShellSurfaceWindow(hwnd)
         return
 
+    ; A second Caps + Insert is the one-shot undo only while nothing else has
+    ; consumed it. After cancellation this same command returns to normal re-slot.
+    if IsPendingAdoptionUndoFor(hwnd) {
+        UndoPendingAdoption()
+        return
+    }
+
+    CancelPendingAdoptionUndo()
+
+    managed_monitor := GetManagedCascadeMonitor(hwnd)
+
+    ; Prune stale membership before deciding whether this is a true adoption.
+    ; A window deliberately moved beyond release tolerance should be adoptable.
+    if managed_monitor {
+        GetLiveCascadeHistory(managed_monitor)
+        managed_monitor := GetManagedCascadeMonitor(hwnd)
+    }
+
+    undo_snapshot := 0
+
+    if !managed_monitor
+        undo_snapshot := CaptureAdoptionUndoSnapshot(hwnd)
+
     target_monitor := GetMonitorForWindow(hwnd)
 
-    if target_monitor
-        PlaceCascadeWindowOnMonitor(hwnd, target_monitor)
+    if !target_monitor
+        return
+
+    if !PlaceCascadeWindowOnMonitor(hwnd, target_monitor)
+        return
+
+    if undo_snapshot
+        pending_adoption_undo := undo_snapshot
+}
+
+CaptureAdoptionUndoSnapshot(hwnd)
+{
+    global handled_windows
+
+    try {
+        WinGetPos(
+            &window_x,
+            &window_y,
+            &window_width,
+            &window_height,
+            "ahk_id " hwnd
+        )
+    }
+    catch {
+        return 0
+    }
+
+    return Map(
+        "hwnd", hwnd,
+        "x", window_x,
+        "y", window_y,
+        "width", window_width,
+        "height", window_height,
+        "was_handled", handled_windows.Has(hwnd)
+    )
+}
+
+IsPendingAdoptionUndoFor(hwnd)
+{
+    global pending_adoption_undo
+
+    return IsObject(pending_adoption_undo)
+        && pending_adoption_undo.Has("hwnd")
+        && pending_adoption_undo["hwnd"] = hwnd
+}
+
+CancelPendingAdoptionUndo()
+{
+    global pending_adoption_undo
+
+    pending_adoption_undo := 0
+}
+
+UndoPendingAdoption()
+{
+    global pending_adoption_undo
+    global handled_windows, placement_reservations
+
+    if !IsObject(pending_adoption_undo)
+        return false
+
+    snapshot := pending_adoption_undo
+    pending_adoption_undo := 0
+    hwnd := snapshot["hwnd"]
+
+    if !hwnd || !WinExist("ahk_id " hwnd)
+        return false
+
+    managed_monitor := GetManagedCascadeMonitor(hwnd)
+
+    ; Stop the delayed placement correction before restoring the old geometry.
+    CancelPlacementStabilization(hwnd)
+
+    try {
+        WinMove(
+            snapshot["x"],
+            snapshot["y"],
+            snapshot["width"],
+            snapshot["height"],
+            "ahk_id " hwnd
+        )
+    }
+    catch {
+        ; If restoration fails, keep the window managed rather than leaving a
+        ; half-undone state. A fresh placement also re-enables stabilization.
+        if managed_monitor
+            PlaceCascadeWindowOnMonitor(hwnd, managed_monitor)
+
+        return false
+    }
+
+    RemoveCascadeWindowFromHistory(hwnd)
+    RemoveWindowFromMinimizeState(hwnd)
+
+    if placement_reservations.Has(hwnd)
+        placement_reservations.Delete(hwnd)
+
+    if snapshot["was_handled"]
+        handled_windows[hwnd] := true
+    else if handled_windows.Has(hwnd)
+        handled_windows.Delete(hwnd)
+
+    if managed_monitor
+        QueueCascadeCompaction(managed_monitor)
+
+    QueueFocusCornerUpdate()
+    return true
 }
 
 GatherCascadesToCommandMonitor()

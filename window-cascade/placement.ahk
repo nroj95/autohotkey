@@ -427,6 +427,17 @@ PlaceNewWindow(
 ; asynchronous placement stabilization
 ; =============================================================================
 
+CancelPlacementStabilization(hwnd)
+{
+    global placement_stabilization_generations
+
+    ; Removing the current generation invalidates every callback already bound
+    ; to it. A later placement receives a new generation, so stale callbacks
+    ; can never become current again for the same HWND.
+    if hwnd && placement_stabilization_generations.Has(hwnd)
+        placement_stabilization_generations.Delete(hwnd)
+}
+
 SchedulePlacementStabilization(
     hwnd,
     target_x,
@@ -436,6 +447,15 @@ SchedulePlacementStabilization(
 )
 {
     global placement_stabilize_delays_ms
+    global placement_stabilization_generations
+    global placement_stabilization_generation_counter
+
+    placement_stabilization_generation_counter += 1
+    stabilization_generation :=
+        placement_stabilization_generation_counter
+
+    placement_stabilization_generations[hwnd] :=
+        stabilization_generation
 
     for delay_ms in placement_stabilize_delays_ms {
         SetTimer(
@@ -445,11 +465,21 @@ SchedulePlacementStabilization(
                 target_y,
                 target_width,
                 target_height,
+                stabilization_generation,
                 delay_ms
             ),
             -delay_ms
         )
     }
+}
+
+IsCurrentPlacementStabilization(hwnd, stabilization_generation)
+{
+    global placement_stabilization_generations
+
+    return placement_stabilization_generations.Has(hwnd)
+        && placement_stabilization_generations[hwnd]
+            = stabilization_generation
 }
 
 StabilizePlacedWindow(
@@ -458,6 +488,7 @@ StabilizePlacedWindow(
     target_y,
     target_width,
     target_height,
+    stabilization_generation,
     delay_ms,
     attempt := 0,
     passive_stage := 0
@@ -472,22 +503,37 @@ StabilizePlacedWindow(
 
     DebugLog(
         "Stabilization callback."
+        . " | generation=" stabilization_generation
         . " | delay-ms=" delay_ms
         . " | attempt=" attempt
         . " | passive-stage=" passive_stage
         . " | hwnd=" hwnd
     )
 
+    ; Never let an old callback touch state belonging to a newer placement.
+    if !IsCurrentPlacementStabilization(
+        hwnd,
+        stabilization_generation
+    ) {
+        return
+    }
+
     if !handled_windows.Has(hwnd) {
-        if placement_reservations.Has(hwnd)
+        if IsCurrentPlacementStabilization(hwnd, stabilization_generation)
+            && placement_reservations.Has(hwnd)
+        {
             placement_reservations.Delete(hwnd)
+        }
 
         return
     }
 
     if !WinExist("ahk_id " hwnd) {
-        if placement_reservations.Has(hwnd)
+        if IsCurrentPlacementStabilization(hwnd, stabilization_generation)
+            && placement_reservations.Has(hwnd)
+        {
             placement_reservations.Delete(hwnd)
+        }
 
         return
     }
@@ -495,8 +541,11 @@ StabilizePlacedWindow(
     try {
         ; Do not fight an intentional maximize/minimize transition.
         if WinGetMinMax("ahk_id " hwnd) != 0 {
-            if placement_reservations.Has(hwnd)
+            if IsCurrentPlacementStabilization(hwnd, stabilization_generation)
+                && placement_reservations.Has(hwnd)
+            {
                 placement_reservations.Delete(hwnd)
+            }
 
             return
         }
@@ -512,8 +561,11 @@ StabilizePlacedWindow(
             &current_inset_right,
             &current_inset_bottom
         ) {
-            if placement_reservations.Has(hwnd)
+            if IsCurrentPlacementStabilization(hwnd, stabilization_generation)
+                && placement_reservations.Has(hwnd)
+            {
                 placement_reservations.Delete(hwnd)
+            }
 
             return
         }
@@ -527,6 +579,7 @@ StabilizePlacedWindow(
 
         DebugLog(
             "Stabilization check."
+            . " | generation=" stabilization_generation
             . " | delay-ms=" delay_ms
             . " | matched=" (!needs_correction)
             . " | actual=("
@@ -541,12 +594,16 @@ StabilizePlacedWindow(
         )
 
         if !needs_correction {
-            if placement_reservations.Has(hwnd)
+            if IsCurrentPlacementStabilization(hwnd, stabilization_generation)
+                && placement_reservations.Has(hwnd)
+            {
                 placement_reservations.Delete(hwnd)
+            }
 
             DebugLog(
                 "Placement reservation released."
                 . " | reason=matched"
+                . " | generation=" stabilization_generation
                 . " | hwnd=" hwnd
             )
 
@@ -563,6 +620,7 @@ StabilizePlacedWindow(
                     target_y,
                     target_width,
                     target_height,
+                    stabilization_generation,
                     placement_stabilize_confirmation_ms,
                     attempt,
                     passive_stage
@@ -572,6 +630,7 @@ StabilizePlacedWindow(
 
             DebugLog(
                 "Stabilization confirmation-only recheck scheduled."
+                . " | generation=" stabilization_generation
                 . " | attempts=" attempt
                 . " | delay-ms=" placement_stabilize_confirmation_ms
                 . " | hwnd=" hwnd
@@ -598,6 +657,7 @@ StabilizePlacedWindow(
                     target_y,
                     target_width,
                     target_height,
+                    stabilization_generation,
                     passive_delay_ms,
                     attempt,
                     next_passive_stage
@@ -607,6 +667,7 @@ StabilizePlacedWindow(
 
             DebugLog(
                 "Stabilization passive recheck scheduled."
+                . " | generation=" stabilization_generation
                 . " | stage=" next_passive_stage
                 . "/" placement_stabilize_backoff_delays_ms.Length
                 . " | delay-ms=" passive_delay_ms
@@ -644,8 +705,18 @@ StabilizePlacedWindow(
             | 0x0004  ; SWP_NOZORDER
         )
 
+        ; The callback may have been interrupted by a newer placement while it
+        ; was checking geometry. Recheck immediately before posting the move.
+        if !IsCurrentPlacementStabilization(
+            hwnd,
+            stabilization_generation
+        ) {
+            return
+        }
+
         DebugLog(
             "Stabilization SetWindowPos begin."
+            . " | generation=" stabilization_generation
             . " | attempt=" next_attempt
             . " | passive-grace-complete=1"
             . " | hwnd=" hwnd
@@ -671,18 +742,23 @@ StabilizePlacedWindow(
         DebugLog(
             "Stabilization SetWindowPos returned."
             . " | result=" stabilization_result
+            . " | generation=" stabilization_generation
             . " | attempt=" next_attempt
             . " | elapsed-ms=" stabilization_elapsed_ms
             . " | hwnd=" hwnd
         )
 
         if !stabilization_result {
-            if placement_reservations.Has(hwnd)
+            if IsCurrentPlacementStabilization(hwnd, stabilization_generation)
+                && placement_reservations.Has(hwnd)
+            {
                 placement_reservations.Delete(hwnd)
+            }
 
             DebugLog(
                 "Placement reservation released."
                 . " | reason=stabilization-failed"
+                . " | generation=" stabilization_generation
                 . " | last-error=" A_LastError
                 . " | hwnd=" hwnd
             )
@@ -697,6 +773,7 @@ StabilizePlacedWindow(
                 target_y,
                 target_width,
                 target_height,
+                stabilization_generation,
                 placement_stabilize_retry_ms,
                 next_attempt,
                 0
@@ -706,6 +783,7 @@ StabilizePlacedWindow(
 
         DebugLog(
             "Stabilization recheck scheduled."
+            . " | generation=" stabilization_generation
             . " | attempt=" next_attempt
             . " | passive-stage=0"
             . " | delay-ms=" placement_stabilize_retry_ms

@@ -294,6 +294,8 @@ HandleWinEvent(
 
         if event = EVENT_SYSTEM_FOREGROUND {
             if hwnd && hwnd != current_foreground_hwnd {
+                CancelPendingAdoptionUndo()
+
                 previous_foreground_hwnd := current_foreground_hwnd
                 current_foreground_hwnd := hwnd
 
@@ -410,11 +412,19 @@ HandleWinEvent(
 ForgetWindow(hwnd)
 {
     global pending_windows, handled_windows, placement_reservations
+    global placement_stabilization_generations
+    global pending_adoption_undo
     global cascade_history
     global startup_windows, known_windows
     global current_foreground_hwnd, previous_foreground_hwnd
 
     affected_monitor := GetManagedCascadeMonitor(hwnd)
+
+    if IsPendingAdoptionUndoFor(hwnd)
+        pending_adoption_undo := 0
+
+    if placement_stabilization_generations.Has(hwnd)
+        placement_stabilization_generations.Delete(hwnd)
 
     if startup_windows.Has(hwnd)
         startup_windows.Delete(hwnd)
