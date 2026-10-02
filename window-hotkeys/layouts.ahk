@@ -73,7 +73,8 @@ StretchWindowVertically()
         if !MoveWindowToVisibleVerticalBounds(
             hwnd,
             work_top,
-            work_bottom
+            work_bottom,
+            1
         ) {
             ForgetVerticalStretch(hwnd)
         }
@@ -439,13 +440,20 @@ MoveWindowToVisibleHorizontalBounds(
 MoveWindowToVisibleVerticalBounds(
     hwnd,
     target_visible_top,
-    target_visible_bottom
+    target_visible_bottom,
+    render_overscan := 0
 )
 {
-    target_visible_height :=
-        target_visible_bottom - target_visible_top
+    effective_visible_top :=
+        target_visible_top - render_overscan
 
-    if target_visible_height <= 0
+    effective_visible_bottom :=
+        target_visible_bottom + render_overscan
+
+    effective_visible_height :=
+        effective_visible_bottom - effective_visible_top
+
+    if effective_visible_height <= 0
         return false
 
     if !GetVerticalStretchGeometry(
@@ -462,9 +470,9 @@ MoveWindowToVisibleVerticalBounds(
         return false
     }
 
-    raw_target_y := target_visible_top - inset_top
+    raw_target_y := effective_visible_top - inset_top
     raw_target_height := (
-        target_visible_height
+        effective_visible_height
         + inset_top
         + inset_bottom
     )
@@ -483,8 +491,8 @@ MoveWindowToVisibleVerticalBounds(
         return false
     }
 
-    ; DWM frame insets can shift slightly after resize. Correct against the
-    ; visible frame itself rather than relying on a fixed pixel adjustment.
+    ; The active full-height stretch deliberately overscans one rendered pixel
+    ; beyond each work-area edge. Restore calls use the default zero overscan.
     Loop 3 {
         Sleep 10
 
@@ -501,8 +509,11 @@ MoveWindowToVisibleVerticalBounds(
         actual_visible_top := visible_y
         actual_visible_bottom := visible_y + visible_height
 
-        top_error := target_visible_top - actual_visible_top
-        bottom_error := target_visible_bottom - actual_visible_bottom
+        top_error :=
+            effective_visible_top - actual_visible_top
+
+        bottom_error :=
+            effective_visible_bottom - actual_visible_bottom
 
         if top_error = 0 && bottom_error = 0
             return true
