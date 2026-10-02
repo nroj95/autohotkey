@@ -114,7 +114,21 @@ UpdateStartupMenu()
 ; =============================================================================
 
 ; Hold Caps Lock for normal chords, or tap it to arm one mapped key.
-CapsLock::ArmCapsLayer()
+; Modified Caps presses are swallowed without arming the one-shot layer.
+*CapsLock::
+{
+    if (
+        GetKeyState("Shift", "P")
+        || GetKeyState("Ctrl", "P")
+        || GetKeyState("Alt", "P")
+        || GetKeyState("LWin", "P")
+        || GetKeyState("RWin", "P")
+    ) {
+        return
+    }
+
+    ArmCapsLayer()
+}
 
 
 ; Top row.
