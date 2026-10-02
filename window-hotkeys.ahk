@@ -17,7 +17,7 @@
 ; - cycle running Steam games while preserving their window state.
 ; - remember a just-minimized window until the user clicks elsewhere.
 ; - toggle all eligible windows minimized/restored with win+m.
-; - extend native Shift+Win vertical stretch with independent left/right edge toggles.
+; - provide deterministic Shift+Win vertical and horizontal edge stretching.
 ; - require CapsLock Layer and receive companion commands through it.
 ; =============================================================================
 
@@ -100,6 +100,7 @@ HandleWindowHotkeysExit(exit_reason, exit_code)
 
     SetTimer(WatchCapsLockLayer, 0)
 
+    try RestoreAllVerticalStretches()
     try RestoreAllHorizontalStretches()
     try RestoreAllBorderlessWindows(exit_reason, exit_code)
 

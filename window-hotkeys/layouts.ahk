@@ -2,8 +2,117 @@
 ; Included into the same script; functions share the existing global state.
 
 ; =============================================================================
-; horizontal edge stretch
+; window stretch
 ; =============================================================================
+
+StretchWindowVertically()
+{
+    global borderless_windows
+    global vertical_stretch_windows
+
+    hwnd := GetWindowControlTarget()
+
+    if !hwnd
+        return
+
+    window := "ahk_id " hwnd
+
+    try {
+        PruneVerticalStretchWindows()
+
+        ; Special states do not have reliable ordinary-window geometry.
+        if borderless_windows.Has(hwnd) {
+            ForgetHorizontalStretch(hwnd)
+            ForgetVerticalStretch(hwnd)
+            RestoreBorderlessWindow(hwnd, false, true)
+        } else if WinGetMinMax(window) != 0 {
+            ForgetHorizontalStretch(hwnd)
+            ForgetVerticalStretch(hwnd)
+            WinRestore(window)
+        }
+
+        if !GetVerticalStretchGeometry(
+            hwnd,
+            &raw_x,
+            &raw_y,
+            &raw_width,
+            &raw_height,
+            &visible_top,
+            &visible_bottom,
+            &inset_top,
+            &inset_bottom
+        ) {
+            return
+        }
+
+        monitor_handle := DllCall(
+            "MonitorFromWindow",
+            "ptr", hwnd,
+            "uint", 2, ; MONITOR_DEFAULTTONEAREST
+            "ptr"
+        )
+
+        GetWindowMonitorWorkArea(
+            hwnd,
+            &work_left,
+            &work_top,
+            &work_right,
+            &work_bottom
+        )
+
+        if !vertical_stretch_windows.Has(hwnd)
+            || vertical_stretch_windows[hwnd]["monitor"] != monitor_handle
+        {
+            vertical_stretch_windows[hwnd] := Map(
+                "monitor", monitor_handle,
+                "original_top", visible_top,
+                "original_bottom", visible_bottom
+            )
+        }
+
+        if !MoveWindowToVisibleVerticalBounds(
+            hwnd,
+            work_top,
+            work_bottom
+        ) {
+            ForgetVerticalStretch(hwnd)
+        }
+    }
+}
+
+RestoreVerticalStretch()
+{
+    global vertical_stretch_windows
+
+    hwnd := GetWindowControlTarget()
+
+    if !hwnd || !vertical_stretch_windows.Has(hwnd)
+        return
+
+    state := vertical_stretch_windows[hwnd]
+
+    current_monitor := DllCall(
+        "MonitorFromWindow",
+        "ptr", hwnd,
+        "uint", 2, ; MONITOR_DEFAULTTONEAREST
+        "ptr"
+    )
+
+    ; Do not pull a window across monitors just to restore old vertical bounds.
+    if current_monitor != state["monitor"] {
+        vertical_stretch_windows.Delete(hwnd)
+        return
+    }
+
+    if MoveWindowToVisibleVerticalBounds(
+        hwnd,
+        state["original_top"],
+        state["original_bottom"]
+    ) {
+        vertical_stretch_windows.Delete(hwnd)
+    }
+}
+
 
 ToggleHorizontalStretch(side)
 {
@@ -27,9 +136,11 @@ ToggleHorizontalStretch(side)
         ; horizontal toggle. Restore them first and begin a fresh stretch state.
         if borderless_windows.Has(hwnd) {
             ForgetHorizontalStretch(hwnd)
+            ForgetVerticalStretch(hwnd)
             RestoreBorderlessWindow(hwnd, false, true)
         } else if WinGetMinMax(window) != 0 {
             ForgetHorizontalStretch(hwnd)
+            ForgetVerticalStretch(hwnd)
             WinRestore(window)
         }
 
@@ -78,55 +189,46 @@ ToggleHorizontalStretch(side)
 
         state := horizontal_stretch_windows[hwnd]
 
-        if side = "left"
+        if side = "left" {
+            if !state["left_stretched"]
+                state["original_left"] := visible_left
+
             state["left_stretched"] := !state["left_stretched"]
-        else
+
+            target_visible_left := (
+                state["left_stretched"]
+                ? work_left
+                : state["original_left"]
+            )
+
+            ; Left stretch owns only the left edge. Preserve the live right edge,
+            ; including any active right stretch or manual resize.
+            target_visible_right := visible_right
+        } else {
+            if !state["right_stretched"]
+                state["original_right"] := visible_right
+
             state["right_stretched"] := !state["right_stretched"]
 
-        target_visible_left := (
-            state["left_stretched"]
-            ? work_left
-            : state["original_left"]
-        )
+            ; Right stretch owns only the right edge. Preserve the live left edge,
+            ; including any active left stretch or manual resize.
+            target_visible_left := visible_left
 
-        target_visible_right := (
-            state["right_stretched"]
-            ? work_right
-            : state["original_right"]
-        )
+            target_visible_right := (
+                state["right_stretched"]
+                ? work_right
+                : state["original_right"]
+            )
+        }
 
-        target_visible_width :=
-            target_visible_right - target_visible_left
-
-        if target_visible_width <= 0 {
+        if !MoveWindowToVisibleHorizontalBounds(
+            hwnd,
+            target_visible_left,
+            target_visible_right
+        ) {
             ForgetHorizontalStretch(hwnd)
             return
         }
-
-        ; Convert the desired visible frame back to the raw HWND rectangle that
-        ; WinMove expects. This makes the visible edge meet the work-area edge,
-        ; matching native Shift+Win+Up more closely on Windows 11.
-        raw_target_x := target_visible_left - inset_left
-        raw_target_width := (
-            target_visible_width
-            + inset_left
-            + inset_right
-        )
-
-        if raw_target_width <= 0 {
-            ForgetHorizontalStretch(hwnd)
-            return
-        }
-
-        ; Horizontal stretching deliberately leaves the current raw Y/height
-        ; alone so native Shift+Win+Up/Down can combine with these side toggles.
-        WinMove(
-            raw_target_x,
-            raw_y,
-            raw_target_width,
-            raw_height,
-            window
-        )
 
         if !state["left_stretched"] && !state["right_stretched"]
             horizontal_stretch_windows.Delete(hwnd)
@@ -180,6 +282,326 @@ GetHorizontalStretchGeometry(
 
     return true
 }
+
+GetVerticalStretchGeometry(
+    hwnd,
+    &raw_x,
+    &raw_y,
+    &raw_width,
+    &raw_height,
+    &visible_top,
+    &visible_bottom,
+    &inset_top,
+    &inset_bottom
+)
+{
+    try WinGetPos(
+        &raw_x,
+        &raw_y,
+        &raw_width,
+        &raw_height,
+        "ahk_id " hwnd
+    )
+    catch {
+        return false
+    }
+
+    if raw_width <= 0 || raw_height <= 0
+        return false
+
+    if GetVisibleWindowBounds(
+        hwnd,
+        &visible_x,
+        &visible_y,
+        &visible_width,
+        &visible_height
+    ) {
+        visible_top := visible_y
+        visible_bottom := visible_y + visible_height
+    } else {
+        visible_top := raw_y
+        visible_bottom := raw_y + raw_height
+    }
+
+    inset_top := visible_top - raw_y
+    inset_bottom := (raw_y + raw_height) - visible_bottom
+
+    return true
+}
+
+
+MoveWindowToVisibleHorizontalBounds(
+    hwnd,
+    target_visible_left,
+    target_visible_right
+)
+{
+    target_visible_width :=
+        target_visible_right - target_visible_left
+
+    if target_visible_width <= 0
+        return false
+
+    if !GetHorizontalStretchGeometry(
+        hwnd,
+        &raw_x,
+        &raw_y,
+        &raw_width,
+        &raw_height,
+        &visible_left,
+        &visible_right,
+        &inset_left,
+        &inset_right
+    ) {
+        return false
+    }
+
+    raw_target_x := target_visible_left - inset_left
+    raw_target_width := (
+        target_visible_width
+        + inset_left
+        + inset_right
+    )
+
+    if raw_target_width <= 0
+        return false
+
+    try WinMove(
+        raw_target_x,
+        raw_y,
+        raw_target_width,
+        raw_height,
+        "ahk_id " hwnd
+    )
+    catch {
+        return false
+    }
+
+    ; DWM frame insets can change slightly after a resize. Measure the visible
+    ; result and correct any remaining pixel error instead of using a fixed fudge.
+    Loop 3 {
+        Sleep 10
+
+        if !GetVisibleWindowBounds(
+            hwnd,
+            &visible_x,
+            &visible_y,
+            &visible_width,
+            &visible_height
+        ) {
+            ; The initial move succeeded; some windows simply do not expose DWM
+            ; frame bounds, so there is nothing reliable left to correct.
+            return true
+        }
+
+        actual_visible_left := visible_x
+        actual_visible_right := visible_x + visible_width
+
+        left_error := target_visible_left - actual_visible_left
+        right_error := target_visible_right - actual_visible_right
+
+        if left_error = 0 && right_error = 0
+            return true
+
+        try WinGetPos(
+            &current_raw_x,
+            &current_raw_y,
+            &current_raw_width,
+            &current_raw_height,
+            "ahk_id " hwnd
+        )
+        catch {
+            return false
+        }
+
+        corrected_raw_width :=
+            current_raw_width + right_error - left_error
+
+        if corrected_raw_width <= 0
+            return false
+
+        try WinMove(
+            current_raw_x + left_error,
+            current_raw_y,
+            corrected_raw_width,
+            current_raw_height,
+            "ahk_id " hwnd
+        )
+        catch {
+            return false
+        }
+    }
+
+    return true
+}
+
+
+MoveWindowToVisibleVerticalBounds(
+    hwnd,
+    target_visible_top,
+    target_visible_bottom
+)
+{
+    target_visible_height :=
+        target_visible_bottom - target_visible_top
+
+    if target_visible_height <= 0
+        return false
+
+    if !GetVerticalStretchGeometry(
+        hwnd,
+        &raw_x,
+        &raw_y,
+        &raw_width,
+        &raw_height,
+        &visible_top,
+        &visible_bottom,
+        &inset_top,
+        &inset_bottom
+    ) {
+        return false
+    }
+
+    raw_target_y := target_visible_top - inset_top
+    raw_target_height := (
+        target_visible_height
+        + inset_top
+        + inset_bottom
+    )
+
+    if raw_target_height <= 0
+        return false
+
+    try WinMove(
+        raw_x,
+        raw_target_y,
+        raw_width,
+        raw_target_height,
+        "ahk_id " hwnd
+    )
+    catch {
+        return false
+    }
+
+    ; DWM frame insets can shift slightly after resize. Correct against the
+    ; visible frame itself rather than relying on a fixed pixel adjustment.
+    Loop 3 {
+        Sleep 10
+
+        if !GetVisibleWindowBounds(
+            hwnd,
+            &visible_x,
+            &visible_y,
+            &visible_width,
+            &visible_height
+        ) {
+            return true
+        }
+
+        actual_visible_top := visible_y
+        actual_visible_bottom := visible_y + visible_height
+
+        top_error := target_visible_top - actual_visible_top
+        bottom_error := target_visible_bottom - actual_visible_bottom
+
+        if top_error = 0 && bottom_error = 0
+            return true
+
+        try WinGetPos(
+            &current_raw_x,
+            &current_raw_y,
+            &current_raw_width,
+            &current_raw_height,
+            "ahk_id " hwnd
+        )
+        catch {
+            return false
+        }
+
+        corrected_raw_height :=
+            current_raw_height + bottom_error - top_error
+
+        if corrected_raw_height <= 0
+            return false
+
+        try WinMove(
+            current_raw_x,
+            current_raw_y + top_error,
+            current_raw_width,
+            corrected_raw_height,
+            "ahk_id " hwnd
+        )
+        catch {
+            return false
+        }
+    }
+
+    return true
+}
+
+
+ForgetVerticalStretch(hwnd)
+{
+    global vertical_stretch_windows
+
+    if vertical_stretch_windows.Has(hwnd)
+        vertical_stretch_windows.Delete(hwnd)
+}
+
+PruneVerticalStretchWindows()
+{
+    global vertical_stretch_windows
+
+    stale_hwnds := []
+
+    for hwnd in vertical_stretch_windows {
+        if !DllCall("IsWindow", "ptr", hwnd, "int")
+            stale_hwnds.Push(hwnd)
+    }
+
+    for hwnd in stale_hwnds
+        vertical_stretch_windows.Delete(hwnd)
+}
+
+RestoreAllVerticalStretches()
+{
+    global vertical_stretch_windows
+
+    windows := []
+
+    for hwnd in vertical_stretch_windows
+        windows.Push(hwnd)
+
+    for hwnd in windows {
+        if !DllCall("IsWindow", "ptr", hwnd, "int")
+            continue
+
+        state := vertical_stretch_windows[hwnd]
+
+        current_monitor := DllCall(
+            "MonitorFromWindow",
+            "ptr", hwnd,
+            "uint", 2, ; MONITOR_DEFAULTTONEAREST
+            "ptr"
+        )
+
+        if current_monitor != state["monitor"]
+            continue
+
+        original_visible_height :=
+            state["original_bottom"] - state["original_top"]
+
+        if original_visible_height > 0
+            MoveWindowToVisibleVerticalBounds(
+                hwnd,
+                state["original_top"],
+                state["original_bottom"]
+            )
+    }
+
+    vertical_stretch_windows := Map()
+}
+
 
 ForgetHorizontalStretch(hwnd)
 {
@@ -249,20 +671,11 @@ RestoreAllHorizontalStretches()
             original_visible_width :=
                 state["original_right"] - state["original_left"]
 
-            raw_target_x := state["original_left"] - inset_left
-            raw_target_width := (
-                original_visible_width
-                + inset_left
-                + inset_right
-            )
-
-            if original_visible_width > 0 && raw_target_width > 0
-                WinMove(
-                    raw_target_x,
-                    raw_y,
-                    raw_target_width,
-                    raw_height,
-                    "ahk_id " hwnd
+            if original_visible_width > 0
+                MoveWindowToVisibleHorizontalBounds(
+                    hwnd,
+                    state["original_left"],
+                    state["original_right"]
                 )
         }
     }
@@ -564,6 +977,7 @@ PrepareWindowForPlacement(hwnd)
     global borderless_windows
 
     ForgetHorizontalStretch(hwnd)
+    ForgetVerticalStretch(hwnd)
 
     window := "ahk_id " hwnd
 

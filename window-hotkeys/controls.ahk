@@ -21,7 +21,9 @@
 
 #Enter::SwapWindowClockwise()
 
-; Extend Windows' native Shift+Win vertical stretch with horizontal edge toggles.
+; Deterministic Shift+Win stretch controls.
++#Up::StretchWindowVertically()
++#Down::RestoreVerticalStretch()
 +#Left::ToggleHorizontalStretch("left")
 +#Right::ToggleHorizontalStretch("right")
 
