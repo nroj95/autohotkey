@@ -32,6 +32,8 @@ focus_navigation_active := false
 focus_navigation_hwnd := 0
 
 startup_shortcut_path := A_Startup "\Window Hotkeys.lnk"
+fancyzones_override_snap_disabled := false
+fancyzones_hotkey_conflict := false
 
 
 ; =============================================================================
@@ -87,6 +89,8 @@ A_TrayMenu.Add()
 A_TrayMenu.AddStandard()
 
 UpdateStartupMenu()
+SetTimer(CheckFancyZonesStartup, 1000)
+CheckFancyZonesStartup()
 
 
 ; =============================================================================
@@ -111,25 +115,29 @@ UpdateStartupMenu()
 ^#h::ToggleWindowHotkeysHelp()
 
 ; FancyZones relative-position navigation.
-^#Left::
+#HotIf IsFancyZonesRunning()
+
+^!Left::
 {
-    Send "{Ctrl up}#{Left}"
+    Send "{Ctrl up}{Alt up}#{Left}"
 }
 
-^#Right::
+^!Right::
 {
-    Send "{Ctrl up}#{Right}"
+    Send "{Ctrl up}{Alt up}#{Right}"
 }
 
-^#Up::
+^!Up::
 {
-    Send "{Ctrl up}#{Up}"
+    Send "{Ctrl up}{Alt up}#{Up}"
 }
 
-^#Down::
+^!Down::
 {
-    Send "{Ctrl up}#{Down}"
+    Send "{Ctrl up}{Alt up}#{Down}"
 }
+
+#HotIf
 
 ; Move focus spatially without moving windows.
 !#Left::FocusNearestWindow("left")
@@ -312,12 +320,372 @@ IsCapsLockLayerRunning()
     return true
 }
 
+
+; =============================================================================
+; FancyZones integration
+; =============================================================================
+
+CheckFancyZonesStartup(*)
+{
+    static attempts := 0
+
+    attempts += 1
+
+    if IsFancyZonesRunning() {
+        SetTimer(CheckFancyZonesStartup, 0)
+        CheckFancyZonesIntegration()
+        return
+    }
+
+    if attempts >= 15
+        SetTimer(CheckFancyZonesStartup, 0)
+}
+
+
+CheckFancyZonesIntegration(*)
+{
+    global fancyzones_override_snap_disabled
+    global fancyzones_hotkey_conflict
+
+    fancyzones_override_snap_disabled := false
+    fancyzones_hotkey_conflict := false
+
+    if !IsFancyZonesRunning()
+        return
+
+    state := GetFancyZonesIntegrationState()
+
+    if !state
+        return
+
+    fancyzones_override_snap_disabled := !state.override_snap_enabled
+    fancyzones_hotkey_conflict := state.hotkey_conflict
+
+    if fancyzones_override_snap_disabled {
+        response := MsgBox(
+            "FancyZones' Override Windows Snap setting is disabled.`n`n"
+            . "Window Hotkeys requires it for Ctrl + Alt + Arrow navigation.`n`n"
+            . "Enable Override Windows Snap?",
+            "Window Hotkeys",
+            "YesNo Icon!"
+        )
+
+        if response = "Yes" {
+            if EnableFancyZonesOverrideSnap() {
+                state := GetFancyZonesIntegrationState()
+
+                if state {
+                    fancyzones_override_snap_disabled :=
+                        !state.override_snap_enabled
+
+                    fancyzones_hotkey_conflict :=
+                        state.hotkey_conflict
+                }
+            }
+            else {
+                MsgBox(
+                    "Window Hotkeys could not enable Override Windows Snap. "
+                    . "You can enable it manually in PowerToys.",
+                    "Window Hotkeys",
+                    "Icon!"
+                )
+            }
+        }
+    }
+
+    if !fancyzones_hotkey_conflict
+        return
+
+    response := MsgBox(
+        "FancyZones is using Win + PgUp or Win + PgDn for window switching, "
+        . "which conflicts with Window Hotkeys' tile shortcuts.`n`n"
+        . "Change the conflicting FancyZones shortcuts to their "
+        . "Ctrl + Win versions?`n`n"
+        . "Yes: use Ctrl + Win + PgUp/PgDn`n"
+        . "No: leave FancyZones unchanged",
+        "Window Hotkeys",
+        "YesNo Icon!"
+    )
+
+    if response != "Yes"
+        return
+
+    if RemapConflictingFancyZonesHotkeys() {
+        state := GetFancyZonesIntegrationState()
+
+        if state {
+            fancyzones_override_snap_disabled :=
+                !state.override_snap_enabled
+
+            fancyzones_hotkey_conflict :=
+                state.hotkey_conflict
+        }
+
+        return
+    }
+
+    MsgBox(
+        "Window Hotkeys could not update the FancyZones shortcuts. "
+        . "You can change them manually in PowerToys.",
+        "Window Hotkeys",
+        "Icon!"
+    )
+}
+
+
+IsFancyZonesRunning()
+{
+    return !!ProcessExist("PowerToys.FancyZones.exe")
+}
+
+
+GetFancyZonesIntegrationState()
+{
+    settings_path := FindFancyZonesSettingsPath()
+
+    if settings_path = ""
+        return false
+
+    result_path := (
+        A_Temp
+        . "\window-hotkeys-fancyzones-"
+        . DllCall("GetCurrentProcessId", "uint")
+        . "-"
+        . A_TickCount
+        . ".txt"
+    )
+
+    previous_settings_path := EnvGet("WINDOW_HOTKEYS_FANCYZONES_SETTINGS")
+    previous_result_path := EnvGet("WINDOW_HOTKEYS_RESULT_PATH")
+
+    EnvSet("WINDOW_HOTKEYS_FANCYZONES_SETTINGS", settings_path)
+    EnvSet("WINDOW_HOTKEYS_RESULT_PATH", result_path)
+
+    script_text :=
+    (
+    "$ErrorActionPreference = 'Stop'; "
+    "$path = $env:WINDOW_HOTKEYS_FANCYZONES_SETTINGS; "
+    "$settings = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json; "
+    "$properties = $settings.properties; "
+    "function Test-Conflict($hotkey) { "
+    "if ($null -eq $hotkey) { return $false }; "
+    "return ([bool]$hotkey.win -and -not [bool]$hotkey.ctrl "
+    "-and -not [bool]$hotkey.alt -and -not [bool]$hotkey.shift "
+    "-and ([int]$hotkey.code -eq 33 -or [int]$hotkey.code -eq 34)) "
+    "}; "
+    "$override = [bool]$properties.fancyzones_overrideSnapHotkeys.value; "
+    "$switching = [bool]$properties.fancyzones_windowSwitching.value; "
+    "$conflict = $switching -and "
+    "((Test-Conflict $properties.fancyzones_prevTab_hotkey.value) "
+    "-or (Test-Conflict $properties.fancyzones_nextTab_hotkey.value)); "
+    "$result = [string][int]$override + ',' + [string][int]$conflict; "
+    "[IO.File]::WriteAllText($env:WINDOW_HOTKEYS_RESULT_PATH, $result);"
+    )
+
+    try {
+        exit_code := RunHiddenPowerShell(script_text)
+    }
+    finally {
+        EnvSet(
+            "WINDOW_HOTKEYS_FANCYZONES_SETTINGS",
+            previous_settings_path
+        )
+        EnvSet("WINDOW_HOTKEYS_RESULT_PATH", previous_result_path)
+    }
+
+    if exit_code != 0 || !FileExist(result_path) {
+        DebugLog(
+            "FancyZones integration state check failed."
+            . " | exit-code=" exit_code
+        )
+        try FileDelete(result_path)
+        return false
+    }
+
+    try {
+        result := Trim(FileRead(result_path, "UTF-8"))
+        fields := StrSplit(result, ",")
+
+        if fields.Length != 2
+            return false
+
+        return {
+            override_snap_enabled: fields[1] = "1",
+            hotkey_conflict: fields[2] = "1"
+        }
+    }
+    catch Error as err {
+        DebugError("Read FancyZones integration state", err)
+        return false
+    }
+    finally {
+        try FileDelete(result_path)
+    }
+}
+
+
+EnableFancyZonesOverrideSnap()
+{
+    settings_path := FindFancyZonesSettingsPath()
+
+    if settings_path = ""
+        return false
+
+    previous_settings_path := EnvGet("WINDOW_HOTKEYS_FANCYZONES_SETTINGS")
+    EnvSet("WINDOW_HOTKEYS_FANCYZONES_SETTINGS", settings_path)
+
+    ; Edit only the required toggle so every unrelated FancyZones setting stays
+    ; exactly as the user configured it.
+    script_text :=
+    (
+    "$ErrorActionPreference = 'Stop'; "
+    "$path = $env:WINDOW_HOTKEYS_FANCYZONES_SETTINGS; "
+    "$settings = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json; "
+    "$settings.properties.fancyzones_overrideSnapHotkeys.value = $true; "
+    "$json = $settings | ConvertTo-Json -Depth 20 -Compress; "
+    "$utf8 = New-Object System.Text.UTF8Encoding -ArgumentList $false; "
+    "[IO.File]::WriteAllText($path, $json, $utf8);"
+    )
+
+    try {
+        exit_code := RunHiddenPowerShell(script_text)
+
+        if exit_code != 0 {
+            DebugLog(
+                "Enable FancyZones Override Windows Snap failed."
+                . " | exit-code=" exit_code
+            )
+            return false
+        }
+
+        return true
+    }
+    finally {
+        EnvSet(
+            "WINDOW_HOTKEYS_FANCYZONES_SETTINGS",
+            previous_settings_path
+        )
+    }
+}
+
+
+RemapConflictingFancyZonesHotkeys()
+{
+    settings_path := FindFancyZonesSettingsPath()
+
+    if settings_path = ""
+        return false
+
+    previous_settings_path := EnvGet("WINDOW_HOTKEYS_FANCYZONES_SETTINGS")
+    EnvSet("WINDOW_HOTKEYS_FANCYZONES_SETTINGS", settings_path)
+
+    ; Edit only the two conflicting hotkey objects. Custom non-conflicting
+    ; shortcuts and every unrelated FancyZones setting stay untouched.
+    script_text :=
+    (
+    "$ErrorActionPreference = 'Stop'; "
+    "$path = $env:WINDOW_HOTKEYS_FANCYZONES_SETTINGS; "
+    "$settings = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json; "
+    "$properties = $settings.properties; "
+    "function Test-Conflict($hotkey) { "
+    "if ($null -eq $hotkey) { return $false }; "
+    "return ([bool]$hotkey.win -and -not [bool]$hotkey.ctrl "
+    "-and -not [bool]$hotkey.alt -and -not [bool]$hotkey.shift "
+    "-and ([int]$hotkey.code -eq 33 -or [int]$hotkey.code -eq 34)) "
+    "}; "
+    "$changed = $false; "
+    "$previous = $properties.fancyzones_prevTab_hotkey.value; "
+    "if (Test-Conflict $previous) { "
+    "$previous.ctrl = $true; $changed = $true "
+    "}; "
+    "$next = $properties.fancyzones_nextTab_hotkey.value; "
+    "if (Test-Conflict $next) { "
+    "$next.ctrl = $true; $changed = $true "
+    "}; "
+    "if (-not $changed) { exit 0 }; "
+    "$json = $settings | ConvertTo-Json -Depth 20 -Compress; "
+    "$utf8 = New-Object System.Text.UTF8Encoding -ArgumentList $false; "
+    "[IO.File]::WriteAllText($path, $json, $utf8);"
+    )
+
+    try {
+        exit_code := RunHiddenPowerShell(script_text)
+
+        if exit_code != 0 {
+            DebugLog(
+                "FancyZones shortcut remap failed."
+                . " | exit-code=" exit_code
+            )
+            return false
+        }
+
+        return true
+    }
+    finally {
+        EnvSet(
+            "WINDOW_HOTKEYS_FANCYZONES_SETTINGS",
+            previous_settings_path
+        )
+    }
+}
+
+
+FindFancyZonesSettingsPath()
+{
+    local_app_data := EnvGet("LOCALAPPDATA")
+
+    if local_app_data = ""
+        return ""
+
+    settings_path := (
+        local_app_data
+        . "\Microsoft\PowerToys\FancyZones\settings.json"
+    )
+
+    if FileExist(settings_path)
+        return settings_path
+
+    return ""
+}
+
+RunHiddenPowerShell(script_text)
+{
+    powershell_path := (
+        A_WinDir
+        . "\System32\WindowsPowerShell\v1.0\powershell.exe"
+    )
+
+    if !FileExist(powershell_path)
+        return -1
+
+    ; Keep the -Command payload on one line so CreateProcess receives one
+    ; predictable argument. These internal commands intentionally use only
+    ; single-quoted PowerShell string literals.
+    script_text := StrReplace(script_text, "`r", " ")
+    script_text := StrReplace(script_text, "`n", " ")
+
+    command := (
+        '"' powershell_path '"'
+        . " -NoLogo -NoProfile -NonInteractive"
+        . " -WindowStyle Hidden -Command "
+        . '"' script_text '"'
+    )
+
+    try return RunWait(command, , "Hide")
+    catch Error as err {
+        DebugError("Run PowerShell", err)
+        return -1
+    }
+}
+
 ; =============================================================================
 ; help
 ; =============================================================================
 
 ToggleWindowHotkeysHelp(*)
 {
+    global fancyzones_override_snap_disabled
+    global fancyzones_hotkey_conflict
     static help_gui := 0
 
     if help_gui {
@@ -366,12 +734,38 @@ ToggleWindowHotkeysHelp(*)
         )
     }
 
-    help_text .= (
-        "`n"
-        "`n"
-        "FANCYZONES`n"
-        "Ctrl + Win + Arrow    Move between FancyZones"
-    )
+    if IsFancyZonesRunning() {
+        help_text .= (
+            "`n"
+            "`n"
+            "FANCYZONES`n"
+            "Ctrl + Alt + Arrow    Move between FancyZones"
+        )
+
+        if fancyzones_override_snap_disabled
+            || fancyzones_hotkey_conflict
+        {
+            help_text .= (
+                "`n"
+                "`n"
+                "WARNING"
+            )
+
+            if fancyzones_override_snap_disabled {
+                help_text .= (
+                    "`n"
+                    "FancyZones Override Windows Snap is disabled."
+                )
+            }
+
+            if fancyzones_hotkey_conflict {
+                help_text .= (
+                    "`n"
+                    "FancyZones Win + PgUp/PgDn conflict with the tile shortcuts above."
+                )
+            }
+        }
+    }
 
     help_gui.SetFont("s10", "Cascadia Mono")
     help_gui.AddText("w550", help_text)
