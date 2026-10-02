@@ -16,7 +16,7 @@ Window Hotkeys intentionally has no standalone fallback for those controls.
 | `settings.ahk` | existing defaults, runtime globals, Steam exclusions, paths, and debug settings. |
 | `controls.ahk` | direct Win/FancyZones hotkeys, mouse bindings, the required CapsLock Layer presence/watch logic, and `WindowHotkeys.Command` dispatch. |
 | `window-state.ahk` | Win+Home/Win+M group toggles, last-minimized target selection, maximize, minimize, and restore commands. |
-| `layouts.ahk` | side-layout cycling, third/half tiles, center tiles, matching, and placement preparation. |
+| `layouts.ahk` | horizontal edge stretch, side-layout cycling, third/half tiles, center tiles, matching, and placement preparation. |
 | `swapping.ahk` | clockwise window ordering, candidate selection, and rectangle swapping. |
 | `focus.ahk` | spatial focus, temporary highlight GUIs, session expiry, and accent color. |
 | `steam.ahk` | Steam message handler, game cycle/discovery, game minimize/activation, and return-window selection. |
@@ -75,8 +75,10 @@ their includes. do not validate or launch modules separately. only reload
 
 check Win+Up/Down/Backspace from normal, maximized, minimized, and borderless
 states; Win+Home and Win+M restore sets; left/right layout cycles and tiles;
-Win+Enter clockwise swapping; Caps+Win+Arrow focus/highlight expiry; Caps+Win+H
-help; and the FancyZones shortcuts/help. where Steam games are available, check
+Win+Enter clockwise swapping; Shift+Win+Left/Right independent edge stretch
+(including both sides for full width) alongside native Shift+Win+Up/Down;
+Caps+Win+Arrow focus/highlight expiry; Caps+Win+H help; and the FancyZones
+shortcuts/help. where Steam games are available, check
 Caps+G with one and multiple games and a return window, including borderless
 minimize/resume. also verify that Window Hotkeys refuses startup without
 CapsLock Layer, survives a quick CapsLock Layer reload, and exits after the

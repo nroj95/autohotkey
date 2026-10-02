@@ -12,6 +12,7 @@ all_minimized_windows := []
 all_active_hwnd := 0
 borderless_windows := Map()
 suspended_borderless_windows := Map()
+horizontal_stretch_windows := Map()
 
 steam_game_cycle := []
 last_steam_game_hwnd := 0

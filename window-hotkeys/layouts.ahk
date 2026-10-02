@@ -2,6 +2,276 @@
 ; Included into the same script; functions share the existing global state.
 
 ; =============================================================================
+; horizontal edge stretch
+; =============================================================================
+
+ToggleHorizontalStretch(side)
+{
+    global borderless_windows
+    global horizontal_stretch_windows
+
+    if side != "left" && side != "right"
+        return
+
+    hwnd := GetWindowControlTarget()
+
+    if !hwnd
+        return
+
+    window := "ahk_id " hwnd
+
+    try {
+        PruneHorizontalStretchWindows()
+
+        ; Special window states do not have reliable normal geometry for a
+        ; horizontal toggle. Restore them first and begin a fresh stretch state.
+        if borderless_windows.Has(hwnd) {
+            ForgetHorizontalStretch(hwnd)
+            RestoreBorderlessWindow(hwnd, false, true)
+        } else if WinGetMinMax(window) != 0 {
+            ForgetHorizontalStretch(hwnd)
+            WinRestore(window)
+        }
+
+        if !GetHorizontalStretchGeometry(
+            hwnd,
+            &raw_x,
+            &raw_y,
+            &raw_width,
+            &raw_height,
+            &visible_left,
+            &visible_right,
+            &inset_left,
+            &inset_right
+        ) {
+            return
+        }
+
+        monitor_handle := DllCall(
+            "MonitorFromWindow",
+            "ptr", hwnd,
+            "uint", 2, ; MONITOR_DEFAULTTONEAREST
+            "ptr"
+        )
+
+        GetWindowMonitorWorkArea(
+            hwnd,
+            &work_left,
+            &work_top,
+            &work_right,
+            &work_bottom
+        )
+
+        if !horizontal_stretch_windows.Has(hwnd)
+            || horizontal_stretch_windows[hwnd]["monitor"] != monitor_handle
+        {
+            ; Save visible frame edges, not the raw HWND bounds. Windows 11's
+            ; invisible resize border can extend beyond what the user sees.
+            horizontal_stretch_windows[hwnd] := Map(
+                "monitor", monitor_handle,
+                "original_left", visible_left,
+                "original_right", visible_right,
+                "left_stretched", false,
+                "right_stretched", false
+            )
+        }
+
+        state := horizontal_stretch_windows[hwnd]
+
+        if side = "left"
+            state["left_stretched"] := !state["left_stretched"]
+        else
+            state["right_stretched"] := !state["right_stretched"]
+
+        target_visible_left := (
+            state["left_stretched"]
+            ? work_left
+            : state["original_left"]
+        )
+
+        target_visible_right := (
+            state["right_stretched"]
+            ? work_right
+            : state["original_right"]
+        )
+
+        target_visible_width :=
+            target_visible_right - target_visible_left
+
+        if target_visible_width <= 0 {
+            ForgetHorizontalStretch(hwnd)
+            return
+        }
+
+        ; Convert the desired visible frame back to the raw HWND rectangle that
+        ; WinMove expects. This makes the visible edge meet the work-area edge,
+        ; matching native Shift+Win+Up more closely on Windows 11.
+        raw_target_x := target_visible_left - inset_left
+        raw_target_width := (
+            target_visible_width
+            + inset_left
+            + inset_right
+        )
+
+        if raw_target_width <= 0 {
+            ForgetHorizontalStretch(hwnd)
+            return
+        }
+
+        ; Horizontal stretching deliberately leaves the current raw Y/height
+        ; alone so native Shift+Win+Up/Down can combine with these side toggles.
+        WinMove(
+            raw_target_x,
+            raw_y,
+            raw_target_width,
+            raw_height,
+            window
+        )
+
+        if !state["left_stretched"] && !state["right_stretched"]
+            horizontal_stretch_windows.Delete(hwnd)
+    }
+}
+
+GetHorizontalStretchGeometry(
+    hwnd,
+    &raw_x,
+    &raw_y,
+    &raw_width,
+    &raw_height,
+    &visible_left,
+    &visible_right,
+    &inset_left,
+    &inset_right
+)
+{
+    try WinGetPos(
+        &raw_x,
+        &raw_y,
+        &raw_width,
+        &raw_height,
+        "ahk_id " hwnd
+    )
+    catch {
+        return false
+    }
+
+    if raw_width <= 0 || raw_height <= 0
+        return false
+
+    if GetVisibleWindowBounds(
+        hwnd,
+        &visible_x,
+        &visible_y,
+        &visible_width,
+        &visible_height
+    ) {
+        visible_left := visible_x
+        visible_right := visible_x + visible_width
+    } else {
+        ; DWM frame bounds are normally available. Fall back to the raw HWND
+        ; rectangle so the stretch still works on windows without them.
+        visible_left := raw_x
+        visible_right := raw_x + raw_width
+    }
+
+    inset_left := visible_left - raw_x
+    inset_right := (raw_x + raw_width) - visible_right
+
+    return true
+}
+
+ForgetHorizontalStretch(hwnd)
+{
+    global horizontal_stretch_windows
+
+    if horizontal_stretch_windows.Has(hwnd)
+        horizontal_stretch_windows.Delete(hwnd)
+}
+
+PruneHorizontalStretchWindows()
+{
+    global horizontal_stretch_windows
+
+    stale_hwnds := []
+
+    for hwnd in horizontal_stretch_windows {
+        if !DllCall("IsWindow", "ptr", hwnd, "int")
+            stale_hwnds.Push(hwnd)
+    }
+
+    for hwnd in stale_hwnds
+        horizontal_stretch_windows.Delete(hwnd)
+}
+
+RestoreAllHorizontalStretches()
+{
+    global horizontal_stretch_windows
+
+    windows := []
+
+    for hwnd in horizontal_stretch_windows
+        windows.Push(hwnd)
+
+    for hwnd in windows {
+        if !DllCall("IsWindow", "ptr", hwnd, "int")
+            continue
+
+        state := horizontal_stretch_windows[hwnd]
+
+        current_monitor := DllCall(
+            "MonitorFromWindow",
+            "ptr", hwnd,
+            "uint", 2, ; MONITOR_DEFAULTTONEAREST
+            "ptr"
+        )
+
+        ; If another action already moved the window to another monitor, do not
+        ; pull it back across monitors during script cleanup.
+        if current_monitor != state["monitor"]
+            continue
+
+        try {
+            if !GetHorizontalStretchGeometry(
+                hwnd,
+                &raw_x,
+                &raw_y,
+                &raw_width,
+                &raw_height,
+                &visible_left,
+                &visible_right,
+                &inset_left,
+                &inset_right
+            ) {
+                continue
+            }
+
+            original_visible_width :=
+                state["original_right"] - state["original_left"]
+
+            raw_target_x := state["original_left"] - inset_left
+            raw_target_width := (
+                original_visible_width
+                + inset_left
+                + inset_right
+            )
+
+            if original_visible_width > 0 && raw_target_width > 0
+                WinMove(
+                    raw_target_x,
+                    raw_y,
+                    raw_target_width,
+                    raw_height,
+                    "ahk_id " hwnd
+                )
+        }
+    }
+
+    horizontal_stretch_windows := Map()
+}
+
+
+; =============================================================================
 ; side-layout cycle
 ; =============================================================================
 
@@ -292,6 +562,8 @@ WindowMatchesLayout(window, layout, tolerance := 8)
 PrepareWindowForPlacement(hwnd)
 {
     global borderless_windows
+
+    ForgetHorizontalStretch(hwnd)
 
     window := "ahk_id " hwnd
 

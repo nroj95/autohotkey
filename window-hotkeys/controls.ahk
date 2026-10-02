@@ -21,6 +21,10 @@
 
 #Enter::SwapWindowClockwise()
 
+; Extend Windows' native Shift+Win vertical stretch with horizontal edge toggles.
++#Left::ToggleHorizontalStretch("left")
++#Right::ToggleHorizontalStretch("right")
+
 ; FancyZones relative-position navigation.
 #HotIf IsFancyZonesRunning()
 

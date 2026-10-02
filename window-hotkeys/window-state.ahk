@@ -144,6 +144,8 @@ MaximizeWindowTarget()
     if !hwnd
         return
 
+    ForgetHorizontalStretch(hwnd)
+
     window := "ahk_id " hwnd
 
     try {
@@ -189,6 +191,8 @@ RestoreWindowTarget()
 
     if !hwnd
         return
+
+    ForgetHorizontalStretch(hwnd)
 
     window := "ahk_id " hwnd
 
