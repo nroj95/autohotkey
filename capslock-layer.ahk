@@ -13,6 +13,10 @@ caps_layer_presence_mutex := DllCall(
     "ptr"
 )
 
+; Window Cascade uses this handle's lifetime as its dependency presence signal.
+if !caps_layer_presence_mutex
+    throw OSError(A_LastError, "CreateMutex", "Could not announce CapsLock Layer.")
+
 last_left_shift_release_ms := 0
 double_tap_window_ms := 180
 
@@ -86,7 +90,7 @@ SetCapsLockState "Off"
 ; - toggle actual caps lock with a very fast double-tap of left shift.
 ; - expose f13-f24 as universal extra keys for apps and app-specific macros.
 ; - provide numpad 0-9 through caps lock on keyboards without a numpad.
-; - optionally control Window Cascade when that standalone script is running.
+; - provide Window Cascade's keyboard controls when that companion is running.
 ; - provide a tray-menu toggle for launching the script with Windows.
 ; =============================================================================
 
@@ -151,7 +155,7 @@ CapsLock & 8::HoldVirtualKey("Numpad8", "8")
 CapsLock & 9::HoldVirtualKey("Numpad9", "9")
 
 ; Optional Window Cascade controls.
-; Plain Caps stays slot/layer-local. Alt adds monitor/cross-monitor scope.
+; Plain Caps stays slot/layer-local. Alt reverses rotation or adds wider scope.
 ; These chords silently do nothing when Window Cascade is not running.
 CapsLock & Up::PostPlainWindowCascadeCommand(cascade_command_swap_window_up)
 CapsLock & Down::PostPlainWindowCascadeCommand(cascade_command_swap_window_down)
@@ -191,16 +195,10 @@ CapsLock & Backspace::PostPlainWindowCascadeCommandOnce(
     "Backspace"
 )
 #HotIf WindowCascadeRotateKeyIs("Space")
-CapsLock & Space::PostPlainWindowCascadeCommandOnce(
-    cascade_command_rotate_layers,
-    "Space"
-)
+CapsLock & Space::PostWindowCascadeRotateCommandOnce("Space")
 
 #HotIf WindowCascadeRotateKeyIs("Tab")
-CapsLock & Tab::PostPlainWindowCascadeCommandOnce(
-    cascade_command_rotate_layers,
-    "Tab"
-)
+CapsLock & Tab::PostWindowCascadeRotateCommandOnce("Tab")
 #HotIf
 CapsLock & Home::PostPlainWindowCascadeCommandOnce(
     cascade_command_bring_forward,
@@ -533,7 +531,7 @@ WindowCascadeRotateKeyIs(expected_key)
         ""
     )
 
-    ; Preserve the earlier standalone-only setting if it already exists.
+    ; Read the legacy INI section only to preserve an existing rotate-key choice.
     if rotate_key = ""
         rotate_key := IniRead(
             window_cascade_settings_path,
@@ -557,6 +555,20 @@ PostPlainWindowCascadeCommand(command_id)
 PostPlainWindowCascadeCommandOnce(command_id, physical_key)
 {
     PostPlainWindowCascadeCommand(command_id)
+    KeyWait physical_key
+}
+
+PostWindowCascadeRotateCommandOnce(physical_key)
+{
+    global cascade_command_rotate_layers
+
+    ; Sample Alt once per press. KeyWait prevents held-key repeats or direction
+    ; changes when Alt is released before the selected Space/Tab key.
+    if !GetKeyState("Shift", "P") {
+        direction := GetKeyState("Alt", "P") ? -1 : 1
+        PostWindowCascadeCommand(cascade_command_rotate_layers, direction)
+    }
+
     KeyWait physical_key
 }
 
@@ -707,6 +719,12 @@ ShowCapsLockLayerHelp(*)
     "Caps + A / S / D / F    F17 - F20`n"
     "Caps + Z / X / C / V    F21 - F24`n"
     "Caps + 0 - 9            Numpad 0 - 9`n"
+    "`n"
+    "WINDOW CASCADE (when running)`n"
+    "Caps + H                Toggle Cascade help`n"
+    "Caps + Space / Tab      Next layer (selected in Cascade's tray)`n"
+    "Caps + Alt + Space / Tab Previous layer`n"
+    "Window Cascade requires this script; this script works without it.`n"
     "`n"
     "CAPS LOCK`n"
     "Double-tap Left Shift   Toggle actual Caps Lock"

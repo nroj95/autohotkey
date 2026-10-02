@@ -67,13 +67,19 @@ focus_corner_accent_check_ms := 1000
 focus_corner_visible := true
 focus_corner_visible_alpha := 72
 
+; The dependency must be running. Startup and reload grace periods tolerate
+; normal process-start ordering without introducing standalone operation.
+caps_layer_startup_wait_ms := 5000
+caps_layer_reload_grace_ms := 3000
+caps_layer_check_ms := 1000
+
 placement_enabled := true
 
 settings_directory := EnvGet("LOCALAPPDATA") "\Window Cascade"
 settings_path := settings_directory "\settings.ini"
 rotate_key := IniRead(settings_path, "Controls", "RotateKey", "")
 
-; Preserve the earlier standalone-only setting if it already exists.
+; Read the legacy INI section only to preserve an existing rotate-key choice.
 if rotate_key = ""
     rotate_key := IniRead(settings_path, "Standalone", "RotateKey", "Space")
 
@@ -85,6 +91,8 @@ if rotate_key != "Space" && rotate_key != "Tab"
 ; =============================================================================
 
 rotate_key_menu := 0
+caps_layer_missing_since := 0
+caps_layer_dependency_lost := false
 
 pending_windows := Map()
 handled_windows := Map()
@@ -134,6 +142,7 @@ cascade_command_rotate_slot_next := 4
 cascade_command_swap_window_up := 5
 cascade_command_swap_window_down := 6
 cascade_command_adopt_active := 7
+; Rotation parameter: 0/1 = next (including one-shot Caps), -1 = previous.
 cascade_command_rotate_layers := 8
 cascade_command_toggle_minimize := 9
 cascade_command_bring_forward := 10

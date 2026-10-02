@@ -43,7 +43,7 @@ SetRotateKey(new_rotate_key, *)
     }
     catch Error as err {
         MsgBox(
-            "Could not save the standalone rotate key.`n`n"
+            "Could not save the Cascade rotate key.`n`n"
             . err.Message,
             "Window Cascade",
             "Iconx"
@@ -143,61 +143,36 @@ ToggleWindowCascadeHelp(*)
     help_gui := Gui("+AlwaysOnTop", "Window Cascade")
     help_gui.SetFont("s10", "Cascadia Mono")
 
-    if IsCapsLockLayerRunning() {
-        help_text :=
-        (
-        "Caps + H             Toggle this help`n"
-        "`n"
-        "HINTS`n"
-        "Hold Caps + key      Run a command normally`n"
-        "Tap Caps, then key   One-shot command for 1.4 seconds`n"
-        "`n"
-
-        "CONTROLS`n"
-        "Caps + Up / Down          Swap visible window up / down`n"
-        "Caps + Left / Right       Previous / next layer in this slot`n"
-        "Caps + PgUp / PgDn        Focus visible window up / down`n"
-        "Caps + Backspace          Adopt / re-slot active window`n"
-        "Caps + Space / Tab        Rotate layers (tray setting)`n"
-        "Caps + M                  Minimize / restore all layers on monitor`n"
-        "Caps + F4                 Close current layer`n"
-        "Caps + Delete             Close active window`n"
-        "Caps + Home               Bring this monitor's cascade to front`n"
-        "Caps + Alt + M            Minimize / restore cascades on all monitors`n"
-        "Caps + Alt + F4           Close all layers on monitor`n"
-        "Caps + Alt + F7           Gather other monitors' cascades here`n"
-        "Caps + Alt + Left/Right   Move to adjacent monitor + smart sort`n"
-        "`n"
-        "NOTE`n"
-        "Cascade hotkeys are disabled while the active window is maximized or fullscreen."
-        )
-    } else {
-        help_text :=
-        (
-        "Ctrl + Alt + H              Toggle this help`n"
-        "`n"
-
-        "CONTROLS`n"
-        "Ctrl + Alt + Up / Down      Swap visible window up / down`n"
-        "Ctrl + Alt + Left / Right   Previous / next layer in this slot`n"
-        "Ctrl + Alt + PgUp / PgDn    Focus visible window up / down`n"
-        "Ctrl + Alt + Backspace      Adopt / re-slot active window`n"
-        "Ctrl + Alt + Space / Tab    Rotate layers (tray setting)`n"
-        "Ctrl + Alt + M              Minimize / restore all layers on monitor`n"
-        "Ctrl + Alt + F4             Close current layer`n"
-        "Ctrl + Alt + Home           Bring this monitor's cascade to front`n"
-        "Ctrl + Alt + Shift + M      Minimize / restore cascades on all monitors`n"
-        "Ctrl + Alt + Shift + F4     Close all layers on monitor`n"
-        "Ctrl + Alt + Shift + F7     Gather other monitors' cascades here`n"
-        "`n"
-        "NOTE`n"
-        "Cascade hotkeys are disabled while the active window is maximized or fullscreen."
-        )
-    }
-
-    help_text .=
+    help_text :=
     (
+    "CAPSLOCK LAYER REQUIRED`n"
+    "Start capslock-layer.ahk before Window Cascade. Keep both scripts running.`n"
+    "Caps + H             Toggle this help`n"
     "`n"
+    "HINTS`n"
+    "Hold Caps + key      Run a command normally`n"
+    "Tap Caps, then key   One-shot command for 1.4 seconds`n"
+    "`n"
+    "CONTROLS`n"
+    "Caps + Up / Down              Swap visible window up / down`n"
+    "Caps + Left / Right           Previous / next layer in this slot`n"
+    "Caps + PgUp / PgDn            Focus visible window up / down`n"
+    "Caps + Backspace              Adopt / re-slot active window`n"
+    "Caps + Space / Tab            Next layer (selected in the tray)`n"
+    "Caps + Alt + Space / Tab      Previous layer (same selected key)`n"
+    "Caps + M                      Minimize / restore all layers on monitor`n"
+    "Caps + F4                     Close current layer`n"
+    "Caps + Delete                 Close active window`n"
+    "Caps + Home                   Bring this monitor's cascade to front`n"
+    "Caps + Alt + M                Minimize / restore cascades on all monitors`n"
+    "Caps + Alt + F4               Close all layers on monitor`n"
+    "Caps + Alt + F7               Gather other monitors' cascades here`n"
+    "Caps + Alt + Left / Right     Move to adjacent monitor + smart sort`n"
+    "`n"
+    "NOTES`n"
+    "Alt commands require held Caps; one-shot rotation goes forward only.`n"
+    "Cascade commands are disabled while the active window is maximized or fullscreen.`n"
+    "If CapsLock Layer stops, Window Cascade exits after a short reload grace period.`n"
     "`n"
     "FOCUS TABS`n"
     "Click a window's left-edge focus tab to focus that cascade window.`n"
@@ -209,7 +184,7 @@ ToggleWindowCascadeHelp(*)
     "Check compatibility  Check conflicting settings"
     )
 
-    help_gui.AddText("w720", help_text)
+    help_gui.AddText("w780", help_text)
 
     help_gui.OnEvent("Close", CloseHelp)
     help_gui.OnEvent("Escape", CloseHelp)

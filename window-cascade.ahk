@@ -36,8 +36,8 @@
 ; - move, auto-adopt, and smart-sort windows across monitors with Caps + Alt + Left/Right.
 ; - reject obvious child/helper windows before queueing placement.
 ; - forget destroyed window handles so recycled hwnd values remain safe.
-; - optionally accept slot/layer/monitor commands from CapsLock Layer.
-; - remain fully functional when CapsLock Layer is not installed or running.
+; - require the running CapsLock Layer for all keyboard controls.
+; - offer no standalone keyboard bindings or persistent command mode.
 ; =============================================================================
 
 
@@ -57,18 +57,19 @@ CoordMode "Mouse", "Screen"
 debug_enabled := true
 debug_log_path := A_ScriptDir "\window-cascade-debug.log"
 
-InitializeDebugLogging()
-
-OnExit(HandleScriptExit)
-
-
-; Defaults and shared state must be ready before any startup callbacks run.
+; Initialize cleanup state before registering an exit handler or callbacks.
 #Include "%A_ScriptDir%\window-cascade\settings.ahk"
+
+InitializeDebugLogging()
+OnExit(HandleScriptExit)
 
 
 ; =============================================================================
 ; startup
 ; =============================================================================
+
+; Wait briefly for startup ordering, but never launch CapsLock Layer implicitly.
+RequireCapsLockLayer()
 
 BuildTrayMenu()
 
@@ -79,6 +80,7 @@ SeedStartupWindows()
 StartWindowHooks()
 
 SetTimer(WatchForMissedWindows, missed_window_poll_ms)
+SetTimer(WatchCapsLockLayer, caps_layer_check_ms)
 
 ; Window events normally keep focus tabs aligned. Keep a slow timer only as
 ; insurance for an event that Windows may occasionally fail to deliver.
@@ -113,5 +115,26 @@ SetTimer(CheckCompatibilitySettings, -500)
 
 HandleScriptExit(exit_reason, exit_code)
 {
-    StopWindowHooks()
+    global caps_layer_dependency_lost, focus_corner_overlays
+
+    SetTimer(WatchCapsLockLayer, 0)
+    try StopWindowHooks()
+
+    ; A dependency failure is different from an ordinary script reload. Recover
+    ; script-minimized windows before their in-memory restore sets disappear.
+    if exit_reason = "Exit" && caps_layer_dependency_lost {
+        RestoreCascadeWindowsAfterDependencyLoss()
+
+        for hwnd, overlay in focus_corner_overlays
+            try overlay.gui.Hide()
+
+        ; OnExit does not allow timers/hotkeys to resume while this notice is open.
+        MsgBox(
+            "Window Cascade stopped because CapsLock Layer is not running.`n`n"
+            . "Its minimized windows were restored where possible.`n"
+            . "Start capslock-layer.ahk, then relaunch window-cascade.ahk.",
+            "Window Cascade",
+            "Icon! T8"
+        )
+    }
 }

@@ -2,86 +2,6 @@
 ; Included into the same script; functions share the existing global state.
 
 ; =============================================================================
-; standalone hotkeys
-; =============================================================================
-; Left Ctrl + Left Alt keeps the standalone layer away from common Alt-only
-; app shortcuts and avoids treating Right Alt / AltGr as a cascade modifier.
-
-#HotIf !IsCapsLockLayerRunning() && !ActiveWindowBlocksCascadeHotkeys()
-
-<^<!Up::SwapActiveCascadeWindow(-1)
-<^<!Down::SwapActiveCascadeWindow(1)
-<^<!Left::RotateCurrentCascadeSlot(-1)
-<^<!Right::RotateCurrentCascadeSlot(1)
-<^<!PgUp::FocusCascadeLayerWindow(-1)
-<^<!PgDn::FocusCascadeLayerWindow(1)
-
-<^<!Backspace::
-{
-    AdoptActiveWindow()
-    KeyWait "Backspace"
-}
-
-<^<!Home::
-{
-    BringCommandMonitorCascadeForward()
-    KeyWait "Home"
-}
-
-<^<!m::
-{
-    ToggleCommandMonitorCascadeMinimize()
-    KeyWait "m"
-}
-
-<^<!F4::
-{
-    CloseCurrentCascadeLayer()
-    KeyWait "F4"
-}
-
-<^<!h::
-{
-    ToggleWindowCascadeHelp()
-    KeyWait "h"
-}
-
-<^<!+m::
-{
-    ToggleAllCascadesMinimize()
-    KeyWait "m"
-}
-
-<^<!+F4::
-{
-    CloseCommandMonitorCascade()
-    KeyWait "F4"
-}
-
-<^<!+F7::
-{
-    GatherCascadesToCommandMonitor()
-    KeyWait "F7"
-}
-
-#HotIf !IsCapsLockLayerRunning() && !ActiveWindowBlocksCascadeHotkeys() && rotate_key = "Space"
-<^<!Space::
-{
-    RotateCascadeLayers(1)
-    KeyWait "Space"
-}
-
-#HotIf !IsCapsLockLayerRunning() && !ActiveWindowBlocksCascadeHotkeys() && rotate_key = "Tab"
-<^<!Tab::
-{
-    RotateCascadeLayers(1)
-    KeyWait "Tab"
-}
-
-#HotIf
-
-
-; =============================================================================
 ; desktop monitor selection
 ; =============================================================================
 
@@ -92,7 +12,7 @@
 
 
 ; =============================================================================
-; standalone hotkey availability
+; required CapsLock Layer dependency
 ; =============================================================================
 
 IsCapsLockLayerRunning()
@@ -110,11 +30,93 @@ IsCapsLockLayerRunning()
     if !mutex_handle
         return false
 
+    ; Do not retain our own handle: that would keep the presence signal alive
+    ; after CapsLock Layer exits.
     DllCall("CloseHandle", "ptr", mutex_handle)
     return true
 }
 
-ActiveWindowBlocksCascadeHotkeys()
+RequireCapsLockLayer()
+{
+    global caps_layer_startup_wait_ms
+
+    wait_start := A_TickCount
+
+    while !IsCapsLockLayerRunning() {
+        ; The mask also handles the 32-bit tick counter wrapping on long uptimes.
+        if ((A_TickCount - wait_start) & 0xFFFFFFFF) >= caps_layer_startup_wait_ms {
+            DebugLog("Startup refused: CapsLock Layer is not running.")
+            MsgBox(
+                "Window Cascade requires CapsLock Layer.`n`n"
+                . "Start capslock-layer.ahk, then launch window-cascade.ahk.",
+                "Window Cascade",
+                "Iconx"
+            )
+            ExitApp 1
+        }
+
+        Sleep 100
+    }
+}
+
+WatchCapsLockLayer()
+{
+    global caps_layer_missing_since, caps_layer_reload_grace_ms
+    global caps_layer_dependency_lost
+
+    if IsCapsLockLayerRunning() {
+        caps_layer_missing_since := 0
+        return
+    }
+
+    ; A quick CapsLock Layer reload must not throw away the current cascade.
+    if !caps_layer_missing_since {
+        caps_layer_missing_since := A_TickCount
+        return
+    }
+
+    if ((A_TickCount - caps_layer_missing_since) & 0xFFFFFFFF) < caps_layer_reload_grace_ms
+        return
+
+    caps_layer_dependency_lost := true
+    DebugLog("Stopping: CapsLock Layer remained unavailable after the reload grace period.")
+    ExitApp 1
+}
+
+RestoreCascadeWindowsAfterDependencyLoss()
+{
+    global layer_minimized_windows_by_monitor
+    global monitor_minimized_windows_by_monitor
+
+    seen := Map()
+
+    ; Only restore windows minimized by this script, not independently minimized
+    ; applications. Do not resize or reposition windows already on screen.
+    for window_lists in [layer_minimized_windows_by_monitor, monitor_minimized_windows_by_monitor] {
+        for monitor_index, windows in window_lists {
+            for hwnd in windows {
+                if seen.Has(hwnd)
+                    continue
+
+                seen[hwnd] := true
+                try {
+                    if WinGetMinMax("ahk_id " hwnd) = -1
+                        WinRestore("ahk_id " hwnd)
+                }
+                catch Error as err {
+                    DebugError("Dependency-loss window restore", err)
+                }
+            }
+        }
+    }
+}
+
+
+; =============================================================================
+; command availability
+; =============================================================================
+
+ActiveWindowBlocksCascadeCommands()
 {
     active_hwnd := WinExist("A")
 
@@ -179,6 +181,9 @@ RegisterIntegrationMessages()
         "uint"
     )
 
+    if !cascade_command_message
+        throw OSError(A_LastError, "RegisterIntegrationMessages")
+
     OnMessage(cascade_command_message, HandleCascadeCommandMessage)
 }
 
@@ -198,7 +203,7 @@ HandleCascadeCommandMessage(command_id, parameter, message_id, target_hwnd)
     if target_hwnd != A_ScriptHwnd
         return
 
-    if ActiveWindowBlocksCascadeHotkeys()
+    if !IsCapsLockLayerRunning() || ActiveWindowBlocksCascadeCommands()
         return
 
     switch command_id {
@@ -224,7 +229,10 @@ HandleCascadeCommandMessage(command_id, parameter, message_id, target_hwnd)
             AdoptActiveWindow()
 
         case cascade_command_rotate_layers:
-            RotateCascadeLayers(1)
+            ; OnMessage exposes -1 as 0xFFFFFFFF in a 32-bit receiver.
+            ; Zero remains forward so the existing one-shot sender still works.
+            direction := (parameter = -1 || parameter = 0xFFFFFFFF) ? -1 : 1
+            RotateCascadeLayers(direction)
 
         case cascade_command_toggle_minimize:
             if parameter
