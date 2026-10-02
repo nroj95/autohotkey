@@ -28,7 +28,7 @@ window_cascade_command_message := DllCall(
     "uint"
 )
 
-; Keep these command IDs in sync with window-cascade.ahk.
+; Keep these command IDs in sync with window-cascade\settings.ahk.
 cascade_command_focus_previous := 1
 cascade_command_focus_next := 2
 cascade_command_rotate_slot_previous := 3
@@ -313,6 +313,34 @@ F5::UseArmedRegisteredCommand(debug_reset_logs_message, "F5")
 #HotIf
 
 
+; =============================================================================
+; caps lock toggle
+; =============================================================================
+
+; A very fast double-tap of left Shift toggles actual Caps Lock.
+; Normal Shift behavior passes through unchanged.
+~LShift Up::
+{
+    global last_left_shift_release_ms, double_tap_window_ms
+
+    current_time_ms := A_TickCount
+
+    if last_left_shift_release_ms
+        && current_time_ms - last_left_shift_release_ms <= double_tap_window_ms
+    {
+        SetCapsLockState GetKeyState("CapsLock", "T") ? "Off" : "On"
+        last_left_shift_release_ms := 0
+        return
+    }
+
+    last_left_shift_release_ms := current_time_ms
+}
+
+
+; =============================================================================
+; one-shot layer state
+; =============================================================================
+
 CapsLayerOneShotReady()
 {
     global caps_layer_armed
@@ -326,33 +354,6 @@ CapsLayerOneShotReady()
         && !GetKeyState("RWin", "P")
     )
 }
-
-WindowCascadeRotateKeyIs(expected_key)
-{
-    global window_cascade_settings_path
-
-    rotate_key := IniRead(
-        window_cascade_settings_path,
-        "Controls",
-        "RotateKey",
-        ""
-    )
-
-    ; Preserve the earlier standalone-only setting if it already exists.
-    if rotate_key = ""
-        rotate_key := IniRead(
-            window_cascade_settings_path,
-            "Standalone",
-            "RotateKey",
-            "Space"
-        )
-
-    if rotate_key != "Space" && rotate_key != "Tab"
-        rotate_key := "Space"
-
-    return rotate_key = expected_key
-}
-
 
 ArmCapsLayer()
 {
@@ -384,6 +385,11 @@ HandleCapsLayerDisarm(*)
 {
     DisarmCapsLayer()
 }
+
+
+; =============================================================================
+; one-shot key and command dispatch
+; =============================================================================
 
 UseArmedVirtualKey(virtual_key, physical_key)
 {
@@ -464,6 +470,84 @@ UseArmedWindowCascadeCommand(command_id, physical_key)
     }
 }
 
+
+; =============================================================================
+; held virtual keys
+; =============================================================================
+
+HoldVirtualKey(virtual_key, physical_key)
+{
+    ; Use an elevated send level so companion AutoHotkey scripts can receive
+    ; these virtual keys as hotkeys.
+    previous_send_level := SendLevel(1)
+
+    try {
+        SendEvent "{Blind}{" virtual_key " down}"
+
+        ; The virtual key is held only while both physical keys remain down.
+        while GetKeyState("CapsLock", "P")
+            && GetKeyState(physical_key, "P")
+        {
+            Sleep 10
+        }
+    }
+    finally {
+        SendEvent "{Blind}{" virtual_key " up}"
+        SendLevel previous_send_level
+    }
+}
+
+HoldModifiedVirtualKey(virtual_key, modifier_key, physical_key)
+{
+    ; Keep private macro triggers distinct from the public F13-F24 layer.
+    previous_send_level := SendLevel(1)
+
+    try {
+        SendEvent "{Blind}{" modifier_key " down}{" virtual_key " down}"
+
+        while GetKeyState("CapsLock", "P")
+            && GetKeyState(physical_key, "P")
+        {
+            Sleep 10
+        }
+    }
+    finally {
+        SendEvent "{Blind}{" virtual_key " up}{" modifier_key " up}"
+        SendLevel previous_send_level
+    }
+}
+
+
+; =============================================================================
+; Window Cascade integration
+; =============================================================================
+
+WindowCascadeRotateKeyIs(expected_key)
+{
+    global window_cascade_settings_path
+
+    rotate_key := IniRead(
+        window_cascade_settings_path,
+        "Controls",
+        "RotateKey",
+        ""
+    )
+
+    ; Preserve the earlier standalone-only setting if it already exists.
+    if rotate_key = ""
+        rotate_key := IniRead(
+            window_cascade_settings_path,
+            "Standalone",
+            "RotateKey",
+            "Space"
+        )
+
+    if rotate_key != "Space" && rotate_key != "Tab"
+        rotate_key := "Space"
+
+    return rotate_key = expected_key
+}
+
 PostPlainWindowCascadeCommand(command_id)
 {
     if !GetKeyState("Shift", "P") && !GetKeyState("Alt", "P")
@@ -503,6 +587,30 @@ PostAltOnlyWindowCascadeCommandOnce(command_id, physical_key)
 
     KeyWait physical_key
 }
+
+
+; =============================================================================
+; registered command integration
+; =============================================================================
+
+PostRegisteredCommand(message_id)
+{
+    ; Registered messages are safe to broadcast because only programs that
+    ; registered the same message name will interpret them.
+    DllCall(
+        "PostMessage",
+        "ptr", 0xFFFF, ; HWND_BROADCAST
+        "uint", message_id,
+        "uptr", 0,
+        "ptr", 0,
+        "int"
+    )
+}
+
+
+; =============================================================================
+; layer indicator
+; =============================================================================
 
 ShowCapsLayerTip()
 {
@@ -571,50 +679,6 @@ ActiveWindowBlocksLayerTip()
 
 
 ; =============================================================================
-; caps lock toggle
-; =============================================================================
-
-; A very fast double-tap of left Shift toggles actual Caps Lock.
-; Normal Shift behavior passes through unchanged.
-~LShift Up::
-{
-    global last_left_shift_release_ms, double_tap_window_ms
-
-    current_time_ms := A_TickCount
-
-    if last_left_shift_release_ms
-        && current_time_ms - last_left_shift_release_ms <= double_tap_window_ms
-    {
-        SetCapsLockState GetKeyState("CapsLock", "T") ? "Off" : "On"
-        last_left_shift_release_ms := 0
-        return
-    }
-
-    last_left_shift_release_ms := current_time_ms
-}
-
-
-; =============================================================================
-; registered command integration
-; =============================================================================
-
-
-PostRegisteredCommand(message_id)
-{
-    ; Registered messages are safe to broadcast because only programs that
-    ; registered the same message name will interpret them.
-    DllCall(
-        "PostMessage",
-        "ptr", 0xFFFF, ; HWND_BROADCAST
-        "uint", message_id,
-        "uptr", 0,
-        "ptr", 0,
-        "int"
-    )
-}
-
-
-; =============================================================================
 ; help
 ; =============================================================================
 
@@ -660,6 +724,7 @@ ShowCapsLockLayerHelp(*)
     }
 }
 
+
 ; =============================================================================
 ; startup
 ; =============================================================================
@@ -696,50 +761,4 @@ UpdateStartupMenu()
         A_TrayMenu.Check("Run at startup")
     else
         A_TrayMenu.Uncheck("Run at startup")
-}
-
-; =============================================================================
-; helpers
-; =============================================================================
-
-HoldVirtualKey(virtual_key, physical_key)
-{
-    ; Use an elevated send level so companion AutoHotkey scripts can receive
-    ; these virtual keys as hotkeys.
-    previous_send_level := SendLevel(1)
-
-    try {
-        SendEvent "{Blind}{" virtual_key " down}"
-
-        ; The virtual key is held only while both physical keys remain down.
-        while GetKeyState("CapsLock", "P")
-            && GetKeyState(physical_key, "P")
-        {
-            Sleep 10
-        }
-    }
-    finally {
-        SendEvent "{Blind}{" virtual_key " up}"
-        SendLevel previous_send_level
-    }
-}
-
-HoldModifiedVirtualKey(virtual_key, modifier_key, physical_key)
-{
-    ; Keep private macro triggers distinct from the public F13-F24 layer.
-    previous_send_level := SendLevel(1)
-
-    try {
-        SendEvent "{Blind}{" modifier_key " down}{" virtual_key " down}"
-
-        while GetKeyState("CapsLock", "P")
-            && GetKeyState(physical_key, "P")
-        {
-            Sleep 10
-        }
-    }
-    finally {
-        SendEvent "{Blind}{" virtual_key " up}{" modifier_key " up}"
-        SendLevel previous_send_level
-    }
 }
