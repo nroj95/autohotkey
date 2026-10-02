@@ -75,6 +75,18 @@ debug_reset_logs_message := DllCall(
     "uint"
 )
 
+nroj_macros_clear_terminal_message := DllCall(
+    "RegisterWindowMessage",
+    "str", "nroj.Macros.ClearTerminal",
+    "uint"
+)
+
+nroj_macros_copy_terminal_message := DllCall(
+    "RegisterWindowMessage",
+    "str", "nroj.Macros.CopyTerminal",
+    "uint"
+)
+
 caps_layer_disarm_message := DllCall(
     "RegisterWindowMessage",
     "str", "nroj.CapsLockLayer.Disarm",
@@ -166,14 +178,27 @@ CapsLock & f::HoldVirtualKey("F20", "f")
 ; Bottom row.
 CapsLock & z::HoldVirtualKey("F21", "z")
 CapsLock & x::HoldVirtualKey("F22", "x")
+
+; Terminal-only personal macros.
+#HotIf WinActive("ahk_exe WindowsTerminal.exe")
+
+CapsLock & c::
+{
+    PostRegisteredCommand(nroj_macros_copy_terminal_message)
+    KeyWait "c"
+}
+
+CapsLock & k::
+{
+    PostRegisteredCommand(nroj_macros_clear_terminal_message)
+    KeyWait "k"
+}
+
+#HotIf
+
+; Outside Terminal, Caps+C remains the normal F23 layer key.
 CapsLock & c::HoldVirtualKey("F23", "c")
 CapsLock & v::HoldVirtualKey("F24", "v")
-
-; Terminal-only personal macro trigger.
-; Shift+F19 keeps this separate from the normal Caps + D -> F19 mapping.
-#HotIf WinActive("ahk_exe WindowsTerminal.exe")
-CapsLock & k::HoldModifiedVirtualKey("F19", "Shift", "k")
-#HotIf
 CapsLock & k::return
 
 ; Number row.
@@ -329,14 +354,18 @@ f::UseArmedVirtualKey("F20", "f")
 ; Bottom row.
 z::UseArmedVirtualKey("F21", "z")
 x::UseArmedVirtualKey("F22", "x")
-c::UseArmedVirtualKey("F23", "c")
-v::UseArmedVirtualKey("F24", "v")
 
-; Terminal-only personal macro trigger.
+; Terminal-only personal macros.
 #HotIf CapsLayerOneShotReady() && WinActive("ahk_exe WindowsTerminal.exe")
-k::UseArmedModifiedVirtualKey("F19", "Shift", "k")
+
+c::UseArmedRegisteredCommand(nroj_macros_copy_terminal_message, "c")
+k::UseArmedRegisteredCommand(nroj_macros_clear_terminal_message, "k")
 
 #HotIf CapsLayerOneShotReady()
+
+; Outside Terminal, Caps+C remains the normal F23 layer key.
+c::UseArmedVirtualKey("F23", "c")
+v::UseArmedVirtualKey("F24", "v")
 k::UseArmedNoOpKey("k")
 
 ; Number row.
@@ -487,23 +516,6 @@ UseArmedVirtualKey(virtual_key, physical_key)
     }
 }
 
-UseArmedModifiedVirtualKey(virtual_key, modifier_key, physical_key)
-{
-    ; The one-shot has been consumed, so hide its indicator immediately.
-    HideCapsLayerTip()
-    SetTimer DisarmCapsLayer, 0
-
-    previous_send_level := SendLevel(1)
-
-    try {
-        SendEvent "{Blind}{" modifier_key " down}{" virtual_key "}{" modifier_key " up}"
-        KeyWait physical_key
-    }
-    finally {
-        SendLevel previous_send_level
-        DisarmCapsLayer()
-    }
-}
 
 UseArmedNoOpKey(physical_key)
 {
@@ -575,25 +587,6 @@ HoldVirtualKey(virtual_key, physical_key)
     }
 }
 
-HoldModifiedVirtualKey(virtual_key, modifier_key, physical_key)
-{
-    ; Keep private macro triggers distinct from the public F13-F24 layer.
-    previous_send_level := SendLevel(1)
-
-    try {
-        SendEvent "{Blind}{" modifier_key " down}{" virtual_key " down}"
-
-        while GetKeyState("CapsLock", "P")
-            && GetKeyState(physical_key, "P")
-        {
-            Sleep 10
-        }
-    }
-    finally {
-        SendEvent "{Blind}{" virtual_key " up}{" modifier_key " up}"
-        SendLevel previous_send_level
-    }
-}
 
 
 ; =============================================================================
