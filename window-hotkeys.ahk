@@ -439,6 +439,54 @@ IsFancyZonesRunning()
 }
 
 
+FormatFancyZonesHotkey(hotkey)
+{
+    parts := []
+
+    if hotkey.ctrl
+        parts.Push("Ctrl")
+
+    if hotkey.alt
+        parts.Push("Alt")
+
+    if hotkey.shift
+        parts.Push("Shift")
+
+    if hotkey.win
+        parts.Push("Win")
+
+    key_name := GetKeyName(Format("vk{:02X}", hotkey.code))
+
+    if key_name = ""
+        key_name := Format("VK{:02X}", hotkey.code)
+
+    parts.Push(key_name)
+
+    hotkey_text := ""
+
+    for part in parts {
+        if hotkey_text != ""
+            hotkey_text .= " + "
+
+        hotkey_text .= part
+    }
+
+    return hotkey_text
+}
+
+
+FormatHelpShortcutLine(shortcut, description)
+{
+    padding := ""
+    padding_length := Max(4, 24 - StrLen(shortcut))
+
+    Loop padding_length
+        padding .= " "
+
+    return shortcut . padding . description
+}
+
+
 GetFancyZonesIntegrationState()
 {
     settings_path := FindFancyZonesSettingsPath()
@@ -475,10 +523,19 @@ GetFancyZonesIntegrationState()
     "}; "
     "$override = [bool]$properties.fancyzones_overrideSnapHotkeys.value; "
     "$switching = [bool]$properties.fancyzones_windowSwitching.value; "
+    "$next = $properties.fancyzones_nextTab_hotkey.value; "
+    "$previous = $properties.fancyzones_prevTab_hotkey.value; "
     "$conflict = $switching -and "
-    "((Test-Conflict $properties.fancyzones_prevTab_hotkey.value) "
-    "-or (Test-Conflict $properties.fancyzones_nextTab_hotkey.value)); "
-    "$result = [string][int]$override + ',' + [string][int]$conflict; "
+    "((Test-Conflict $previous) -or (Test-Conflict $next)); "
+    "$fields = @( "
+    "[int]$override, [int]$switching, [int]$conflict, "
+    "[int][bool]$next.win, [int][bool]$next.ctrl, "
+    "[int][bool]$next.alt, [int][bool]$next.shift, [int]$next.code, "
+    "[int][bool]$previous.win, [int][bool]$previous.ctrl, "
+    "[int][bool]$previous.alt, [int][bool]$previous.shift, "
+    "[int]$previous.code "
+    "); "
+    "$result = $fields -join ','; "
     "[IO.File]::WriteAllText($env:WINDOW_HOTKEYS_RESULT_PATH, $result);"
     )
 
@@ -506,12 +563,27 @@ GetFancyZonesIntegrationState()
         result := Trim(FileRead(result_path, "UTF-8"))
         fields := StrSplit(result, ",")
 
-        if fields.Length != 2
+        if fields.Length != 13
             return false
 
         return {
             override_snap_enabled: fields[1] = "1",
-            hotkey_conflict: fields[2] = "1"
+            window_switching_enabled: fields[2] = "1",
+            hotkey_conflict: fields[3] = "1",
+            next_hotkey: {
+                win: fields[4] = "1",
+                ctrl: fields[5] = "1",
+                alt: fields[6] = "1",
+                shift: fields[7] = "1",
+                code: fields[8] + 0
+            },
+            previous_hotkey: {
+                win: fields[9] = "1",
+                ctrl: fields[10] = "1",
+                alt: fields[11] = "1",
+                shift: fields[12] = "1",
+                code: fields[13] + 0
+            }
         }
     }
     catch Error as err {
@@ -735,12 +807,54 @@ ToggleWindowHotkeysHelp(*)
     }
 
     if IsFancyZonesRunning() {
+        fancyzones_state := GetFancyZonesIntegrationState()
+
+        if fancyzones_state {
+            fancyzones_override_snap_disabled :=
+                !fancyzones_state.override_snap_enabled
+
+            fancyzones_hotkey_conflict :=
+                fancyzones_state.hotkey_conflict
+        }
+
         help_text .= (
             "`n"
             "`n"
             "FANCYZONES`n"
             "Ctrl + Alt + Arrow    Move between FancyZones"
         )
+
+        if fancyzones_state
+            && fancyzones_state.window_switching_enabled
+        {
+            if fancyzones_state.next_hotkey.code {
+                next_hotkey_text :=
+                    FormatFancyZonesHotkey(fancyzones_state.next_hotkey)
+
+                help_text .= (
+                    "`n"
+                    . FormatHelpShortcutLine(
+                        next_hotkey_text,
+                        "Next window in current zone"
+                    )
+                )
+            }
+
+            if fancyzones_state.previous_hotkey.code {
+                previous_hotkey_text :=
+                    FormatFancyZonesHotkey(
+                        fancyzones_state.previous_hotkey
+                    )
+
+                help_text .= (
+                    "`n"
+                    . FormatHelpShortcutLine(
+                        previous_hotkey_text,
+                        "Previous window in current zone"
+                    )
+                )
+            }
+        }
 
         if fancyzones_override_snap_disabled
             || fancyzones_hotkey_conflict
