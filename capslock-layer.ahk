@@ -5,6 +5,9 @@
 A_IconTip := "CapsLock Layer"
 try TraySetIcon(A_ScriptDir "\icons\capslock-layer.ico")
 
+; Synthetic shortcuts must not alter the real Caps Lock state.
+SetStoreCapsLockMode False
+
 caps_layer_presence_mutex := DllCall(
     "CreateMutex",
     "ptr", 0,
@@ -22,6 +25,8 @@ double_tap_window_ms := 180
 
 caps_layer_armed := false
 caps_layer_arm_window_ms := 1400
+
+terminal_macro_running := false
 
 startup_shortcut_path := A_Startup "\CapsLock Layer.lnk"
 window_cascade_settings_path := EnvGet("LOCALAPPDATA") "\Window Cascade\settings.ini"
@@ -75,17 +80,6 @@ debug_reset_logs_message := DllCall(
     "uint"
 )
 
-nroj_macros_clear_terminal_message := DllCall(
-    "RegisterWindowMessage",
-    "str", "nroj.Macros.ClearTerminal",
-    "uint"
-)
-
-nroj_macros_copy_terminal_message := DllCall(
-    "RegisterWindowMessage",
-    "str", "nroj.Macros.CopyTerminal",
-    "uint"
-)
 
 caps_layer_disarm_message := DllCall(
     "RegisterWindowMessage",
@@ -114,6 +108,7 @@ SetCapsLockState "Off"
 ; - keep caps lock itself from toggling capitalization.
 ; - toggle actual caps lock with a very fast double-tap of left shift.
 ; - expose f13-f24 as universal extra keys for apps and app-specific macros.
+; - provide Windows Terminal copy and clear macros.
 ; - provide numpad 0-9 through caps lock on keyboards without a numpad.
 ; - provide Window Cascade and Window Hotkeys companion controls.
 ; - provide a tray-menu toggle for launching the script with Windows.
@@ -179,24 +174,15 @@ CapsLock & f::HoldVirtualKey("F20", "f")
 CapsLock & z::HoldVirtualKey("F21", "z")
 CapsLock & x::HoldVirtualKey("F22", "x")
 
-; Terminal-only personal macros.
+; Windows Terminal overrides.
 #HotIf WinActive("ahk_exe WindowsTerminal.exe")
 
-CapsLock & c::
-{
-    PostRegisteredCommand(nroj_macros_copy_terminal_message)
-    KeyWait "c"
-}
-
-CapsLock & k::
-{
-    PostRegisteredCommand(nroj_macros_clear_terminal_message)
-    KeyWait "k"
-}
+CapsLock & c::CopyTerminalBuffer("c")
+CapsLock & k::ClearTerminalBuffer("k")
 
 #HotIf
 
-; Outside Terminal, Caps+C remains the normal F23 layer key.
+; Default layer behavior outside the Terminal overrides.
 CapsLock & c::HoldVirtualKey("F23", "c")
 CapsLock & v::HoldVirtualKey("F24", "v")
 CapsLock & k::return
@@ -355,15 +341,15 @@ f::UseArmedVirtualKey("F20", "f")
 z::UseArmedVirtualKey("F21", "z")
 x::UseArmedVirtualKey("F22", "x")
 
-; Terminal-only personal macros.
+; Windows Terminal overrides.
 #HotIf CapsLayerOneShotReady() && WinActive("ahk_exe WindowsTerminal.exe")
 
-c::UseArmedRegisteredCommand(nroj_macros_copy_terminal_message, "c")
-k::UseArmedRegisteredCommand(nroj_macros_clear_terminal_message, "k")
+c::UseArmedTerminalMacro(CopyTerminalBuffer, "c")
+k::UseArmedTerminalMacro(ClearTerminalBuffer, "k")
 
 #HotIf CapsLayerOneShotReady()
 
-; Outside Terminal, Caps+C remains the normal F23 layer key.
+; Default layer behavior outside the Terminal overrides.
 c::UseArmedVirtualKey("F23", "c")
 v::UseArmedVirtualKey("F24", "v")
 k::UseArmedNoOpKey("k")
@@ -408,6 +394,95 @@ g::UseArmedRegisteredCommand(window_hotkeys_cycle_steam_message, "g")
 
 ; Diagnostics.
 F5::UseArmedRegisteredCommand(debug_reset_logs_message, "F5")
+
+#HotIf
+
+
+; =============================================================================
+; Windows Terminal macros
+; =============================================================================
+
+ClearTerminalBuffer(physical_key)
+{
+    global terminal_macro_running
+
+    if terminal_macro_running
+        return
+
+    if !WinActive("ahk_exe WindowsTerminal.exe")
+        return
+
+    terminal_macro_running := true
+
+    try {
+        ; Never inject Terminal shortcuts while the Caps chord is still active.
+        KeyWait physical_key
+        KeyWait "CapsLock"
+
+        Send "^+k"
+        Sleep 50
+
+        Send "^c"
+        Sleep 50
+
+        Send "{Enter}"
+        Sleep 50
+
+        Send "^+k"
+    }
+    finally {
+        terminal_macro_running := false
+    }
+}
+
+CopyTerminalBuffer(physical_key)
+{
+    global terminal_macro_running
+
+    if terminal_macro_running
+        return
+
+    if !WinActive("ahk_exe WindowsTerminal.exe")
+        return
+
+    terminal_macro_running := true
+
+    try {
+        ; Never inject Terminal shortcuts while the Caps chord is still active.
+        KeyWait physical_key
+        KeyWait "CapsLock"
+
+        previous_clipboard := ClipboardAll()
+        A_Clipboard := ""
+
+        Send "^+a"
+        Sleep 50
+
+        Send "^+c"
+
+        ; Restore the old clipboard if Terminal copy fails.
+        if !ClipWait(1) {
+            A_Clipboard := previous_clipboard
+            return
+        }
+
+        ; Keep internal blank lines, but trim trailing empty ones.
+        copied_text := RegExReplace(A_Clipboard, "(\R[ \t]*)+$")
+
+        code_fence := Chr(96) Chr(96) Chr(96)
+        A_Clipboard := code_fence "`n" copied_text "`n" code_fence
+    }
+    finally {
+        terminal_macro_running := false
+    }
+}
+
+#HotIf terminal_macro_running
+
+*WheelUp::return
+*WheelDown::return
+*WheelLeft::return
+*WheelRight::return
 
 #HotIf
 
@@ -524,6 +599,19 @@ UseArmedNoOpKey(physical_key)
 
     try {
         KeyWait physical_key
+    }
+    finally {
+        DisarmCapsLayer()
+    }
+}
+
+UseArmedTerminalMacro(callback, physical_key)
+{
+    HideCapsLayerTip()
+    SetTimer DisarmCapsLayer, 0
+
+    try {
+        callback(physical_key)
     }
     finally {
         DisarmCapsLayer()
@@ -810,9 +898,9 @@ ShowCapsLockLayerHelp(*)
     help_text :=
     (
     "HINTS`n"
-    "Hold Caps + key         Use the layer normally`n"
-    "Tap Caps, then key      One-shot layer for 1.4 seconds`n"
-    "Extra modifiers         Bypass one-shot Caps`n"
+    "Hold Caps + key         Use any Caps shortcut`n"
+    "Tap Caps, then key      Use a Caps + key shortcut without holding Caps`n"
+    "With other modifiers    Hold Caps instead of using tap mode`n"
     "`n"
     "EXTRA KEYS`n"
     "Caps + Q / W / E / R    F13 - F16`n"
@@ -820,18 +908,13 @@ ShowCapsLockLayerHelp(*)
     "Caps + Z / X / C / V    F21 - F24`n"
     "Caps + 0 - 9            Numpad 0 - 9`n"
     "`n"
-    "WINDOW CASCADE (when running)`n"
-    "Caps + H                 Toggle Cascade help`n"
-    "Caps + Space / Tab       Next layer (selected in Cascade's tray)`n"
-    "Caps + Alt + Space / Tab Previous layer`n"
+    "WINDOWS TERMINAL`n"
+    "Caps + C                 Copy full buffer as Markdown (replaces F23)`n"
+    "Caps + K                 Clear full buffer`n"
     "`n"
-    "WINDOW HOTKEYS (when running)`n"
-    "Caps + Win + H           Toggle Window Hotkeys help`n"
-    "Caps + Win + Arrow       Move spatial focus`n"
-    "Caps + G                 Cycle running Steam games`n"
-    "`n"
-    "Both companion scripts require CapsLock Layer.`n"
-    "CapsLock Layer works without either companion.`n"
+    "WINDOW MANAGEMENT`n"
+    "Window Cascade and Window Hotkeys extend the Caps layer with window controls.`n"
+    "See their own help pages for their shortcuts.`n"
     "`n"
     "CAPS LOCK`n"
     "Double-tap Left Shift   Toggle actual Caps Lock"
