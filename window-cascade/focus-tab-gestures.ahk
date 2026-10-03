@@ -384,7 +384,7 @@ StopFocusTabGesture(queue_update := true)
 RestoreFocusTabGestureVisual(gesture)
 {
     global focus_corner_overlays
-    global focus_corner_visible, focus_corner_visible_alpha
+    global focus_corner_visible
 
     if !gesture.visual_changed
         return
@@ -399,7 +399,7 @@ RestoreFocusTabGestureVisual(gesture)
     marker := "ahk_id " gesture.overlay_hwnd
     try overlay.gui.Hide()
     try WinSetAlwaysOnTop(gesture.was_topmost, marker)
-    try WinSetTransparent(focus_corner_visible ? focus_corner_visible_alpha : 1, marker)
+    try WinSetTransparent(focus_corner_visible ? overlay.alpha : 1, marker)
 
     ; Mark it unplaced so the normal updater restores geometry, not the preview.
     overlay.shown := false

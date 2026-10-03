@@ -76,10 +76,11 @@ focus_tab_color_presets := Map(
     "Pink", "E91E63"
 )
 
-; Focus tabs are shown faintly by default. Alpha 1 is reserved for the hidden
-; state so the clickable overlay remains hit-testable.
+; Inactive-slot tabs stay faint while active-slot tabs use stronger opacity.
+; Alpha 1 is reserved for the hidden state so overlays remain hit-testable.
 focus_corner_visible := true
-focus_corner_visible_alpha := 72
+focus_corner_inactive_slot_alpha := 72
+focus_corner_active_slot_alpha := 120
 
 ; Swipe distances use the same screen-coordinate pixels as MouseGetPos.
 ; Require deliberate, mostly horizontal movement; a long hold is still a click.

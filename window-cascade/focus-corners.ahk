@@ -234,22 +234,36 @@ ShowFocusCornerOverlay(
     global focus_corner_thickness
     global focus_corner_overlap
     global focus_corner_inactive_slot_color, focus_corner_active_slot_color
-    global focus_corner_visible, focus_corner_visible_alpha
+    global focus_corner_inactive_slot_alpha, focus_corner_active_slot_alpha
+    global focus_corner_visible
 
     marker_color := (
         active_slot
         ? focus_corner_active_slot_color
         : focus_corner_inactive_slot_color
     )
+    marker_alpha := (
+        active_slot
+        ? focus_corner_active_slot_alpha
+        : focus_corner_inactive_slot_alpha
+    )
 
     if !focus_corner_overlays.Has(hwnd)
-        CreateFocusCornerOverlay(hwnd, marker_color)
+        CreateFocusCornerOverlay(hwnd, marker_color, marker_alpha)
 
     overlay := focus_corner_overlays[hwnd]
 
     if overlay.color != marker_color {
         overlay.gui.BackColor := marker_color
         overlay.color := marker_color
+    }
+
+    if overlay.alpha != marker_alpha {
+        try WinSetTransparent(
+            focus_corner_visible ? marker_alpha : 1,
+            "ahk_id " overlay.gui.Hwnd
+        )
+        overlay.alpha := marker_alpha
     }
 
     if (
@@ -291,7 +305,7 @@ ShowFocusCornerOverlay(
     )
 
     WinSetTransparent(
-        focus_corner_visible ? focus_corner_visible_alpha : 1,
+        focus_corner_visible ? marker_alpha : 1,
         "ahk_id " overlay.gui.Hwnd
     )
 
@@ -352,7 +366,7 @@ HideFocusCornerOverlay(hwnd)
     overlay.shown := false
 }
 
-CreateFocusCornerOverlay(hwnd, marker_color)
+CreateFocusCornerOverlay(hwnd, marker_color, marker_alpha)
 {
     global focus_corner_overlays
     global focus_corner_targets
@@ -371,6 +385,7 @@ CreateFocusCornerOverlay(hwnd, marker_color)
     focus_corner_overlays[hwnd] := {
         gui: marker_gui,
         color: marker_color,
+        alpha: marker_alpha,
         shown: false,
         window_x: 0,
         window_y: 0,
@@ -409,15 +424,16 @@ DestroyFocusCornerOverlay(hwnd)
 
 ToggleFocusCornerVisibility(*)
 {
-    global focus_corner_visible, focus_corner_visible_alpha
+    global focus_corner_visible
     global focus_corner_overlays
 
     ; Cancel rather than repainting a tab in the middle of a gesture.
     CancelFocusTabGesture()
     focus_corner_visible := !focus_corner_visible
-    transparency := focus_corner_visible ? focus_corner_visible_alpha : 1
 
     for hwnd, overlay in focus_corner_overlays {
+        transparency := focus_corner_visible ? overlay.alpha : 1
+
         try WinSetTransparent(
             transparency,
             "ahk_id " overlay.gui.Hwnd
