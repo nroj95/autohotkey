@@ -67,6 +67,15 @@ focus_corner_accent_check_ms := 1000
 focus_corner_visible := true
 focus_corner_visible_alpha := 72
 
+; Swipe distances use the same screen-coordinate pixels as MouseGetPos.
+; Require deliberate, mostly horizontal movement; a long hold is still a click.
+focus_tab_swipe_threshold_px := 36
+focus_tab_swipe_horizontal_ratio := 1.5
+focus_tab_drag_preview_limit_px := 24
+focus_tab_drag_alpha := 180
+focus_tab_swipe_ready_alpha := 255
+focus_tab_gesture_poll_ms := 16
+
 ; The dependency must be running. Startup and reload grace periods tolerate
 ; normal process-start ordering without introducing standalone operation.
 caps_layer_startup_wait_ms := 5000
@@ -114,6 +123,9 @@ focus_corner_targets := Map()
 focus_corner_accent_color := ""
 focus_corner_accent_check_tick := 0
 focus_corner_update_pending := false
+focus_tab_pending_press := 0
+focus_tab_gesture := 0
+focus_tab_release_point := 0
 
 current_foreground_hwnd := WinExist("A")
 previous_foreground_hwnd := 0

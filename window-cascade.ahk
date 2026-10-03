@@ -84,7 +84,7 @@ SetTimer(WatchCapsLockLayer, caps_layer_check_ms)
 
 ; Window events normally keep focus tabs aligned. Keep a slow timer only as
 ; insurance for an event that Windows may occasionally fail to deliver.
-OnMessage(0x0201, HandleFocusCornerClick) ; WM_LBUTTONDOWN
+; Focus-tab presses and releases are paired by the mouse hook in controls.ahk.
 SetTimer(UpdateFocusCornerOverlays, focus_corner_fallback_ms)
 
 ; FancyZones can directly compete with new-window placement.
@@ -104,6 +104,7 @@ SetTimer(CheckCompatibilitySettings, -500)
 #Include "%A_ScriptDir%\window-cascade\placement.ahk"
 #Include "%A_ScriptDir%\window-cascade\commands.ahk"
 #Include "%A_ScriptDir%\window-cascade\focus-corners.ahk"
+#Include "%A_ScriptDir%\window-cascade\focus-tab-gestures.ahk"
 #Include "%A_ScriptDir%\window-cascade\windows.ahk"
 #Include "%A_ScriptDir%\window-cascade\interface.ahk"
 #Include "%A_ScriptDir%\window-cascade\debug.ahk"
@@ -118,6 +119,7 @@ HandleScriptExit(exit_reason, exit_code)
     global caps_layer_dependency_lost, focus_corner_overlays
 
     SetTimer(WatchCapsLockLayer, 0)
+    try StopFocusTabGesture(false)
     try StopWindowHooks()
 
     ; A dependency failure is different from an ordinary script reload. Recover

@@ -198,27 +198,40 @@ MoveCascadeWindowToSlot(hwnd, target_x, target_y)
 
 RotateCurrentCascadeSlot(direction)
 {
-    active_hwnd := WinExist("A")
+    return RotateCascadeSlotForWindow(WinExist("A"), direction)
+}
 
-    if !active_hwnd || IsShellSurfaceWindow(active_hwnd)
-        return
+RotateCascadeSlotForWindow(
+    target_hwnd,
+    direction,
+    expected_monitor := 0,
+    expected_slot := 0
+)
+{
+    if !target_hwnd || !WinExist("ahk_id " target_hwnd)
+        || IsShellSurfaceWindow(target_hwnd)
+        return 0
 
-    monitor_index := GetMonitorForWindow(active_hwnd)
+    monitor_index := GetMonitorForWindow(target_hwnd)
 
-    if !monitor_index
-        return
+    if !monitor_index || (expected_monitor && monitor_index != expected_monitor)
+        return 0
 
     stacks := GetCascadeSlotStacksForMonitor(monitor_index)
     z_ranks := GetCascadeWindowZRanks()
 
     for stack_info in stacks {
+        ; A gesture must never migrate to a different slot while the button is held.
+        if expected_slot && stack_info["slot_index"] != expected_slot
+            continue
+
         ordered_stack := SortCascadeWindowsByZOrder(
             stack_info["windows"],
             z_ranks
         )
 
-        ; The focused window must be the exposed member of this slot.
-        if ordered_stack.Length < 2 || ordered_stack[1] != active_hwnd
+        ; Preserve keyboard behavior: only rotate an exposed window's own stack.
+        if ordered_stack.Length < 2 || ordered_stack[1] != target_hwnd
             continue
 
         next_hwnd := RotateCascadeStackWindows(
@@ -230,8 +243,10 @@ RotateCurrentCascadeSlot(direction)
             ActivateCascadeWindow(next_hwnd)
 
         QueueFocusCornerUpdate()
-        return
+        return next_hwnd
     }
+
+    return 0
 }
 
 RotateCascadeStackWindows(ordered_windows, direction)

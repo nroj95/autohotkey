@@ -2,8 +2,19 @@
 ; Included into the same script; functions share the existing global state.
 
 ; =============================================================================
-; desktop monitor selection
+; focus-tab gestures and ordinary mouse clicks
 ; =============================================================================
+
+; Consume both halves of a tab click. The release still belongs to the tab
+; after the pointer leaves it, including after a cancelled swipe.
+#HotIf CanStartFocusTabGesture()
+*LButton::BeginFocusTabGesture()
+
+#HotIf CanFinishFocusTabGesture()
+*LButton Up::FinishFocusTabGesture()
+#HotIf HasFocusTabGesture()
+*Escape::CancelFocusTabGesture()
+#HotIf
 
 ; Any ordinary mouse click commits a just-adopted window. Wildcards make this
 ; apply even while modifier keys are held; tilde preserves the native click.
@@ -16,7 +27,8 @@
 ; Do not rely on foreground timing here. Windows may keep Progman focused while
 ; the user clicks between monitors, or may update foreground focus after the
 ; mouse-up event. Inspect the actual window under the cursor instead.
-~LButton Up::CaptureDesktopMonitorHint()
+; Match the wildcard release above so its contextual variant takes priority.
+~*LButton Up::CaptureDesktopMonitorHint()
 
 
 ; =============================================================================

@@ -9,13 +9,14 @@ launch `../window-cascade.ahk`, not the files in this directory. the launcher ow
 | file | responsibility |
 | --- | --- |
 | `settings.ahk` | defaults, persisted rotate-key selection, shared runtime state, and CapsLock Layer command IDs. |
-| `controls.ahk` | desktop-click handling, required CapsLock Layer presence/watch logic, and registered-message dispatch. |
+| `controls.ahk` | focus-tab mouse bindings, ordinary desktop-click handling, required CapsLock Layer presence/watch logic, and registered-message dispatch. |
 | `discovery.ahk` | desktop monitor hints, the startup window snapshot, discovery polling, placement queueing, Windows event hooks, and destroyed-window cleanup. |
 | `layout.ahk` | managed history, canonical slot geometry, occupancy, stacks, exposed layers, compaction, and Z-order sorting. |
 | `navigation.ahk` | focusing, swapping, slot/layer rotation, spatial navigation, and bringing a cascade forward. |
 | `placement.ahk` | explicit placement, readiness retries, new-window placement, and asynchronous stabilization. |
 | `commands.ahk` | adoption and one-shot adoption undo, gathering, cross-monitor moves, close commands, minimize/restore operations, and minimize-state cleanup. |
-| `focus-corners.ahk` | focus overlays, their lifetime and position, click handling, visibility, and accent color. |
+| `focus-corners.ahk` | focus overlays, their lifetime and position, held-tab visibility, and accent color. |
+| `focus-tab-gestures.ahk` | instant press-to-focus, swipe tracking and preview, target validation, cancellation, and release cleanup. |
 | `windows.ahk` | window filtering, visible/raw frame geometry, monitor lookup, and monitor-selection policy. |
 | `interface.ahk` | tray menu, help, startup shortcut, rotate-key persistence, and compatibility checks. |
 | `debug.ahk` | logging, log-reset messages, error reporting, and diagnostic window descriptions. |
@@ -36,6 +37,14 @@ keep the `cascade_command_*` IDs in `settings.ahk` synchronized with the matchin
 
 the launcher remains at the repository root. startup shortcuts, `icons/window-cascade.ico`, `window-cascade-debug.log`, and the settings file under `%LOCALAPPDATA%\Window Cascade\settings.ini` keep their existing paths.
 
+## focus-tab gestures
+
+pressing a tab focuses its window immediately. while held, that tab stays visible and follows a small, bounded horizontal preview; the application window itself does not move. releasing after a deliberate left/right swipe rotates one previous/next layer in that slot. small movement, mostly vertical movement, or returning near the starting point is an ordinary focus click. a single-window slot does not rotate.
+
+the default threshold is 36 screen-coordinate pixels, with horizontal travel at least 1.5 times the vertical travel. `focus_tab_*` settings control the threshold, preview, opacity, and gesture-only polling interval. no speed requirement or repeating rotation is applied.
+
+`controls.ahk` pairs mouse-down and mouse-up through AutoHotkey's mouse hook, rather than relying on foreground-only mouse capture after another process has been activated. the press records the overlay, target HWND, monitor, and slot. release belongs to that gesture even outside the tab; ordinary clicks elsewhere retain their native behavior. cancelling with Escape, losing focus, or invalidating the target cancels rotation, but still consumes the matching release. reload/exit clears the preview and stops the gesture timer.
+
 ## checking a change
 
 from the repository root, run:
@@ -51,7 +60,10 @@ Window Cascade seeds windows already open at startup for discovery but does not 
 for Window Cascade changes, check:
 
 - new-window placement and delayed window startup
-- focus-corner overlays and click-to-focus behavior
+- focus tabs: instant focus on press, visible held tab, and normal hiding on release
+- swipes: left/right on release, one layer per gesture, small/vertical/back-to-start movement, and single-window slots
+- release outside the tab or on another monitor; ordinary app clicks and drags must remain unaffected
+- cancel with Escape, focus another app, close/minimize/move the target, and reload/exit while holding
 - slot swaps, slot/layer rotation, and exposed-stack ordering
 - minimize/restore and automatic placement reset
 - adoption and the one-shot adoption undo path

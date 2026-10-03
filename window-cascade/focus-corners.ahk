@@ -101,6 +101,10 @@ UpdateFocusCornerOverlays()
     }
 
     for hwnd in live_windows {
+        ; The pressed tab stays visible at its gesture-preview position.
+        if IsHeldFocusTab(hwnd)
+            continue
+
         if (
             hwnd = active_hwnd
             || !visible_bounds.Has(hwnd)
@@ -278,6 +282,9 @@ HideFocusCornerOverlay(hwnd)
 {
     global focus_corner_overlays
 
+    if IsHeldFocusTab(hwnd)
+        return
+
     if !focus_corner_overlays.Has(hwnd)
         return
 
@@ -324,6 +331,9 @@ DestroyFocusCornerOverlay(hwnd)
     global focus_corner_overlays
     global focus_corner_targets
 
+    if IsHeldFocusTab(hwnd)
+        CancelFocusTabGesture()
+
     if !focus_corner_overlays.Has(hwnd)
         return
 
@@ -340,40 +350,16 @@ DestroyFocusCornerOverlay(hwnd)
 
 
 ; =============================================================================
-; clicks, visibility, and accent color
+; visibility and accent color
 ; =============================================================================
-
-HandleFocusCornerClick(
-    w_param,
-    l_param,
-    message,
-    overlay_hwnd
-)
-{
-    global focus_corner_targets
-
-    if !focus_corner_targets.Has(overlay_hwnd)
-        return
-
-    target_hwnd := focus_corner_targets[overlay_hwnd]
-
-    if !WinExist("ahk_id " target_hwnd) {
-        DestroyFocusCornerOverlay(target_hwnd)
-        return 0
-    }
-
-    HideFocusCornerOverlay(target_hwnd)
-
-    try WinActivate("ahk_id " target_hwnd)
-
-    return 0
-}
 
 ToggleFocusCornerVisibility(*)
 {
     global focus_corner_visible, focus_corner_visible_alpha
     global focus_corner_overlays
 
+    ; Cancel rather than repainting a tab in the middle of a gesture.
+    CancelFocusTabGesture()
     focus_corner_visible := !focus_corner_visible
     transparency := focus_corner_visible ? focus_corner_visible_alpha : 1
 
@@ -393,6 +379,10 @@ RefreshFocusCornerAccent()
     global focus_corner_accent_color
     global focus_corner_accent_check_tick
     global focus_corner_accent_check_ms
+
+    ; Accent refresh recreates overlays. Defer it until the press is finished.
+    if HasFocusTabGesture()
+        return
 
     if (
         focus_corner_accent_color != ""

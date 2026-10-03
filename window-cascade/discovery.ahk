@@ -284,6 +284,7 @@ HandleWinEvent(
     global startup_windows
     global placement_enabled
     global desktop_monitor_hint, desktop_monitor_hint_tick
+    global focus_tab_gesture
 
     try {
         EVENT_SYSTEM_FOREGROUND := 0x0003
@@ -293,6 +294,10 @@ HandleWinEvent(
         CHILDID_SELF := 0
 
         if event = EVENT_SYSTEM_FOREGROUND {
+            if IsObject(focus_tab_gesture) && focus_tab_gesture.ready
+                && hwnd != focus_tab_gesture.target_hwnd
+                CancelFocusTabGesture()
+
             if hwnd && hwnd != current_foreground_hwnd {
                 CancelPendingAdoptionUndo()
 
@@ -417,6 +422,9 @@ ForgetWindow(hwnd)
     global cascade_history
     global startup_windows, known_windows
     global current_foreground_hwnd, previous_foreground_hwnd
+
+    if IsHeldFocusTab(hwnd)
+        CancelFocusTabGesture()
 
     affected_monitor := GetManagedCascadeMonitor(hwnd)
 
