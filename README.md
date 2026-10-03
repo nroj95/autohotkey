@@ -71,6 +71,8 @@ it includes controls for:
 
 press a focus tab to focus its window immediately. hold the button, swipe left or right, and release to show the previous or next layer in that slot. the tab stays visible while held; a normal click does not change layers.
 
+focus-tab colors can be configured from the tray separately for the active slot and other tabs.
+
 `Caps + H` toggles the Window Cascade help page.
 
 Window Cascade runs as its own process but requires `capslock-layer.ahk` for its keyboard command bindings.

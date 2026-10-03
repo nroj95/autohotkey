@@ -8,17 +8,17 @@ launch `../window-cascade.ahk`, not the files in this directory. the launcher ow
 
 | file | responsibility |
 | --- | --- |
-| `settings.ahk` | defaults, persisted rotate-key selection, shared runtime state, and CapsLock Layer command IDs. |
+| `settings.ahk` | defaults, persisted rotate-key and focus-tab color selections, shared runtime state, and CapsLock Layer command IDs. |
 | `controls.ahk` | focus-tab mouse bindings, ordinary desktop-click handling, required CapsLock Layer presence/watch logic, and registered-message dispatch. |
 | `discovery.ahk` | desktop monitor hints, the startup window snapshot, discovery polling, placement queueing, Windows event hooks, and destroyed-window cleanup. |
 | `layout.ahk` | managed history, canonical slot geometry, occupancy, stacks, exposed layers, compaction, and Z-order sorting. |
 | `navigation.ahk` | focusing, swapping, slot/layer rotation, spatial navigation, and bringing a cascade forward. |
 | `placement.ahk` | explicit placement, readiness retries, new-window placement, and asynchronous stabilization. |
 | `commands.ahk` | adoption and one-shot adoption undo, gathering, cross-monitor moves, close commands, minimize/restore operations, and minimize-state cleanup. |
-| `focus-corners.ahk` | focus overlays, their lifetime and position, held-tab visibility, and accent color. |
+| `focus-corners.ahk` | focus overlays, their lifetime and position, held-tab visibility, and active-slot coloring. |
 | `focus-tab-gestures.ahk` | instant press-to-focus, swipe tracking and preview, target validation, cancellation, and release cleanup. |
 | `windows.ahk` | window filtering, visible/raw frame geometry, monitor lookup, and monitor-selection policy. |
-| `interface.ahk` | tray menu, help, startup shortcut, rotate-key persistence, and compatibility checks. |
+| `interface.ahk` | tray menu, help, startup shortcut, rotate-key and focus-tab color persistence, and compatibility checks. |
 | `debug.ahk` | logging, log-reset messages, error reporting, and diagnostic window descriptions. |
 
 ## initialization and dependencies
@@ -45,6 +45,8 @@ the default threshold is 36 screen-coordinate pixels, with horizontal travel at 
 
 `controls.ahk` pairs mouse-down and mouse-up through AutoHotkey's mouse hook, rather than relying on foreground-only mouse capture after another process has been activated. the press records the overlay, target HWND, monitor, and slot. release belongs to that gesture even outside the tab; ordinary clicks elsewhere retain their native behavior. cancelling with Escape, losing focus, or invalidating the target cancels rotation, but still consumes the matching release. reload/exit clears the preview and stops the gesture timer.
 
+focus-tab colors are selected separately for the active slot and other tabs from the tray. the selections persist under `[FocusTabs]` in `%LOCALAPPDATA%\Window Cascade\settings.ini`; defaults are Green for the active slot and Grey for other tabs.
+
 ## checking a change
 
 from the repository root, run:
@@ -69,7 +71,7 @@ for Window Cascade changes, check:
 - adoption and the one-shot adoption undo path
 - gathering and cross-monitor moves
 - pause/resume behavior and compatibility checks
-- tray help and rotate-key selection
+- tray help, rotate-key selection, and focus-tab color selection/persistence
 - required CapsLock Layer behavior during startup, quick reloads, and a sustained dependency loss
 
 avoid close-scope tests with unsaved work. syntax validation does not replace Windows desktop behavior testing.
