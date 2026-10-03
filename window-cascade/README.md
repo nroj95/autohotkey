@@ -70,7 +70,11 @@ a native mouse drag preserves its starting cascade membership and logical slot u
 
 on release near a slot, the window snaps to that exact canonical position and the normal monitor-relative cascade size. this can move an existing member, re-adopt a released window, or adopt another eligible normal application window. the destination monitor must already have a visible cascade; the last managed window can also return to its own cascade. dropping elsewhere leaves the window unmanaged at the dropped position. ordinary clicks, content drags and edge resizes do not adopt windows; Escape retains native cancellation behavior.
 
-a successful drop queues ordinary compaction on the affected cascades after the drag finishes. compaction closes gaps and packs layers, so the final slot can shift from the initially selected drop slot. its placement correction uses the final destination instead of pulling the window back to an earlier one. dropped-out windows stay known/handled, so merely focusing or showing them again does not auto-adopt them.
+a successful drop queues slot-preserving compaction on the affected cascades after the drag finishes. existing windows stay in their slots wherever possible; surplus background windows fill holes and balance the layers instead of the whole cascade being flattened and reassigned. the most recent dropped window has priority in the destination monitor's queued compaction, even if focus changes or compaction waits for a close batch. later manual drops and keyboard commands can still rearrange windows; this is not a permanent per-window pin.
+
+with at least one full layer of managed windows, the dropped window stays in the selected slot. with fewer windows than slots, only the first N canonical positions are retained for N managed windows: a drop into that range stays there, while a drop beyond it moves inward to keep the cascade compact. minimized members still count toward that total and are not restored just to fill visible gaps. later compactions preserve each slot's front windows and move only surplus layers as needed.
+
+placement correction follows each window's final destination. dropped-out windows stay known/handled, so merely focusing or showing them again does not auto-adopt them.
 
 `Caps + Insert` remains available for explicit adoption and re-slotting, and newly opened windows still use normal automatic placement. pause still controls automatic new-window placement; intentional drag/drop remains a manual operation. keyboard cascade commands are held off during a native move/resize interaction. the temporary drag watcher stops on completion, cancellation, destruction, or script exit.
 
@@ -96,6 +100,9 @@ for Window Cascade changes, check:
 - ordinary app clicks/drags and Escape retain native behavior; also test close/minimize/move, focus changes, and reload/exit while holding
 - slot swaps, slot/layer rotation, and exposed-stack ordering
 - scoped closes: current layer and full monitor close without intermediate compaction
+- drop-slot preservation: exactly one full layer and multiple layers; other windows fill gaps without moving the dropped window
+- partial layer: drops within the first N slots stay put; drops beyond that range compact inward
+- deferred drops: change focus, close other windows, or finish a close batch before compaction; minimized members stay hidden
 - mouse drops: 14/15/55/56 px offsets all snap with the same tolerance; outside every slot releases only on mouse-up
 - drag away and back while still held; drag to another slot/monitor; no mid-drag pruning, reflow, or corrective move
 - adopt an unmanaged window by dropping near an existing cascade; outside/empty-monitor drops remain unmanaged

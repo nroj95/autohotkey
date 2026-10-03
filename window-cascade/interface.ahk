@@ -306,6 +306,7 @@ ToggleWindowCascadeHelp(*)
     "WINDOW DRAGS`n"
     "Release near a cascade slot to snap/adopt; release away to leave the cascade.`n"
     "The decision is made on release, never while holding. Caps + Insert still works.`n"
+    "Dropped windows keep their slot; a cascade smaller than one full layer may compact inward.`n"
     "`n"
     "TRAY`n"
     "Pause cascading      Pause automatic placement`n"

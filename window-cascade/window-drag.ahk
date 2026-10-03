@@ -268,7 +268,8 @@ CompleteCascadeWindowDrop(drag)
             NormalizeAllCascadesMinimizedState()
             if drag.source_monitor
                 QueueCascadeCompaction(drag.source_monitor)
-            QueueCascadeCompaction(monitor_index)
+            ; Keep this explicit destination while background windows fill gaps.
+            QueueCascadeCompaction(monitor_index, hwnd)
             DebugLog("Cascade drop snapped. | hwnd=" hwnd
                 " | monitor=" monitor_index " | slot=" slot_index)
             return

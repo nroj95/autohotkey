@@ -525,14 +525,17 @@ IsCascadeCompactionDeferred(monitor_index)
     return HasCascadeWindowDrag() || IsCascadeCloseBatchActive(monitor_index)
 }
 
-QueueCascadeCompaction(monitor_index)
+QueueCascadeCompaction(monitor_index, preferred_hwnd := 0)
 {
     global cascade_compaction_pending
 
     if !monitor_index
         return
 
-    cascade_compaction_pending[monitor_index] := true
+    ; Ordinary cleanup must not erase the last explicit drop queued for this
+    ; monitor. Retain it through drag/close deferral, even if focus changes.
+    if preferred_hwnd || !cascade_compaction_pending.Has(monitor_index)
+        cascade_compaction_pending[monitor_index] := preferred_hwnd
 
     ; A close batch or native drag postpones layout mutation until it finishes.
     if IsCascadeCompactionDeferred(monitor_index)
@@ -545,34 +548,43 @@ FlushCascadeCompactions()
 {
     global cascade_compaction_pending
 
-    monitors := []
+    monitors := Map()
     deferred_monitors := Map()
 
-    for monitor_index in cascade_compaction_pending {
+    for monitor_index, preferred_hwnd in cascade_compaction_pending {
         if IsCascadeCompactionDeferred(monitor_index) {
-            deferred_monitors[monitor_index] := true
+            deferred_monitors[monitor_index] := preferred_hwnd
             continue
         }
 
-        monitors.Push(monitor_index)
+        monitors[monitor_index] := preferred_hwnd
     }
 
     cascade_compaction_pending := deferred_monitors
 
-    for monitor_index in monitors
-        CompactCascadeLayout(monitor_index)
+    for monitor_index, preferred_hwnd in monitors
+        CompactCascadeLayout(monitor_index, preferred_hwnd)
 }
 
-CompactCascadeLayout(monitor_index)
+CompactCascadeLayout(monitor_index, preferred_hwnd := 0)
 {
     global cascade_slot_tolerance
     global layer_minimized_windows_by_monitor
     global monitor_minimized_windows_by_monitor
     global window_width_ratio, window_height_ratio
     global edge_margin, minimum_width, minimum_height
+    global cascade_drag_generation, cascade_compaction_pending
 
+    drag_generation := cascade_drag_generation
+    ; Another monitor's compaction may have yielded to a newer drop. Prefer its
+    ; queued target over the older request captured by this flush.
+    if cascade_compaction_pending.Has(monitor_index)
+        && cascade_compaction_pending[monitor_index]
+    {
+        preferred_hwnd := cascade_compaction_pending[monitor_index]
+    }
     if IsCascadeCompactionDeferred(monitor_index) {
-        QueueCascadeCompaction(monitor_index)
+        QueueCascadeCompaction(monitor_index, preferred_hwnd)
         return
     }
 
@@ -581,6 +593,7 @@ CompactCascadeLayout(monitor_index)
         return
 
     windows := GetLiveCascadeHistory(monitor_index)
+    managed_window_count := windows.Length
 
     ; Keep a script-hidden layer out of compaction while packing the layers
     ; that remain visible. Restoring the hidden layer compacts everything.
@@ -657,60 +670,40 @@ CompactCascadeLayout(monitor_index)
         return
 
     z_ranks := GetCascadeWindowZRanks()
-    stacks_by_slot := Map()
-    maximum_depth := 0
+    ordered_stacks := []
+
+    Loop slots.Length
+        ordered_stacks.Push([])
 
     for stack_info in stacks {
-        ordered_stack := SortCascadeWindowsByZOrder(
+        ordered_stacks[stack_info["slot_index"]] := SortCascadeWindowsByZOrder(
             stack_info["windows"],
             z_ranks
         )
-
-        stacks_by_slot[stack_info["slot_index"]] := ordered_stack
-        maximum_depth := Max(maximum_depth, ordered_stack.Length)
     }
 
-    ; Read the current cascade layer-first and slot-first. Repacking this order
-    ; makes every earlier slot/layer dense without changing layer order.
-    ordered_windows := []
+    target_stacks := BuildStableCascadeCompactionPlan(
+        ordered_stacks,
+        managed_window_count,
+        preferred_hwnd
+    )
 
-    Loop maximum_depth {
-        layer_index := A_Index
+    for slot_index, stack_windows in target_stacks {
+        target_slot := slots[slot_index]
 
-        Loop slots.Length {
-            slot_index := A_Index
+        for hwnd in stack_windows {
+            ; Never apply an old plan after a newer drag has changed the layout.
+            if drag_generation != cascade_drag_generation {
+                QueueCascadeCompaction(monitor_index)
+                return
+            }
+            if IsCascadeCompactionDeferred(monitor_index) {
+                QueueCascadeCompaction(monitor_index, preferred_hwnd)
+                return
+            }
 
-            if !stacks_by_slot.Has(slot_index)
-                continue
-
-            stack_windows := stacks_by_slot[slot_index]
-
-            if layer_index <= stack_windows.Length
-                ordered_windows.Push(stack_windows[layer_index])
+            MoveCascadeWindowToSlot(hwnd, target_slot[1], target_slot[2])
         }
-    }
-
-    target_stacks := []
-
-    Loop slots.Length
-        target_stacks.Push([])
-
-    for linear_index, hwnd in ordered_windows {
-        ; A native drag can begin while an earlier WinMove yields to Windows.
-        if IsCascadeCompactionDeferred(monitor_index) {
-            QueueCascadeCompaction(monitor_index)
-            return
-        }
-        target_slot_index := Mod(linear_index - 1, slots.Length) + 1
-        target_slot := slots[target_slot_index]
-
-        MoveCascadeWindowToSlot(
-            hwnd,
-            target_slot[1],
-            target_slot[2]
-        )
-
-        target_stacks[target_slot_index].Push(hwnd)
     }
 
     ; Keep each target stack in the same top-to-bottom layer order.
@@ -726,6 +719,14 @@ CompactCascadeLayout(monitor_index)
             continue
 
         Loop stack_windows.Length - 1 {
+            if drag_generation != cascade_drag_generation {
+                QueueCascadeCompaction(monitor_index)
+                return
+            }
+            if IsCascadeCompactionDeferred(monitor_index) {
+                QueueCascadeCompaction(monitor_index, preferred_hwnd)
+                return
+            }
             upper_hwnd := stack_windows[A_Index]
             lower_hwnd := stack_windows[A_Index + 1]
 
@@ -744,6 +745,115 @@ CompactCascadeLayout(monitor_index)
     }
 
     QueueFocusCornerUpdate()
+}
+
+
+; Plan without moving windows: preserve existing slots, then fill only holes.
+BuildStableCascadeCompactionPlan(ordered_stacks, managed_window_count, preferred_hwnd := 0)
+{
+    slot_count := ordered_stacks.Length
+    target_stacks := []
+    target_counts := []
+    window_count := 0
+    maximum_depth := 0
+    preferred_slot := 0
+
+    for slot_index, stack_windows in ordered_stacks {
+        target_stacks.Push([])
+        window_count += stack_windows.Length
+        maximum_depth := Max(maximum_depth, stack_windows.Length)
+        for hwnd in stack_windows {
+            if hwnd = preferred_hwnd
+                preferred_slot := slot_index
+        }
+    }
+    if !slot_count || !window_count
+        return target_stacks
+
+    ; Full layers occupy every slot; the last partial layer fills early slots.
+    ; Thus every slot retains at least its front window once a layer is full.
+    complete_layers := Floor(window_count / slot_count)
+    remaining_windows := Mod(window_count, slot_count)
+    Loop slot_count
+        target_counts.Push(complete_layers + (A_Index <= remaining_windows))
+
+    if window_count < slot_count && managed_window_count > window_count {
+        ; Minimized members still count toward the user's total. Keep them hidden
+        ; and preserve visible slots rather than collapsing a merely hidden layer.
+        slot_limit := Min(slot_count, managed_window_count)
+        Loop slot_count
+            target_counts[A_Index] := 0
+        remaining_windows := window_count
+        if preferred_slot && preferred_slot <= slot_limit {
+            target_counts[preferred_slot] := 1
+            remaining_windows -= 1
+        }
+        Loop slot_limit {
+            slot_index := A_Index
+            if remaining_windows && !target_counts[slot_index]
+                && ordered_stacks[slot_index].Length
+            {
+                target_counts[slot_index] := 1
+                remaining_windows -= 1
+            }
+        }
+        Loop slot_limit {
+            if !remaining_windows
+                break
+            if !target_counts[A_Index] {
+                target_counts[A_Index] := 1
+                remaining_windows -= 1
+            }
+        }
+    }
+
+    overflow_targets := Map()
+    for slot_index, stack_windows in ordered_stacks {
+        target_count := target_counts[slot_index]
+        keep_preferred := target_count > 0 && slot_index = preferred_slot
+        keep_other_count := Min(target_count, stack_windows.Length) - keep_preferred
+
+        ; Reserve room for the dropped window before choosing other survivors.
+        ; Retain their existing Z-order; only surplus background windows move.
+        for hwnd in stack_windows {
+            if keep_preferred && hwnd = preferred_hwnd
+                target_stacks[slot_index].Push(hwnd)
+            else if keep_other_count > 0 {
+                target_stacks[slot_index].Push(hwnd)
+                keep_other_count -= 1
+            } else {
+                overflow_targets[hwnd] := true
+            }
+        }
+    }
+
+    ; Keep displaced windows in layer/slot order, without flattening survivors.
+    overflow_windows := []
+    Loop maximum_depth {
+        layer_index := A_Index
+        for stack_windows in ordered_stacks {
+            if layer_index <= stack_windows.Length {
+                hwnd := stack_windows[layer_index]
+                if overflow_targets.Has(hwnd)
+                    overflow_windows.Push(hwnd)
+            }
+        }
+    }
+
+    overflow_index := 1
+    Loop maximum_depth {
+        layer_index := A_Index
+        for slot_index, target_count in target_counts {
+            if layer_index <= target_count
+                && target_stacks[slot_index].Length < layer_index
+            {
+                target_stacks[slot_index].Push(overflow_windows[overflow_index])
+                overflow_index += 1
+            }
+        }
+    }
+
+    return target_stacks
 }
 
 
