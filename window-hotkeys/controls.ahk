@@ -5,10 +5,26 @@
 ; hotkeys
 ; =============================================================================
 
+; Leave Win+Arrow to CapsLock Layer only while that companion is running and
+; CapsLock is physically held. This keeps Caps+Win+Arrow order-independent
+; without changing standalone Window Hotkeys behavior.
+#HotIf !CapsLockLayerOwnsWinArrow()
+
 #Up::MaximizeWindowTarget()
 #Down::MinimizeActiveWindow()
 #Left::CycleWindowSnap("left")
 #Right::CycleWindowSnap("right")
+
+; Deterministic Shift+Win stretch controls.
++#Up::StretchWindowVertically()
++#Down::ResetWindowStretch()
++#Left::ToggleHorizontalStretch("left")
++#Right::ToggleHorizontalStretch("right")
+
+#HotIf
+
+^#h::ToggleWindowHotkeysHelp()
+
 #Backspace::RestoreWindowTarget()
 #Home::ToggleOtherWindows()
 #m::ToggleAllWindows()
@@ -20,12 +36,6 @@
 #PgDn::PlaceWindowQuarter("bottom-right")
 
 #Enter::SwapWindowClockwise()
-
-; Deterministic Shift+Win stretch controls.
-+#Up::StretchWindowVertically()
-+#Down::ResetWindowStretch()
-+#Left::ToggleHorizontalStretch("left")
-+#Right::ToggleHorizontalStretch("right")
 
 ; FancyZones relative-position navigation.
 #HotIf IsFancyZonesRunning()
@@ -59,8 +69,16 @@
 ~MButton::ForgetLastMinimizedWindow()
 
 ; =============================================================================
-; CapsLock Layer dependency and command dispatch
+; optional CapsLock Layer integration and command dispatch
 ; =============================================================================
+
+CapsLockLayerOwnsWinArrow()
+{
+    return (
+        GetKeyState("CapsLock", "P")
+        && IsCapsLockLayerRunning()
+    )
+}
 
 IsCapsLockLayerRunning()
 {
@@ -79,59 +97,10 @@ IsCapsLockLayerRunning()
     return true
 }
 
-RequireCapsLockLayer()
-{
-    global caps_layer_startup_wait_ms
-
-    wait_start := A_TickCount
-
-    while !IsCapsLockLayerRunning() {
-        if ((A_TickCount - wait_start) & 0xFFFFFFFF) >= caps_layer_startup_wait_ms {
-            DebugLog("Startup refused: CapsLock Layer is not running.")
-
-            MsgBox(
-                "Window Hotkeys requires CapsLock Layer.`n`n"
-                . "Start capslock-layer.ahk, then launch window-hotkeys.ahk.",
-                "Window Hotkeys",
-                "Iconx"
-            )
-
-            ExitApp 1
-        }
-
-        Sleep 100
-    }
-}
-
-WatchCapsLockLayer()
-{
-    global caps_layer_missing_since, caps_layer_reload_grace_ms
-    global caps_layer_dependency_lost
-
-    if IsCapsLockLayerRunning() {
-        caps_layer_missing_since := 0
-        return
-    }
-
-    ; A quick CapsLock Layer reload must not tear down Window Hotkeys.
-    if !caps_layer_missing_since {
-        caps_layer_missing_since := A_TickCount
-        return
-    }
-
-    if ((A_TickCount - caps_layer_missing_since) & 0xFFFFFFFF) < caps_layer_reload_grace_ms
-        return
-
-    caps_layer_dependency_lost := true
-    DebugLog("Stopping: CapsLock Layer remained unavailable after the reload grace period.")
-    ExitApp 1
-}
-
 HandleWindowHotkeysCommandMessage(command_id, parameter, message_id, target_hwnd)
 {
     global window_hotkeys_command_focus_left, window_hotkeys_command_focus_right
     global window_hotkeys_command_focus_up, window_hotkeys_command_focus_down
-    global window_hotkeys_command_show_help
 
     ; HWND_BROADCAST also reaches script-owned GUIs. Execute once through the
     ; AutoHotkey hidden main window.
@@ -153,8 +122,5 @@ HandleWindowHotkeysCommandMessage(command_id, parameter, message_id, target_hwnd
 
         case window_hotkeys_command_focus_down:
             FocusNearestWindow("down")
-
-        case window_hotkeys_command_show_help:
-            ToggleWindowHotkeysHelp()
     }
 }

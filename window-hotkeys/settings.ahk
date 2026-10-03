@@ -37,13 +37,8 @@ startup_shortcut_path := A_Startup "\Window Hotkeys.lnk"
 fancyzones_override_snap_disabled := false
 fancyzones_hotkey_conflict := false
 
-; CapsLock Layer is a required companion. These timings tolerate normal startup
-; ordering and quick script reloads without introducing standalone operation.
-caps_layer_startup_wait_ms := 5000
-caps_layer_reload_grace_ms := 3000
-caps_layer_check_ms := 1000
-caps_layer_missing_since := 0
-caps_layer_dependency_lost := false
+; CapsLock Layer is optional. Its registered commands are accepted only while
+; the companion script is currently running.
 
 window_hotkeys_command_message := 0
 
@@ -52,7 +47,6 @@ window_hotkeys_command_focus_left := 1
 window_hotkeys_command_focus_right := 2
 window_hotkeys_command_focus_up := 3
 window_hotkeys_command_focus_down := 4
-window_hotkeys_command_show_help := 5
 
 
 ; =============================================================================

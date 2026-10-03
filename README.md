@@ -82,7 +82,7 @@ features include:
 - minimize/restore-all behavior
 - cycling running Steam games
 
-Window Hotkeys runs independently of Window Cascade, but requires `capslock-layer.ahk` for its companion controls. its ordinary Win-key and FancyZones bindings remain direct Window Hotkeys shortcuts.
+Window Hotkeys runs independently of Window Cascade and does not require `capslock-layer.ahk`. when CapsLock Layer is running, it adds companion controls for spatial focus and Steam cycling.
 
 ## requirements
 
@@ -93,7 +93,7 @@ Window Hotkeys runs independently of Window Cascade, but requires `capslock-laye
 
 run root-level `.ahk` launchers rather than module files inside `window-cascade/` or `window-hotkeys/`.
 
-start `capslock-layer.ahk` before `window-cascade.ahk` or `window-hotkeys.ahk`. the other utilities can run independently unless their own documentation says otherwise.
+start `capslock-layer.ahk` before `window-cascade.ahk`. Window Hotkeys and the other utilities can run independently unless their own documentation says otherwise.
 
 each main script provides a tray menu with its own controls and a **Run at startup** option where applicable.
 

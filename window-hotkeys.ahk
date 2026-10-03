@@ -18,7 +18,7 @@
 ; - remember a just-minimized window until the user clicks elsewhere.
 ; - toggle all eligible windows minimized/restored with win+m.
 ; - provide deterministic Shift+Win vertical and horizontal edge stretching.
-; - require CapsLock Layer and receive companion commands through it.
+; - receive optional companion commands from CapsLock Layer when it is running.
 ; =============================================================================
 
 
@@ -41,13 +41,8 @@ InitializeDebugLogging()
 
 OnExit HandleWindowHotkeysExit
 
-; Window Hotkeys intentionally has no standalone mode. Wait briefly for normal
-; startup ordering, but never launch CapsLock Layer implicitly.
-RequireCapsLockLayer()
-
-
 ; =============================================================================
-; CapsLock Layer integration
+; optional CapsLock Layer integration
 ; =============================================================================
 
 window_hotkeys_command_message := DllCall(
@@ -85,7 +80,6 @@ A_TrayMenu.Add()
 A_TrayMenu.AddStandard()
 
 UpdateStartupMenu()
-SetTimer(WatchCapsLockLayer, caps_layer_check_ms)
 SetTimer(CheckFancyZonesStartup, 1000)
 CheckFancyZonesStartup()
 
@@ -96,23 +90,9 @@ CheckFancyZonesStartup()
 
 HandleWindowHotkeysExit(exit_reason, exit_code)
 {
-    global caps_layer_dependency_lost
-
-    SetTimer(WatchCapsLockLayer, 0)
-
     try RestoreAllVerticalStretches()
     try RestoreAllHorizontalStretches()
     try RestoreAllBorderlessWindows(exit_reason, exit_code)
-
-    if caps_layer_dependency_lost {
-        MsgBox(
-            "Window Hotkeys stopped because CapsLock Layer is not running.`n`n"
-            . "Temporary borderless window state was restored where possible.`n"
-            . "Start capslock-layer.ahk, then relaunch window-hotkeys.ahk.",
-            "Window Hotkeys",
-            "Icon!"
-        )
-    }
 }
 
 

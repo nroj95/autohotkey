@@ -2,14 +2,14 @@
 
 launch `../window-hotkeys.ahk`, not the files in this directory. the root launcher owns the script identity, startup sequence, registered message, tray menu, and exit callback. these modules are included into that one AutoHotkey v2 process.
 
-Window Hotkeys remains independent of Window Cascade, but CapsLock Layer is a required companion. it owns the companion-control namespace, including `Caps + Win + H`, `Caps + Win + Arrow`, and `Caps + G`. Window Hotkeys intentionally has no standalone fallback for those controls.
+Window Hotkeys is independent of Window Cascade and can run without CapsLock Layer. `Ctrl + Win + H` toggles its help directly. CapsLock Layer provides the optional `Caps + Win + Arrow` and `Caps + G` companion controls, which remain listed under **CAPSLOCK LAYER REQUIRED** even when the companion is unavailable.
 
 ## module map
 
 | file | responsibility |
 | --- | --- |
 | `settings.ahk` | defaults, runtime globals, Steam exclusions, paths, and debug settings. |
-| `controls.ahk` | direct Win/FancyZones hotkeys, mouse bindings, required CapsLock Layer presence/watch logic, and `WindowHotkeys.Command` dispatch. |
+| `controls.ahk` | direct Win/FancyZones hotkeys, mouse bindings, optional CapsLock Layer detection, Win-arrow ownership gating, and `WindowHotkeys.Command` dispatch. |
 | `window-state.ahk` | Win+Home/Win+M group toggles, last-minimized target selection, maximize, minimize, and restore commands. |
 | `layouts.ahk` | horizontal and vertical stretch state, side-layout cycling, third/half tiles, center tiles, matching, and placement preparation. |
 | `swapping.ahk` | clockwise window ordering, candidate selection, and rectangle swapping. |
@@ -25,7 +25,7 @@ Window Hotkeys remains independent of Window Cascade, but CapsLock Layer is a re
 
 all includes are explicit in the root launcher and anchored to `A_ScriptDir`. modules do not include each other. `settings.ahk` initializes shared globals before logging, callbacks, and the rest of startup.
 
-the module split keeps feature boundaries explicit while CapsLock Layer owns companion commands that would otherwise consume more global shortcut space. ordinary Win-key window-management shortcuts and FancyZones integration remain direct Window Hotkeys bindings.
+the module split keeps feature boundaries explicit while CapsLock Layer can provide optional companion commands that would otherwise consume more global shortcut space. ordinary Win-key window-management shortcuts and FancyZones integration remain direct Window Hotkeys bindings.
 
 these are internal modules, not independent libraries. do not include Window Cascade's similarly named modules here: each root script has its own globals and helper functions and must remain a separate process.
 
@@ -55,11 +55,12 @@ for Window Hotkeys changes, check:
 - Win+Enter clockwise swapping
 - Shift+Win+Left/Right horizontal stretch and reset behavior
 - Shift+Win+Up/Down vertical stretch and reset behavior
-- Caps+Win+Arrow spatial focus and highlight expiry
-- Caps+Win+H help
+- Caps+Win+Arrow spatial focus and highlight expiry with both Caps-first and Win-first press order when CapsLock Layer is running
+- Ctrl+Win+H help with CapsLock Layer both running and absent
 - FancyZones shortcuts, compatibility checks, and help text
 - Caps+G with one and multiple Steam games and a return window, including borderless minimize/resume
-- required CapsLock Layer behavior during startup, quick reloads, and a sustained dependency loss
+- standalone startup and continued operation with CapsLock Layer absent
+- help always listing Caps-specific controls under the `CAPSLOCK LAYER REQUIRED` section
 
 syntax validation does not replace Windows desktop behavior testing.
 

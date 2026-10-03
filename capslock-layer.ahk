@@ -16,7 +16,8 @@ caps_layer_presence_mutex := DllCall(
     "ptr"
 )
 
-; Window Cascade and Window Hotkeys use this handle as their dependency signal.
+; Window Cascade uses this handle as its dependency signal. Window Hotkeys
+; uses it only to detect optional CapsLock Layer integration.
 if !caps_layer_presence_mutex
     throw OSError(A_LastError, "CreateMutex", "Could not announce CapsLock Layer.")
 
@@ -66,7 +67,6 @@ window_hotkeys_command_focus_left := 1
 window_hotkeys_command_focus_right := 2
 window_hotkeys_command_focus_up := 3
 window_hotkeys_command_focus_down := 4
-window_hotkeys_command_show_help := 5
 
 window_hotkeys_cycle_steam_message := DllCall(
     "RegisterWindowMessage",
@@ -302,13 +302,9 @@ CapsLock & Delete::PostPlainWindowCascadeCommandOnce(
 
 CapsLock & h::
 {
-    if WindowHotkeysModifierHeld() {
-        PostWindowHotkeysCommand(window_hotkeys_command_show_help)
-        KeyWait "h"
-        return
-    }
+    if !WindowHotkeysModifierHeld()
+        PostPlainWindowCascadeCommand(cascade_command_show_help)
 
-    PostPlainWindowCascadeCommand(cascade_command_show_help)
     KeyWait "h"
 }
 
