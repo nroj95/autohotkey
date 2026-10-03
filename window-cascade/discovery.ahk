@@ -178,10 +178,12 @@ StartWindowHooks()
 {
     global win_event_callback
     global foreground_hook, window_show_hook, window_destroy_hook
+    global window_location_hook
 
     EVENT_SYSTEM_FOREGROUND := 0x0003
     EVENT_OBJECT_DESTROY := 0x8001
     EVENT_OBJECT_SHOW := 0x8002
+    EVENT_OBJECT_LOCATIONCHANGE := 0x800B
 
     WINEVENT_OUTOFCONTEXT := 0x0000
     WINEVENT_SKIPOWNPROCESS := 0x0002
@@ -227,11 +229,29 @@ StartWindowHooks()
         "ptr"
     )
 
-    if !foreground_hook || !window_show_hook || !window_destroy_hook {
+
+    window_location_hook := DllCall(
+        "SetWinEventHook",
+        "uint", EVENT_OBJECT_LOCATIONCHANGE,
+        "uint", EVENT_OBJECT_LOCATIONCHANGE,
+        "ptr", 0,
+        "ptr", win_event_callback,
+        "uint", 0,
+        "uint", 0,
+        "uint", flags,
+        "ptr"
+    )
+
+    if (
+        !foreground_hook
+        || !window_show_hook
+        || !window_destroy_hook
+        || !window_location_hook
+    ) {
 
         MsgBox(
             "Could not install all Windows event hooks.`n`n"
-            . "Window Cascade may not detect new windows correctly.",
+            . "Window Cascade may not track windows correctly.",
             "Window Cascade",
             "Iconx"
         )
@@ -242,6 +262,7 @@ StopWindowHooks()
 {
     global win_event_callback
     global foreground_hook, window_show_hook, window_destroy_hook
+    global window_location_hook
 
     SetTimer(WatchForMissedWindows, 0)
     SetTimer(UpdateFocusCornerOverlays, 0)
@@ -261,6 +282,11 @@ StopWindowHooks()
     if window_destroy_hook {
         DllCall("UnhookWinEvent", "ptr", window_destroy_hook)
         window_destroy_hook := 0
+    }
+
+    if window_location_hook {
+        DllCall("UnhookWinEvent", "ptr", window_location_hook)
+        window_location_hook := 0
     }
 
     if win_event_callback {
@@ -290,6 +316,7 @@ HandleWinEvent(
         EVENT_SYSTEM_FOREGROUND := 0x0003
         EVENT_OBJECT_DESTROY := 0x8001
         EVENT_OBJECT_SHOW := 0x8002
+        EVENT_OBJECT_LOCATIONCHANGE := 0x800B
         OBJID_WINDOW := 0
         CHILDID_SELF := 0
 
@@ -344,6 +371,16 @@ HandleWinEvent(
 
             if was_managed
                 QueueFocusCornerUpdate()
+
+            return
+        }
+
+
+        if event = EVENT_OBJECT_LOCATIONCHANGE {
+            ; Only a physical left-button drag can release membership here.
+            ; Script-driven placement and ordinary application moves stay managed.
+            if GetKeyState("LButton", "P")
+                ReleaseDraggedCascadeWindow(hwnd)
 
             return
         }
@@ -411,6 +448,42 @@ HandleWinEvent(
 
 
 ; =============================================================================
+; manual cascade release
+; =============================================================================
+
+ReleaseDraggedCascadeWindow(hwnd)
+{
+    global placement_reservations
+
+    managed_monitor := GetManagedCascadeMonitor(hwnd)
+
+    if !managed_monitor || IsWindowInCascadeLayout(hwnd)
+        return false
+
+    ; Crossing the release boundary is one-way. Keep the HWND known/handled so
+    ; dragging it back over a canonical slot cannot make discovery adopt it.
+    CancelPlacementStabilization(hwnd)
+    RemoveCascadeWindowFromHistory(hwnd)
+    RemoveWindowFromMinimizeState(hwnd)
+
+    if placement_reservations.Has(hwnd)
+        placement_reservations.Delete(hwnd)
+
+    DestroyFocusCornerOverlay(hwnd)
+    QueueCascadeCompaction(managed_monitor)
+    QueueFocusCornerUpdate()
+
+    DebugLog(
+        "Cascade window released by drag."
+        . " | monitor=" managed_monitor
+        . " | " DebugDescribeWindow(hwnd)
+    )
+
+    return true
+}
+
+
+; =============================================================================
 ; destroyed window cleanup
 ; =============================================================================
 
@@ -425,6 +498,10 @@ ForgetWindow(hwnd)
 
     if IsHeldFocusTab(hwnd)
         CancelFocusTabGesture()
+
+    ; Do not wait for the next visual sweep: a destroyed target must never leave
+    ; its script-owned focus GUI behind.
+    DestroyFocusCornerOverlay(hwnd)
 
     affected_monitor := GetManagedCascadeMonitor(hwnd)
 
@@ -472,6 +549,8 @@ ForgetWindow(hwnd)
             index -= 1
         }
     }
+
+    RemoveWindowFromCascadeCloseBatch(hwnd)
 
     if affected_monitor
         QueueCascadeCompaction(affected_monitor)

@@ -47,6 +47,14 @@ the default threshold is 36 screen-coordinate pixels, with horizontal travel at 
 
 focus-tab colors are selected separately for the active and inactive slots from the tray. the selections persist under `[FocusTabs]` in `%LOCALAPPDATA%\Window Cascade\settings.ini`; defaults are Green for the active slot and Grey for inactive slots.
 
+## scoped close batching
+
+`Caps + F4` and `Caps + Alt + F4` register their full close scope before sending any `WinClose` requests. destroy events remove windows from that batch, while layout compaction for the affected monitor stays deferred. the final destroyed target releases the batch and allows one queued compaction, so the cascade does not repeatedly reflow between individual closes.
+
+## manual cascade release
+
+a managed window dragged beyond `cascade_release_tolerance` is removed from cascade history immediately. that release is one-way: dragging the same window over another canonical slot does not re-adopt it. `Caps + Insert` is the explicit way to adopt or re-slot an existing window; newly opened windows still follow normal automatic placement.
+
 ## checking a change
 
 from the repository root, run:
@@ -67,6 +75,8 @@ for Window Cascade changes, check:
 - release outside the tab or on another monitor; ordinary app clicks and drags must remain unaffected
 - cancel with Escape, focus another app, close/minimize/move the target, and reload/exit while holding
 - slot swaps, slot/layer rotation, and exposed-stack ordering
+- scoped closes: current layer and full monitor close without intermediate compaction
+- manual drag release: crossing the release boundary removes the window and dragging it over another slot does not re-adopt it
 - minimize/restore and automatic placement reset
 - adoption and the one-shot adoption undo path
 - gathering and cross-monitor moves

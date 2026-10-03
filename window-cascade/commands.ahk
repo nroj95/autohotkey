@@ -309,7 +309,8 @@ CloseCurrentCascadeLayer()
         return
 
     CloseCascadeWindowList(
-        GetCurrentCascadeLayerWindows(monitor_index)
+        GetCurrentCascadeLayerWindows(monitor_index),
+        monitor_index
     )
 }
 
@@ -324,7 +325,7 @@ CloseCommandMonitorCascade()
         return
 
     windows := GetCascadeWindowsForMonitorClose(monitor_index)
-    CloseCascadeWindowList(windows)
+    CloseCascadeWindowList(windows, monitor_index)
 
     ; Closing a monitor cascade invalidates any script-owned restore state.
     if layer_minimized_windows_by_monitor.Has(monitor_index)
@@ -362,9 +363,9 @@ GetCascadeWindowsForMonitorClose(monitor_index)
     return windows
 }
 
-CloseCascadeWindowList(windows)
+CloseCascadeWindowList(windows, monitor_index)
 {
-    if windows.Length = 0
+    if windows.Length = 0 || !monitor_index
         return
 
     z_ranks := GetCascadeWindowZRanks()
@@ -372,13 +373,75 @@ CloseCascadeWindowList(windows)
         windows,
         z_ranks
     )
+    windows_to_close := []
 
     for hwnd in ordered_windows {
-        if !WinExist("ahk_id " hwnd)
-            continue
+        if WinExist("ahk_id " hwnd)
+            windows_to_close.Push(hwnd)
+    }
 
+    if windows_to_close.Length = 0
+        return
+
+    ; Register the full scope before sending the first close request. Destroy
+    ; events can then remove targets without allowing an intermediate reflow.
+    BeginCascadeCloseBatch(monitor_index, windows_to_close)
+
+    for hwnd in windows_to_close {
         try WinClose("ahk_id " hwnd)
     }
+}
+
+
+BeginCascadeCloseBatch(monitor_index, windows)
+{
+    global cascade_close_batches
+
+    if !cascade_close_batches.Has(monitor_index)
+        cascade_close_batches[monitor_index] := Map()
+
+    batch := cascade_close_batches[monitor_index]
+
+    for hwnd in windows
+        batch[hwnd] := true
+}
+
+
+RemoveWindowFromCascadeCloseBatch(hwnd)
+{
+    global cascade_close_batches
+
+    matched_monitor := 0
+    batch_finished := false
+
+    for monitor_index, batch in cascade_close_batches {
+        if !batch.Has(hwnd)
+            continue
+
+        batch.Delete(hwnd)
+        matched_monitor := monitor_index
+        batch_finished := batch.Count = 0
+        break
+    }
+
+    if !batch_finished
+        return
+
+    cascade_close_batches.Delete(matched_monitor)
+
+    ; Queued destroy-time compaction can now run once for the completed batch.
+    QueueCascadeCompaction(matched_monitor)
+}
+
+
+IsCascadeCloseBatchActive(monitor_index)
+{
+    global cascade_close_batches
+
+    return (
+        monitor_index
+        && cascade_close_batches.Has(monitor_index)
+    )
 }
 
 

@@ -271,13 +271,7 @@ ShowFocusCornerOverlay(
         overlay.color := marker_color
     }
 
-    if overlay.alpha != marker_alpha {
-        try WinSetTransparent(
-            focus_corner_visible ? marker_alpha : 1,
-            "ahk_id " overlay.gui.Hwnd
-        )
-        overlay.alpha := marker_alpha
-    }
+    overlay.alpha := marker_alpha
 
     if (
         overlay.shown
@@ -287,6 +281,12 @@ ShowFocusCornerOverlay(
         && overlay.window_height = window_height
         && overlay.full_height = full_height
     ) {
+        ; Gesture previews temporarily change native alpha without changing the
+        ; semantic value above. Reassert it even when geometry did not change.
+        try WinSetTransparent(
+            focus_corner_visible ? marker_alpha : 1,
+            "ahk_id " overlay.gui.Hwnd
+        )
         PlaceFocusCornerAboveTarget(hwnd, overlay)
         return
     }

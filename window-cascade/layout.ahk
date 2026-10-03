@@ -554,7 +554,10 @@ QueueCascadeCompaction(monitor_index)
 
     cascade_compaction_pending[monitor_index] := true
 
-    ; Batch closes/destruction into one final compaction.
+    ; A scoped close owns the monitor until every requested window is gone.
+    if IsCascadeCloseBatchActive(monitor_index)
+        return
+
     SetTimer FlushCascadeCompactions, -120
 }
 
@@ -563,11 +566,18 @@ FlushCascadeCompactions()
     global cascade_compaction_pending
 
     monitors := []
+    deferred_monitors := Map()
 
-    for monitor_index in cascade_compaction_pending
+    for monitor_index in cascade_compaction_pending {
+        if IsCascadeCloseBatchActive(monitor_index) {
+            deferred_monitors[monitor_index] := true
+            continue
+        }
+
         monitors.Push(monitor_index)
+    }
 
-    cascade_compaction_pending := Map()
+    cascade_compaction_pending := deferred_monitors
 
     for monitor_index in monitors
         CompactCascadeLayout(monitor_index)

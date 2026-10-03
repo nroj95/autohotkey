@@ -157,6 +157,7 @@ known_windows := Map()
 missed_window_poll_ms := 1000
 cascade_history := Map()
 cascade_compaction_pending := Map()
+cascade_close_batches := Map()
 layer_minimized_windows_by_monitor := Map()
 monitor_minimized_windows_by_monitor := Map()
 all_cascades_minimized := false
@@ -183,6 +184,7 @@ win_event_callback := 0
 foreground_hook := 0
 window_show_hook := 0
 window_destroy_hook := 0
+window_location_hook := 0
 
 cascade_command_message := 0
 
