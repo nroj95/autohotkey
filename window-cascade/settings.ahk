@@ -21,6 +21,12 @@ cascade_slot_tolerance := 56
 
 placement_delay_ms := 60
 
+; Restore requests can finish before their native/DWM rectangles settle.
+; Poll only during restores; a failed restore must not lock compaction forever.
+cascade_restore_poll_ms := 50
+cascade_restore_settle_ms := 200
+cascade_restore_timeout_ms := 5000
+
 ; Some applications expose their real top-level window before it is ready for
 ; placement. Keep the original launch context while waiting briefly for it.
 placement_ready_retry_ms := 200
@@ -150,6 +156,8 @@ cascade_mouse_press := 0
 cascade_window_drag := 0
 cascade_drag_generation := 0
 cascade_compaction_pending := Map()
+cascade_restore_batches := Map()
+cascade_restore_request_depth := 0
 cascade_close_batches := Map()
 layer_minimized_windows_by_monitor := Map()
 monitor_minimized_windows_by_monitor := Map()
@@ -178,6 +186,7 @@ foreground_hook := 0
 window_show_hook := 0
 window_destroy_hook := 0
 window_move_size_hook := 0
+window_restore_hook := 0
 
 cascade_command_message := 0
 

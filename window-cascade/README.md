@@ -58,6 +58,14 @@ normal tab rendering reapplies opacity and repaints changed or newly shown overl
 
 when debug logging is enabled, `Focus-tab appearance.` entries are written only when the observed state changes. they include the active window, active-slot window count, click ownership, tab role, color, cached base alpha, native alpha, visibility, topmost state, Z-order predecessor, and rectangle. clicks do not override opacity. compare entries from a faint and a clear state when investigating intermittent appearance changes.
 
+## minimize and restore compaction
+
+`Caps + M` and `Caps + Alt + M` still let newly opened windows form a visible cascade while the saved windows remain minimized. restoring combines those windows into the same slot-preserving compaction plan, filling the exposed layer before retaining surplus background layers.
+
+the shared restore path registers all saved targets before sending restore requests. membership is protected and compaction is deferred while the requests run and the restored windows settle. a temporary watcher checks normal/visible state, actual slot proximity, and unchanged native/DWM rectangles, then queues compaction from the current history; it does not replay an old layout. `cascade_restore_poll_ms`, `cascade_restore_settle_ms`, and `cascade_restore_timeout_ms` default to 50, 200, and 5000 ms. the timeout releases the compaction gate rather than leaving a failed restore permanently blocking the monitor. native restore notifications start the same check for late or individually restored managed windows.
+
+independently minimized windows are not restored. closed, moved-out, re-minimized, or manually dragged targets stop holding the restore batch; cleanup stops the watcher when no targets remain. `Cascade restore reconciliation.` debug entries report completion or timeout. drop-slot preferences and the single drag/drop tolerance are unchanged.
+
 ## scoped close batching
 
 `Caps + F4` and `Caps + Alt + F4` register their full close scope before sending any `WinClose` requests. destroy events remove windows from that batch, while layout compaction for the affected monitor stays deferred. the final destroyed target releases the batch and allows one queued compaction, so the cascade does not repeatedly reflow between individual closes.
@@ -108,6 +116,9 @@ for Window Cascade changes, check:
 - adopt an unmanaged window by dropping near an existing cascade; outside/empty-monitor drops remain unmanaged
 - cancelled drags, edge resizing, rapid successive drags, target closure, and delayed new-window placement during a drag
 - minimize/restore and automatic placement reset
+- hide a partial/full cascade with Caps + M, open new windows, restore: earlier slots/layers fill before surplus layers remain
+- repeat with Caps + Alt + M across monitors; closed or independently minimized windows must not be revived
+- slow restores, rapid re-minimize, drag during restore, and close-batch deferral: no lost membership or permanent compaction lock
 - adoption and the one-shot adoption undo path
 - gathering and cross-monitor moves
 - pause/resume behavior and compatibility checks

@@ -178,13 +178,15 @@ StartWindowHooks()
 {
     global win_event_callback
     global foreground_hook, window_show_hook, window_destroy_hook
-    global window_move_size_hook
+    global window_move_size_hook, window_restore_hook
 
     EVENT_SYSTEM_FOREGROUND := 0x0003
     EVENT_OBJECT_DESTROY := 0x8001
     EVENT_OBJECT_SHOW := 0x8002
     EVENT_SYSTEM_MOVESIZESTART := 0x000A
     EVENT_SYSTEM_MOVESIZEEND := 0x000B
+    EVENT_SYSTEM_MINIMIZESTART := 0x0016
+    EVENT_SYSTEM_MINIMIZEEND := 0x0017
 
     WINEVENT_OUTOFCONTEXT := 0x0000
     WINEVENT_SKIPOWNPROCESS := 0x0002
@@ -243,11 +245,26 @@ StartWindowHooks()
         "ptr"
     )
 
+    ; MINIMIZEEND announces a restore, not settled geometry. The shared
+    ; completion watcher confirms readiness before requesting compaction.
+    window_restore_hook := DllCall(
+        "SetWinEventHook",
+        "uint", EVENT_SYSTEM_MINIMIZESTART,
+        "uint", EVENT_SYSTEM_MINIMIZEEND,
+        "ptr", 0,
+        "ptr", win_event_callback,
+        "uint", 0,
+        "uint", 0,
+        "uint", flags,
+        "ptr"
+    )
+
     if (
         !foreground_hook
         || !window_show_hook
         || !window_destroy_hook
         || !window_move_size_hook
+        || !window_restore_hook
     ) {
 
         MsgBox(
@@ -263,12 +280,13 @@ StopWindowHooks()
 {
     global win_event_callback
     global foreground_hook, window_show_hook, window_destroy_hook
-    global window_move_size_hook
+    global window_move_size_hook, window_restore_hook
 
     SetTimer(WatchForMissedWindows, 0)
     SetTimer(UpdateFocusCornerOverlays, 0)
     SetTimer(RunQueuedFocusCornerUpdate, 0)
     SetTimer(WatchCascadeWindowDrag, 0)
+    SetTimer(WatchCascadeWindowRestores, 0)
 
 
     if foreground_hook {
@@ -289,6 +307,11 @@ StopWindowHooks()
     if window_move_size_hook {
         DllCall("UnhookWinEvent", "ptr", window_move_size_hook)
         window_move_size_hook := 0
+    }
+
+    if window_restore_hook {
+        DllCall("UnhookWinEvent", "ptr", window_restore_hook)
+        window_restore_hook := 0
     }
 
     if win_event_callback {
@@ -319,6 +342,8 @@ HandleWinEvent(
         EVENT_OBJECT_SHOW := 0x8002
         EVENT_SYSTEM_MOVESIZESTART := 0x000A
         EVENT_SYSTEM_MOVESIZEEND := 0x000B
+        EVENT_SYSTEM_MINIMIZESTART := 0x0016
+        EVENT_SYSTEM_MINIMIZEEND := 0x0017
         OBJID_WINDOW := 0
         CHILDID_SELF := 0
 
@@ -373,6 +398,16 @@ HandleWinEvent(
             return
         }
 
+
+        if event = EVENT_SYSTEM_MINIMIZESTART {
+            RemoveWindowFromCascadeRestore(hwnd)
+            return
+        }
+
+        if event = EVENT_SYSTEM_MINIMIZEEND {
+            TrackCascadeWindowRestores([hwnd])
+            return
+        }
 
         if event = EVENT_SYSTEM_MOVESIZESTART {
             BeginCascadeWindowDrag(hwnd, event_time)

@@ -53,7 +53,7 @@ RemoveCascadeWindowFromHistory(hwnd)
 
 GetLiveCascadeHistory(monitor_index)
 {
-    global cascade_history
+    global cascade_history, cascade_restore_batches
 
     live_history := []
 
@@ -66,7 +66,12 @@ GetLiveCascadeHistory(monitor_index)
         if !WinExist("ahk_id " hwnd)
             continue
 
-        if IsCascadeWindowBeingDragged(hwnd) {
+        ; Restore animations can briefly expose a non-slot rectangle. Keep the
+        ; saved members until the shared restore-completion check releases them.
+        if IsCascadeWindowBeingDragged(hwnd)
+            || (cascade_restore_batches.Has(monitor_index)
+                && cascade_restore_batches[monitor_index].targets.Has(hwnd))
+        {
             live_history.Push(hwnd)
             continue
         }
@@ -523,6 +528,7 @@ IsCascadeCompactionDeferred(monitor_index)
 {
     ; Keep every drop destination stable until the mouse interaction is finished.
     return HasCascadeWindowDrag() || IsCascadeCloseBatchActive(monitor_index)
+        || IsCascadeRestoreInProgress(monitor_index)
 }
 
 QueueCascadeCompaction(monitor_index, preferred_hwnd := 0)
