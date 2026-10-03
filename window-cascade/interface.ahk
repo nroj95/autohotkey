@@ -10,8 +10,8 @@ BuildTrayMenu()
     global rotate_key_menu
     global focus_tab_color_presets
     global focus_tab_color_menu
-    global focus_tab_current_slot_color_menu
-    global focus_tab_other_color_menu
+    global focus_tab_active_slot_color_menu
+    global focus_tab_inactive_slot_color_menu
 
     A_TrayMenu.Delete()
 
@@ -20,28 +20,28 @@ BuildTrayMenu()
     A_TrayMenu.Add("Pause cascading", ToggleCascading)
     A_TrayMenu.Add("Show focus tabs", ToggleFocusCornerVisibility)
 
-    focus_tab_current_slot_color_menu := Menu()
-    focus_tab_other_color_menu := Menu()
+    focus_tab_active_slot_color_menu := Menu()
+    focus_tab_inactive_slot_color_menu := Menu()
 
     for color_name, color_value in focus_tab_color_presets {
-        focus_tab_current_slot_color_menu.Add(
+        focus_tab_active_slot_color_menu.Add(
             color_name,
-            SetFocusTabColor.Bind("current", color_name)
+            SetFocusTabColor.Bind("active", color_name)
         )
-        focus_tab_other_color_menu.Add(
+        focus_tab_inactive_slot_color_menu.Add(
             color_name,
-            SetFocusTabColor.Bind("other", color_name)
+            SetFocusTabColor.Bind("inactive", color_name)
         )
     }
 
     focus_tab_color_menu := Menu()
     focus_tab_color_menu.Add(
-        "Current slot",
-        focus_tab_current_slot_color_menu
+        "Active slot",
+        focus_tab_active_slot_color_menu
     )
     focus_tab_color_menu.Add(
-        "Other tabs",
-        focus_tab_other_color_menu
+        "Inactive slots",
+        focus_tab_inactive_slot_color_menu
     )
     A_TrayMenu.Add("Focus tab colors", focus_tab_color_menu)
     A_TrayMenu.Add("Check compatibility", CheckCompatibilitySettings)
@@ -64,19 +64,19 @@ SetFocusTabColor(target_group, color_name, *)
 {
     global settings_directory, settings_path
     global focus_tab_color_presets
-    global focus_corner_active_stack_color_name
-    global focus_corner_default_color_name
-    global focus_corner_active_stack_color
-    global focus_corner_default_color
+    global focus_corner_active_slot_color_name
+    global focus_corner_inactive_slot_color_name
+    global focus_corner_active_slot_color
+    global focus_corner_inactive_slot_color
 
     if !focus_tab_color_presets.Has(color_name)
         return
 
     switch target_group {
-        case "current":
-            setting_name := "CurrentSlotColor"
-        case "other":
-            setting_name := "OtherColor"
+        case "active":
+            setting_name := "ActiveSlotColor"
+        case "inactive":
+            setting_name := "InactiveSlotColor"
         default:
             return
     }
@@ -104,12 +104,12 @@ SetFocusTabColor(target_group, color_name, *)
     ; color changes atomic if another input path invokes this function later.
     CancelFocusTabGesture()
 
-    if target_group = "current" {
-        focus_corner_active_stack_color_name := color_name
-        focus_corner_active_stack_color := focus_tab_color_presets[color_name]
+    if target_group = "active" {
+        focus_corner_active_slot_color_name := color_name
+        focus_corner_active_slot_color := focus_tab_color_presets[color_name]
     } else {
-        focus_corner_default_color_name := color_name
-        focus_corner_default_color := focus_tab_color_presets[color_name]
+        focus_corner_inactive_slot_color_name := color_name
+        focus_corner_inactive_slot_color := focus_tab_color_presets[color_name]
     }
 
     UpdateFocusCornerOverlays()
@@ -203,10 +203,10 @@ UpdateTrayMenu()
     global focus_corner_visible
     global rotate_key, rotate_key_menu
     global focus_tab_color_presets
-    global focus_corner_active_stack_color_name
-    global focus_corner_default_color_name
-    global focus_tab_current_slot_color_menu
-    global focus_tab_other_color_menu
+    global focus_corner_active_slot_color_name
+    global focus_corner_inactive_slot_color_name
+    global focus_tab_active_slot_color_menu
+    global focus_tab_inactive_slot_color_menu
 
     if placement_enabled
         A_TrayMenu.Uncheck("Pause cascading")
@@ -219,19 +219,19 @@ UpdateTrayMenu()
         A_TrayMenu.Uncheck("Show focus tabs")
 
     if (
-        IsObject(focus_tab_current_slot_color_menu)
-        && IsObject(focus_tab_other_color_menu)
+        IsObject(focus_tab_active_slot_color_menu)
+        && IsObject(focus_tab_inactive_slot_color_menu)
     ) {
         for color_name, color_value in focus_tab_color_presets {
-            focus_tab_current_slot_color_menu.Uncheck(color_name)
-            focus_tab_other_color_menu.Uncheck(color_name)
+            focus_tab_active_slot_color_menu.Uncheck(color_name)
+            focus_tab_inactive_slot_color_menu.Uncheck(color_name)
         }
 
-        focus_tab_current_slot_color_menu.Check(
-            focus_corner_active_stack_color_name
+        focus_tab_active_slot_color_menu.Check(
+            focus_corner_active_slot_color_name
         )
-        focus_tab_other_color_menu.Check(
-            focus_corner_default_color_name
+        focus_tab_inactive_slot_color_menu.Check(
+            focus_corner_inactive_slot_color_name
         )
     }
 
@@ -302,14 +302,14 @@ ToggleWindowCascadeHelp(*)
     "FOCUS TABS`n"
     "Press a left-edge focus tab to focus its window immediately.`n"
     "Hold, swipe left / right, then release for the previous / next layer in that slot.`n"
-    "The held tab stays visible. Small movements just focus; Escape cancels the swipe.`n"
-    "Tabs in the active slot and other tabs can use different tray-selected colors.`n"
+    "The held tab stays visible. Small movements just focus.`n"
+    "Tabs in the active slot and inactive slots can use different tray-selected colors.`n"
     "Use Show focus tabs in the tray to show or hide them.`n"
     "`n"
     "TRAY`n"
     "Pause cascading      Pause automatic placement`n"
     "Show focus tabs      Show / hide the faint focus tabs`n"
-    "Focus tab colors     Choose colors for the active slot and other tabs`n"
+    "Focus tab colors     Choose colors for the active and inactive slots`n"
     "Check compatibility  Check conflicting settings"
     )
 

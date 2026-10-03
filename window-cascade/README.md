@@ -45,7 +45,7 @@ the default threshold is 36 screen-coordinate pixels, with horizontal travel at 
 
 `controls.ahk` pairs mouse-down and mouse-up through AutoHotkey's mouse hook, rather than relying on foreground-only mouse capture after another process has been activated. the press records the overlay, target HWND, monitor, and slot. release belongs to that gesture even outside the tab; ordinary clicks elsewhere retain their native behavior. cancelling with Escape, losing focus, or invalidating the target cancels rotation, but still consumes the matching release. reload/exit clears the preview and stops the gesture timer.
 
-focus-tab colors are selected separately for the active slot and other tabs from the tray. the selections persist under `[FocusTabs]` in `%LOCALAPPDATA%\Window Cascade\settings.ini`; defaults are Green for the active slot and Grey for other tabs.
+focus-tab colors are selected separately for the active and inactive slots from the tray. the selections persist under `[FocusTabs]` in `%LOCALAPPDATA%\Window Cascade\settings.ini`; defaults are Green for the active slot and Grey for inactive slots.
 
 ## checking a change
 

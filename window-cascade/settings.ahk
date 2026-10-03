@@ -101,29 +101,29 @@ placement_enabled := true
 settings_directory := EnvGet("LOCALAPPDATA") "\Window Cascade"
 settings_path := settings_directory "\settings.ini"
 
-focus_corner_active_stack_color_name := IniRead(
+focus_corner_active_slot_color_name := IniRead(
     settings_path,
     "FocusTabs",
-    "CurrentSlotColor",
+    "ActiveSlotColor",
     "Green"
 )
-focus_corner_default_color_name := IniRead(
+focus_corner_inactive_slot_color_name := IniRead(
     settings_path,
     "FocusTabs",
-    "OtherColor",
+    "InactiveSlotColor",
     "Grey"
 )
 
-if !focus_tab_color_presets.Has(focus_corner_active_stack_color_name)
-    focus_corner_active_stack_color_name := "Green"
+if !focus_tab_color_presets.Has(focus_corner_active_slot_color_name)
+    focus_corner_active_slot_color_name := "Green"
 
-if !focus_tab_color_presets.Has(focus_corner_default_color_name)
-    focus_corner_default_color_name := "Grey"
+if !focus_tab_color_presets.Has(focus_corner_inactive_slot_color_name)
+    focus_corner_inactive_slot_color_name := "Grey"
 
-focus_corner_active_stack_color :=
-    focus_tab_color_presets[focus_corner_active_stack_color_name]
-focus_corner_default_color :=
-    focus_tab_color_presets[focus_corner_default_color_name]
+focus_corner_active_slot_color :=
+    focus_tab_color_presets[focus_corner_active_slot_color_name]
+focus_corner_inactive_slot_color :=
+    focus_tab_color_presets[focus_corner_inactive_slot_color_name]
 
 rotate_key := IniRead(settings_path, "Controls", "RotateKey", "")
 
@@ -140,8 +140,8 @@ if rotate_key != "Space" && rotate_key != "Tab"
 
 rotate_key_menu := 0
 focus_tab_color_menu := 0
-focus_tab_current_slot_color_menu := 0
-focus_tab_other_color_menu := 0
+focus_tab_active_slot_color_menu := 0
+focus_tab_inactive_slot_color_menu := 0
 caps_layer_missing_since := 0
 caps_layer_dependency_lost := false
 

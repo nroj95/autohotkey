@@ -43,7 +43,7 @@ UpdateFocusCornerOverlays()
     live_windows := GetCascadeWindowsForOverlay()
     live_targets := Map()
     visible_bounds := Map()
-    active_stack_targets := GetActiveFocusCornerStackTargets(
+    active_slot_targets := GetActiveFocusCornerSlotTargets(
         active_hwnd,
         live_windows
     )
@@ -130,7 +130,7 @@ UpdateFocusCornerOverlays()
             bounds[3],
             bounds[4],
             is_highest_on_monitor,
-            active_stack_targets.Has(hwnd)
+            active_slot_targets.Has(hwnd)
         )
     }
 
@@ -176,7 +176,7 @@ GetCascadeWindowsForOverlay()
     return windows
 }
 
-GetActiveFocusCornerStackTargets(active_hwnd, live_windows)
+GetActiveFocusCornerSlotTargets(active_hwnd, live_windows)
 {
     global cascade_slot_tolerance
 
@@ -226,20 +226,20 @@ ShowFocusCornerOverlay(
     window_width,
     window_height,
     full_height := false,
-    active_stack := false
+    active_slot := false
 )
 {
     global focus_corner_overlays
     global focus_corner_size
     global focus_corner_thickness
     global focus_corner_overlap
-    global focus_corner_default_color, focus_corner_active_stack_color
+    global focus_corner_inactive_slot_color, focus_corner_active_slot_color
     global focus_corner_visible, focus_corner_visible_alpha
 
     marker_color := (
-        active_stack
-        ? focus_corner_active_stack_color
-        : focus_corner_default_color
+        active_slot
+        ? focus_corner_active_slot_color
+        : focus_corner_inactive_slot_color
     )
 
     if !focus_corner_overlays.Has(hwnd)
