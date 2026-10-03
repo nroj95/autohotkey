@@ -60,7 +60,21 @@ focus_corner_overlap := 2
 ; fallback for Windows events that may occasionally be missed.
 focus_corner_update_ms := 50
 focus_corner_fallback_ms := 1000
-focus_corner_accent_check_ms := 1000
+
+; Focus-tab colors are chosen from a small fixed palette. The active-slot color
+; applies to hidden layers behind the foreground window; the foreground window's
+; own tab remains hidden. Transparency still shows approximate stack depth.
+focus_tab_color_presets := Map(
+    "Grey", "808080",
+    "Red", "F44336",
+    "Orange", "FF9800",
+    "Yellow", "FBC02D",
+    "Green", "4CAF50",
+    "Cyan", "00BCD4",
+    "Blue", "2196F3",
+    "Purple", "9C27B0",
+    "Pink", "E91E63"
+)
 
 ; Focus tabs are shown faintly by default. Alpha 1 is reserved for the hidden
 ; state so the clickable overlay remains hit-testable.
@@ -86,6 +100,31 @@ placement_enabled := true
 
 settings_directory := EnvGet("LOCALAPPDATA") "\Window Cascade"
 settings_path := settings_directory "\settings.ini"
+
+focus_corner_active_stack_color_name := IniRead(
+    settings_path,
+    "FocusTabs",
+    "CurrentSlotColor",
+    "Green"
+)
+focus_corner_default_color_name := IniRead(
+    settings_path,
+    "FocusTabs",
+    "OtherColor",
+    "Grey"
+)
+
+if !focus_tab_color_presets.Has(focus_corner_active_stack_color_name)
+    focus_corner_active_stack_color_name := "Green"
+
+if !focus_tab_color_presets.Has(focus_corner_default_color_name)
+    focus_corner_default_color_name := "Grey"
+
+focus_corner_active_stack_color :=
+    focus_tab_color_presets[focus_corner_active_stack_color_name]
+focus_corner_default_color :=
+    focus_tab_color_presets[focus_corner_default_color_name]
+
 rotate_key := IniRead(settings_path, "Controls", "RotateKey", "")
 
 ; Read the legacy INI section only to preserve an existing rotate-key choice.
@@ -100,6 +139,9 @@ if rotate_key != "Space" && rotate_key != "Tab"
 ; =============================================================================
 
 rotate_key_menu := 0
+focus_tab_color_menu := 0
+focus_tab_current_slot_color_menu := 0
+focus_tab_other_color_menu := 0
 caps_layer_missing_since := 0
 caps_layer_dependency_lost := false
 
@@ -120,8 +162,6 @@ all_cascades_minimized := false
 
 focus_corner_overlays := Map()
 focus_corner_targets := Map()
-focus_corner_accent_color := ""
-focus_corner_accent_check_tick := 0
 focus_corner_update_pending := false
 focus_tab_pending_press := 0
 focus_tab_gesture := 0

@@ -33,8 +33,6 @@ UpdateFocusCornerOverlays()
 {
     global focus_corner_overlays
 
-    RefreshFocusCornerAccent()
-
     active_hwnd := DllCall(
         "GetForegroundWindow",
         "ptr"
@@ -45,6 +43,10 @@ UpdateFocusCornerOverlays()
     live_windows := GetCascadeWindowsForOverlay()
     live_targets := Map()
     visible_bounds := Map()
+    active_stack_targets := GetActiveFocusCornerStackTargets(
+        active_hwnd,
+        live_windows
+    )
 
     highest_hwnd_by_monitor := Map()
     highest_y_by_monitor := Map()
@@ -127,7 +129,8 @@ UpdateFocusCornerOverlays()
             bounds[2],
             bounds[3],
             bounds[4],
-            is_highest_on_monitor
+            is_highest_on_monitor,
+            active_stack_targets.Has(hwnd)
         )
     }
 
@@ -173,6 +176,44 @@ GetCascadeWindowsForOverlay()
     return windows
 }
 
+GetActiveFocusCornerStackTargets(active_hwnd, live_windows)
+{
+    global cascade_slot_tolerance
+
+    targets := Map()
+
+    if !active_hwnd
+        return targets
+
+    ; Build from the already-filtered overlay windows so this visual refresh
+    ; never mutates cascade membership or compaction state.
+    stacks := BuildCascadeSlotStacks(
+        live_windows,
+        cascade_slot_tolerance
+    )
+
+    for stack_info in stacks {
+        contains_active := false
+
+        for stack_hwnd in stack_info["windows"] {
+            if stack_hwnd = active_hwnd {
+                contains_active := true
+                break
+            }
+        }
+
+        if !contains_active
+            continue
+
+        for stack_hwnd in stack_info["windows"]
+            targets[stack_hwnd] := true
+
+        break
+    }
+
+    return targets
+}
+
 
 ; =============================================================================
 ; overlay placement and lifetime
@@ -184,19 +225,32 @@ ShowFocusCornerOverlay(
     window_y,
     window_width,
     window_height,
-    full_height := false
+    full_height := false,
+    active_stack := false
 )
 {
     global focus_corner_overlays
     global focus_corner_size
     global focus_corner_thickness
     global focus_corner_overlap
+    global focus_corner_default_color, focus_corner_active_stack_color
     global focus_corner_visible, focus_corner_visible_alpha
 
+    marker_color := (
+        active_stack
+        ? focus_corner_active_stack_color
+        : focus_corner_default_color
+    )
+
     if !focus_corner_overlays.Has(hwnd)
-        CreateFocusCornerOverlay(hwnd)
+        CreateFocusCornerOverlay(hwnd, marker_color)
 
     overlay := focus_corner_overlays[hwnd]
+
+    if overlay.color != marker_color {
+        overlay.gui.BackColor := marker_color
+        overlay.color := marker_color
+    }
 
     if (
         overlay.shown
@@ -298,11 +352,10 @@ HideFocusCornerOverlay(hwnd)
     overlay.shown := false
 }
 
-CreateFocusCornerOverlay(hwnd)
+CreateFocusCornerOverlay(hwnd, marker_color)
 {
     global focus_corner_overlays
     global focus_corner_targets
-    global focus_corner_accent_color
 
     marker_gui := Gui(
         "-Caption"
@@ -311,12 +364,13 @@ CreateFocusCornerOverlay(hwnd)
         "Window Cascade Focus Marker"
     )
 
-    marker_gui.BackColor := focus_corner_accent_color
+    marker_gui.BackColor := marker_color
 
     focus_corner_targets[marker_gui.Hwnd] := hwnd
 
     focus_corner_overlays[hwnd] := {
         gui: marker_gui,
+        color: marker_color,
         shown: false,
         window_x: 0,
         window_y: 0,
@@ -350,7 +404,7 @@ DestroyFocusCornerOverlay(hwnd)
 
 
 ; =============================================================================
-; visibility and accent color
+; visibility
 ; =============================================================================
 
 ToggleFocusCornerVisibility(*)
@@ -371,66 +425,4 @@ ToggleFocusCornerVisibility(*)
     }
 
     UpdateTrayMenu()
-}
-
-RefreshFocusCornerAccent()
-{
-    global focus_corner_overlays
-    global focus_corner_accent_color
-    global focus_corner_accent_check_tick
-    global focus_corner_accent_check_ms
-
-    ; Accent refresh recreates overlays. Defer it until the press is finished.
-    if HasFocusTabGesture()
-        return
-
-    if (
-        focus_corner_accent_color != ""
-        && A_TickCount - focus_corner_accent_check_tick
-            < focus_corner_accent_check_ms
-    ) {
-        return
-    }
-
-    focus_corner_accent_check_tick := A_TickCount
-    new_color := GetWindowsAccentHexColor()
-
-    if new_color = focus_corner_accent_color
-        return
-
-    focus_corner_accent_color := new_color
-    targets := []
-
-    for hwnd, overlay in focus_corner_overlays
-        targets.Push(hwnd)
-
-    for hwnd in targets
-        DestroyFocusCornerOverlay(hwnd)
-}
-
-GetWindowsAccentHexColor()
-{
-    colorization_color := 0
-    opaque_blend := 0
-
-    result := DllCall(
-        "dwmapi\DwmGetColorizationColor",
-        "uint*", &colorization_color,
-        "int*", &opaque_blend,
-        "int"
-    )
-
-    if result != 0
-        return "0078D4"
-
-    red := (colorization_color >> 16) & 0xFF
-    green := (colorization_color >> 8) & 0xFF
-    blue := colorization_color & 0xFF
-
-    return Format(
-        "{:02X}{:02X}{:02X}",
-        red,
-        green,
-        blue
-    )
 }
