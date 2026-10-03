@@ -15,7 +15,9 @@ turns CapsLock into an extra left-hand modifier layer.
 - tap CapsLock to arm the layer for one keypress
 - the one-shot layer expires after 1.4 seconds
 - double-tap Left Shift to toggle normal CapsLock
-- integrates with `window-cascade.ahk` and `window-hotkeys.ahk`
+- owns the companion-command namespace used by Window Cascade and Window Hotkeys
+
+registered commands can override a base layer key in a specific context. in Windows Terminal, the layer includes commands for clearing the terminal buffer and copying the full buffer as a Markdown code block.
 
 the one-shot indicator appears where the mouse pointer was when the layer was armed and stays fixed until the layer is consumed or expires. it is hidden in maximized and fullscreen windows.
 
@@ -55,14 +57,15 @@ automatically arranges ordinary windows into a cascading layout.
 it includes controls for:
 
 - moving through cascade windows
-- adopting an existing window
+- adopting an existing window and undoing the most recent adoption
 - rotating stacked windows
+- moving managed windows across monitors
 - minimizing and restoring the cascade
 - resetting automatic placement
 - pausing cascading
 - checking for conflicting Windows or PowerToys settings
 
-it can run independently, with additional shortcuts available when `capslock-layer.ahk` is running.
+Window Cascade runs as its own process but requires `capslock-layer.ahk` for its keyboard command bindings.
 
 ### `window-hotkeys.ahk`
 
@@ -72,11 +75,14 @@ features include:
 
 - maximize, minimize, and restore behavior
 - half, third, and quarter-screen layouts
+- horizontal and vertical window stretching
 - borderless fullscreen
 - spatial window movement and focus
 - Windows accent-color focus indicators
 - minimize/restore-all behavior
 - cycling running Steam games
+
+Window Hotkeys runs independently of Window Cascade, but requires `capslock-layer.ahk` for its companion controls. its ordinary Win-key and FancyZones bindings remain direct Window Hotkeys shortcuts.
 
 ## requirements
 
@@ -85,11 +91,13 @@ features include:
 
 ## usage
 
-run whichever `.ahk` scripts you want.
+run root-level `.ahk` launchers rather than module files inside `window-cascade/` or `window-hotkeys/`.
+
+start `capslock-layer.ahk` before `window-cascade.ahk` or `window-hotkeys.ahk`. the other utilities can run independently unless their own documentation says otherwise.
 
 each main script provides a tray menu with its own controls and a **Run at startup** option where applicable.
 
-the scripts are designed to remain useful independently, while some features integrate automatically when companion scripts are running.
+from the repository root, run `./validate.ps1` after changes to validate the root scripts and their include trees.
 
 ## icon attribution
 
