@@ -63,7 +63,13 @@ QueueWindowPlacement(hwnd, source_hwnd)
     known_windows[hwnd] := true
 
 
-    pending_windows[hwnd] := true
+    if pending_windows.Has(hwnd)
+        return
+    try pid := WinGetPID(hwnd)
+    catch
+        return
+    request := {pid: pid, focus: CaptureNewWindowFocusContext(hwnd)}
+    pending_windows[hwnd] := request
 
     ; Snapshot once here. Readiness retries and settling reuse this monitor
     ; instead of sampling a later mouse position.
@@ -86,7 +92,10 @@ QueueWindowPlacement(hwnd, source_hwnd)
         PlaceNewWindow.Bind(
             hwnd,
             source_hwnd,
-            queued_monitor
+            queued_monitor,
+            0,
+            false,
+            request
         ),
         -placement_delay_ms
     )
@@ -134,6 +143,7 @@ WatchForMissedWindows()
 
         QueueWindowPlacement(hwnd, source_hwnd)
     }
+    ReconcileCascadeRuntimeState()
 }
 
 TryQueueForegroundFallback(hwnd)
@@ -287,6 +297,8 @@ StopWindowHooks()
     SetTimer(RunQueuedFocusCornerUpdate, 0)
     SetTimer(WatchCascadeWindowDrag, 0)
     SetTimer(WatchCascadeWindowRestores, 0)
+    SetTimer(FlushCascadeCompactions, 0)
+    CancelNewWindowFocus()
 
 
     if foreground_hook {
@@ -348,6 +360,7 @@ HandleWinEvent(
         CHILDID_SELF := 0
 
         if event = EVENT_SYSTEM_FOREGROUND {
+            ObserveNewWindowForeground(hwnd)
             if hwnd && hwnd != current_foreground_hwnd {
                 CancelPendingAdoptionUndo()
 
@@ -400,11 +413,16 @@ HandleWinEvent(
 
 
         if event = EVENT_SYSTEM_MINIMIZESTART {
+            if GetManagedCascadeMonitor(hwnd) {
+                ObserveCascadeMinimizedWindow(hwnd)
+                CancelPlacementStabilization(hwnd)
+            }
             RemoveWindowFromCascadeRestore(hwnd)
             return
         }
 
         if event = EVENT_SYSTEM_MINIMIZEEND {
+            CancelPlacementStabilization(hwnd)
             TrackCascadeWindowRestores([hwnd])
             return
         }
@@ -535,18 +553,8 @@ ForgetWindow(hwnd)
     RemoveWindowFromMinimizeState(hwnd)
     NormalizeAllCascadesMinimizedState()
 
-    ; Remove the destroyed handle from per-monitor histories. This also avoids
-    ; stale hwnd reuse after the application has been closed for a while.
-    for monitor_index, history in cascade_history {
-        index := history.Length
-
-        while index >= 1 {
-            if history[index] = hwnd
-                history.RemoveAt(index)
-
-            index -= 1
-        }
-    }
+    RemoveCascadeWindowFromHistory(hwnd)
+    ForgetCascadeMinimizedObservation(hwnd)
 
     RemoveWindowFromCascadeCloseBatch(hwnd)
 

@@ -132,6 +132,10 @@ LogUnhandledError(err, mode)
 
 DebugDescribeWindow(hwnd)
 {
+    global debug_enabled, debug_verbose_enabled
+    if !debug_enabled || !debug_verbose_enabled
+        return "hwnd=" hwnd
+
     if !hwnd
         return "hwnd=0"
 
@@ -209,10 +213,10 @@ DebugDescribeWindow(hwnd)
 
 DebugFocusCornerAppearance(active_hwnd, active_slot_targets)
 {
-    global debug_enabled, focus_corner_overlays, focus_corner_visible
+    global debug_enabled, debug_verbose_enabled, focus_corner_overlays, focus_corner_visible
     static previous_snapshot := ""
 
-    if !debug_enabled
+    if !debug_enabled || !debug_verbose_enabled
         return
 
     snapshot := (
@@ -266,4 +270,18 @@ DebugFocusCornerAppearance(active_hwnd, active_slot_targets)
 
     previous_snapshot := snapshot
     DebugLog("Focus-tab appearance. | " snapshot)
+}
+
+
+DebugDescribeForegroundState()
+{
+    ; Foreground, thread activation and keyboard focus are different handles.
+    ; Capture them only for launch-recovery diagnostics, never on every repaint.
+    info := Buffer(24 + 6 * A_PtrSize, 0)
+    NumPut("uint", info.Size, info)
+    result := "foreground=" DllCall("GetForegroundWindow", "ptr")
+    if DllCall("GetGUIThreadInfo", "uint", 0, "ptr", info, "int")
+        result .= " | thread-active=" NumGet(info, 8, "ptr")
+            . " | keyboard-focus=" NumGet(info, 8 + A_PtrSize, "ptr")
+    return result
 }

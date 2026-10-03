@@ -32,24 +32,26 @@ RunQueuedFocusCornerUpdate()
 UpdateFocusCornerOverlays()
 {
     global focus_corner_overlays, focus_tab_click_generation, cascade_slot_tolerance
-    global cascade_drag_generation
+    global cascade_drag_generation, cascade_membership_generation
     static update_generation := 0
 
     generation := ++update_generation
     click_generation := focus_tab_click_generation
     drag_generation := cascade_drag_generation
+    membership_generation := cascade_membership_generation
     active_hwnd := DllCall("GetForegroundWindow", "ptr")
 
     ; Geometry reads stay interruptible. Never mutate membership while rendering.
     live_windows := GetCascadeWindowsForOverlay()
-    live_targets := Map()
-    visible_windows := []
+    live_targets := live_windows
     visible_bounds := Map()
+    slot_stacks := []
+    stacks_by_slot := Map()
+    geometry_by_monitor := Map()
     highest_hwnd_by_monitor := Map()
     highest_y_by_monitor := Map()
 
-    for hwnd in live_windows {
-        live_targets[hwnd] := true
+    for hwnd, managed_monitor in live_windows {
 
         if !DllCall("IsWindowVisible", "ptr", hwnd, "int")
             continue
@@ -73,10 +75,23 @@ UpdateFocusCornerOverlays()
         }
 
         monitor_index := GetMonitorForWindow(hwnd)
-        if !monitor_index
+        if !monitor_index || monitor_index != managed_monitor
+            continue
+        if !geometry_by_monitor.Has(monitor_index)
+            geometry_by_monitor[monitor_index] := GetCanonicalCascadeGeometry(monitor_index)
+        slot_index := FindNearestCascadeSlot(window_x, window_y,
+            geometry_by_monitor[monitor_index].slots, cascade_slot_tolerance)
+        if !slot_index
             continue
 
-        visible_windows.Push(hwnd)
+        ; Use the same observed rectangle for membership, grouping and painting.
+        stack_key := monitor_index ":" slot_index
+        if !stacks_by_slot.Has(stack_key) {
+            stack_info := Map("slot_index", slot_index, "windows", [])
+            stacks_by_slot[stack_key] := stack_info
+            slot_stacks.Push(stack_info)
+        }
+        stacks_by_slot[stack_key]["windows"].Push(hwnd)
         visible_bounds[hwnd] := [
             window_x,
             window_y,
@@ -93,8 +108,6 @@ UpdateFocusCornerOverlays()
         }
     }
 
-    ; Stack keys already include the monitor; equal slot numbers never merge.
-    slot_stacks := BuildCascadeSlotStacks(visible_windows, cascade_slot_tolerance)
     z_ranks := GetCascadeWindowZRanks()
 
     ; Keep the hide/show handoff together, but do not lock the geometry queries.
@@ -107,6 +120,7 @@ UpdateFocusCornerOverlays()
         if active_hwnd != DllCall("GetForegroundWindow", "ptr")
             || click_generation != focus_tab_click_generation
             || drag_generation != cascade_drag_generation
+            || membership_generation != cascade_membership_generation
         {
             QueueFocusCornerUpdate()
             return
@@ -197,30 +211,15 @@ GetCascadeWindowsForOverlay()
 {
     global cascade_history
 
-    windows := []
-    seen := Map()
-
-    for monitor_index, history in cascade_history {
-        for hwnd in history {
-            if seen.Has(hwnd)
-                continue
-
-            if !WinExist("ahk_id " hwnd) || IsCascadeWindowBeingDragged(hwnd)
-                continue
-
-            if GetMonitorForWindow(hwnd) != monitor_index
-                continue
-
-            ; Do not remove a window from history just because a visual refresh
-            ; catches it during a transient geometry change.
-            if !IsWindowInCascadeLayout(hwnd)
-                continue
-
-            seen[hwnd] := true
-            windows.Push(hwnd)
+    windows := Map()
+    ; Keep minimized members' GUIs cached; the rendering pass hides them.
+    ; Geometry is read once there, not again in this membership-only snapshot.
+    for monitor_index, history in cascade_history.Clone() {
+        for hwnd in history.Clone() {
+            if DllCall("IsWindow", "ptr", hwnd, "int") && !IsCascadeWindowBeingDragged(hwnd)
+                windows[hwnd] := monitor_index
         }
     }
-
     return windows
 }
 
@@ -294,11 +293,7 @@ ShowFocusCornerOverlay(
         && overlay.window_height = window_height
         && overlay.full_height = full_height
     ) {
-        ; Reapply the selected appearance even when geometry did not change.
-        try WinSetTransparent(
-            focus_corner_visible ? marker_alpha : 1,
-            overlay.gui.Hwnd
-        )
+        SetFocusCornerOpacity(overlay, focus_corner_visible ? marker_alpha : 1)
         if appearance_changed
             WinRedraw(overlay.gui.Hwnd)
 
@@ -332,10 +327,7 @@ ShowFocusCornerOverlay(
         . " h" marker_height
     )
 
-    WinSetTransparent(
-        focus_corner_visible ? marker_alpha : 1,
-        overlay.gui.Hwnd
-    )
+    SetFocusCornerOpacity(overlay, focus_corner_visible ? marker_alpha : 1)
 
     ; A reused hidden GUI can have a new BackColor but an old painted surface.
     ; Repaint after showing it; changing alpha alone does not repaint its pixels.
@@ -357,6 +349,9 @@ PlaceFocusCornerAboveTarget(hwnd, overlay)
     static SWP_NOACTIVATE := 0x0010
 
     if !WinExist("ahk_id " hwnd)
+        return
+    ; The target precedes its edge tab in the existing Z-order convention.
+    if DllCall("GetWindow", "ptr", overlay.gui.Hwnd, "uint", 3, "ptr") = hwnd
         return
 
     flags :=
@@ -414,6 +409,7 @@ CreateFocusCornerOverlay(hwnd, marker_color, marker_alpha)
         gui: marker_gui,
         color: marker_color,
         alpha: marker_alpha,
+        native_alpha: -1,
         shown: false,
         window_x: 0,
         window_y: 0,
@@ -457,11 +453,19 @@ ToggleFocusCornerVisibility(*)
     for hwnd, overlay in focus_corner_overlays {
         transparency := focus_corner_visible ? overlay.alpha : 1
 
-        try WinSetTransparent(
-            transparency,
-            overlay.gui.Hwnd
-        )
+        try SetFocusCornerOpacity(overlay, transparency)
     }
 
     UpdateTrayMenu()
+}
+
+
+SetFocusCornerOpacity(overlay, alpha)
+{
+    ; Clicks no longer override alpha. Avoid repainting unchanged native state.
+    ; Update the cache only after Windows accepts the change.
+    if overlay.native_alpha = alpha
+        return
+    WinSetTransparent(alpha, overlay.gui.Hwnd)
+    overlay.native_alpha := alpha
 }

@@ -25,6 +25,7 @@ CaptureCascadeMousePress(*)
 
     MouseGetPos(&mouse_x, &mouse_y, &hover_hwnd)
     hwnd := DllCall("GetAncestor", "ptr", hover_hwnd, "uint", 2, "ptr") ; GA_ROOT
+    CaptureCascadeLaunchIntent(hwnd)
     cascade_mouse_press := GetCascadeMousePressSnapshot(hwnd)
 }
 
@@ -122,6 +123,8 @@ BeginCascadeWindowDrag(hwnd, event_time)
     ; Manual interaction takes priority over launch settling and old corrections.
     ; Mark it handled so already-bound new-window timers become harmless too.
     CancelPendingAdoptionUndo()
+    CancelNewWindowFocus()
+    RemoveWindowFromCascadeRestore(hwnd)
     CancelPlacementStabilization(hwnd)
     known_windows[hwnd] := true
     handled_windows[hwnd] := true
@@ -219,7 +222,7 @@ StopCascadeWindowDrag(expected_drag := 0)
     SetTimer(WatchCascadeWindowDrag, 0)
     QueueFocusCornerUpdate()
     if cascade_compaction_pending.Count
-        SetTimer(FlushCascadeCompactions, -120)
+        ScheduleCascadeCompactionFlush()
 }
 
 ; =============================================================================

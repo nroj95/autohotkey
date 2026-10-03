@@ -13,8 +13,8 @@ launch `../window-cascade.ahk`, not the files in this directory. the launcher ow
 | `discovery.ahk` | desktop monitor hints, the startup window snapshot, discovery polling, placement queueing, Windows event hooks, and destroyed-window cleanup. |
 | `window-drag.ahk` | native mouse-drag tracking, release-time snap/adopt/release decisions, and deferred-layout recovery. |
 | `layout.ahk` | managed history, canonical slot geometry, occupancy, stacks, exposed layers, compaction, and Z-order sorting. |
-| `navigation.ahk` | focusing, swapping, slot/layer rotation, spatial navigation, and bringing a cascade forward. |
-| `placement.ahk` | explicit placement, readiness retries, new-window placement, and asynchronous stabilization. |
+| `navigation.ahk` | focusing, guarded new-window foreground recovery, swapping, slot/layer rotation, spatial navigation, and bringing a cascade forward. |
+| `placement.ahk` | explicit placement, identity-checked readiness retries, new-window placement, and bounded asynchronous stabilization. |
 | `commands.ahk` | adoption and one-shot adoption undo, gathering, cross-monitor moves, close commands, minimize/restore operations, and minimize-state cleanup. |
 | `focus-corners.ahk` | one visible tab per slot, overlay lifetime and position, representative handoff, and active-slot coloring. |
 | `focus-tab-clicks.ahk` | instant press-to-focus/cycle, live target validation, mouse-release pairing, and missed-release recovery. |
@@ -54,15 +54,17 @@ focus-tab colors are selected separately for the active and inactive slots from 
 
 ### appearance diagnostics
 
-normal tab rendering reapplies opacity and repaints changed or newly shown overlays. overlay operations use pure HWNDs so hidden-window lookup does not depend on `DetectHiddenWindows`. the configured opacity values remain unchanged, and deeper tabs do not contribute additional opacity.
+normal tab rendering changes native opacity only when the desired value changes and repaints changed or newly shown overlays. the opacity cache is updated only after a successful native operation. overlay operations use pure HWNDs so hidden-window lookup does not depend on `DetectHiddenWindows`. the configured opacity values remain unchanged, and deeper tabs do not contribute additional opacity.
 
-when debug logging is enabled, `Focus-tab appearance.` entries are written only when the observed state changes. they include the active window, active-slot window count, click ownership, tab role, color, cached base alpha, native alpha, visibility, topmost state, Z-order predecessor, and rectangle. clicks do not override opacity. compare entries from a faint and a clear state when investigating intermittent appearance changes.
+when both `debug_enabled` and `debug_verbose_enabled` are enabled, `Focus-tab appearance.` entries are written only when the observed state changes. they include the active window, active-slot window count, click ownership, tab role, color, cached base alpha, native alpha, visibility, topmost state, Z-order predecessor, and rectangle. clicks do not override opacity. compare entries from a faint and a clear state when investigating intermittent appearance changes.
 
 ## minimize and restore compaction
 
 `Caps + M` and `Caps + Alt + M` still let newly opened windows form a visible cascade while the saved windows remain minimized. restoring combines those windows into the same slot-preserving compaction plan, filling the exposed layer before retaining surplus background layers.
 
 the shared restore path registers all saved targets before sending restore requests. membership is protected and compaction is deferred while the requests run and the restored windows settle. a temporary watcher checks normal/visible state, actual slot proximity, and unchanged native/DWM rectangles, then queues compaction from the current history; it does not replay an old layout. `cascade_restore_poll_ms`, `cascade_restore_settle_ms`, and `cascade_restore_timeout_ms` default to 50, 200, and 5000 ms. the timeout releases the compaction gate rather than leaving a failed restore permanently blocking the monitor. native restore notifications start the same check for late or individually restored managed windows.
+
+duplicate notifications for the same restore target do not restart the batch deadline. the existing one-second discovery fallback also detects missed minimized-to-restored transitions and re-arms eligible queued compaction. membership scans keep live windows after a failed geometry query and cannot replace newer membership with an older snapshot. a saved minimized set no longer suppresses layout work for newly opened visible windows on that monitor.
 
 independently minimized windows are not restored. closed, moved-out, re-minimized, or manually dragged targets stop holding the restore batch; cleanup stops the watcher when no targets remain. `Cascade restore reconciliation.` debug entries report completion or timeout. drop-slot preferences and the single drag/drop tolerance are unchanged.
 
@@ -86,6 +88,16 @@ placement correction follows each window's final destination. dropped-out window
 
 `Caps + Insert` remains available for explicit adoption and re-slotting, and newly opened windows still use normal automatic placement. pause still controls automatic new-window placement; intentional drag/drop remains a manual operation. keyboard cascade commands are held off during a native move/resize interaction. the temporary drag watcher stops on completion, cancellation, destruction, or script exit.
 
+## foreground recovery and performance
+
+new-window placement remains non-activating. a separate bounded foreground request is allowed only for a newly placed window that was already foreground at discovery, or one discovered within `new_window_focus_timeout_ms` (3000 ms) of a taskbar mouse press. taskbar correlation is a recent-input heuristic, not proof of which process the taskbar launched. requests wait for mouse buttons and modifiers (including Shift) to be released. unrelated foreground windows, intervening mouse clicks/Caps commands, drags, closed/minimized targets, expired hints, or changed HWND/PID identity cancel recovery. background launches without that context are not activated.
+
+recovery uses normal `SetForegroundWindow` permission rules, with at most three attempts. an already-foreground target can be raised within its normal Z-order band. there is no forced input-queue attachment, synthetic Alt workaround, fake focus message, permanent topmost override, or foreground-lock registry change. Windows can still deny activation; the script logs the result rather than pretending the tab is focused. an active-slot tab for a deeper layer remains intentional and does not by itself indicate failed focus.
+
+`SetWinDelay 0` yields without AutoHotkey's default per-window 100 ms sleep; restore/placement watchers still decide readiness explicitly. a focus-tab pass uses one observed rectangle per candidate and one canonical geometry calculation per monitor. minimized overlays are cached/hidden rather than repeatedly destroyed, and unchanged opacity/Z-order operations are skipped. per-window placement requests retain object identity through retries so stale callbacks cannot target a later request for a recycled handle.
+
+ordinary lifecycle/error logging stays enabled. `debug_verbose_enabled` defaults to false to skip expensive window-title/process/appearance snapshots. `New-window foreground confirmed/denied.`, `Cascade restore reconciliation.`, and `Cascade compaction pass.` provide focused diagnostics; foreground diagnostics distinguish the foreground HWND, thread-active HWND, and keyboard-focus HWND. placement confirmation stops after `placement_stabilize_confirmation_limit` (3) final checks instead of polling forever. no Windows desktop timing benchmark is implied by these source-level optimizations.
+
 ## checking a change
 
 from the repository root, run:
@@ -100,7 +112,10 @@ Window Cascade seeds windows already open at startup for discovery but does not 
 
 for Window Cascade changes, check:
 
-- new-window placement and delayed window startup
+- new-window placement and delayed window startup; duplicate discovery and cancelled/recycled-HWND retries
+- minimize the cascade, then launch one to three windows beside unrelated/FancyZones windows
+- Shift + taskbar launch: release Shift, verify actual foreground focus; switching/clicking elsewhere must cancel recovery
+- deny/delay activation and inspect the foreground diagnostic; background launches must not steal focus
 - focus tabs: at most one visible tab per monitor/slot, correct exposed/next-layer target, and stable opacity across stack depths
 - focus-tab clicks: inactive slots focus without rotation; repeated active-slot clicks visit all layers in a three-or-more-window stack
 - focus-tab handoff: no overlapping replacement, immediate single-layer tab disappearance, and full-height marker preserved after rotation
@@ -119,6 +134,8 @@ for Window Cascade changes, check:
 - hide a partial/full cascade with Caps + M, open new windows, restore: earlier slots/layers fill before surplus layers remain
 - repeat with Caps + Alt + M across monitors; closed or independently minimized windows must not be revived
 - slow restores, rapid re-minimize, drag during restore, and close-batch deferral: no lost membership or permanent compaction lock
+- missed restore notifications and interrupted queued work: the existing slow fallback recovers the pending merge
+- unchanged layouts/tabs should not keep issuing opacity writes or restarting placement corrections
 - adoption and the one-shot adoption undo path
 - gathering and cross-monitor moves
 - pause/resume behavior and compatibility checks

@@ -17,10 +17,10 @@
 ; Any ordinary mouse click commits a just-adopted window. Wildcards make this
 ; apply even while modifier keys are held; tilde preserves the native click.
 ~*LButton::CaptureCascadeMousePress()
-~*RButton::CancelPendingAdoptionUndo()
-~*MButton::CancelPendingAdoptionUndo()
-~*XButton1::CancelPendingAdoptionUndo()
-~*XButton2::CancelPendingAdoptionUndo()
+~*RButton::CancelCascadePendingMouseActions()
+~*MButton::CancelCascadePendingMouseActions()
+~*XButton1::CancelCascadePendingMouseActions()
+~*XButton2::CancelCascadePendingMouseActions()
 
 ; Do not rely on foreground timing here. Windows may keep Progman focused while
 ; the user clicks between monitors, or may update foreground focus after the
@@ -233,6 +233,7 @@ HandleCascadeCommandMessage(command_id, parameter, message_id, target_hwnd)
 
     if !IsCapsLockLayerRunning()
         return
+    CancelNewWindowFocus()
 
     ; Script-level pause stays available even when window-management commands
     ; are blocked by a maximized or fullscreen active window.
@@ -306,4 +307,11 @@ HandleCascadeCommandMessage(command_id, parameter, message_id, target_hwnd)
         case cascade_command_move_monitor_right:
             MoveCascadeWindowAcrossMonitor(parameter, "Right")
     }
+}
+
+
+CancelCascadePendingMouseActions(*)
+{
+    CancelPendingAdoptionUndo()
+    CancelNewWindowFocus()
 }

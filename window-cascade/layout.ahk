@@ -21,7 +21,7 @@ GetManagedCascadeMonitor(hwnd)
 
 RecordCascadeWindow(monitor_index, hwnd)
 {
-    global cascade_history
+    global cascade_history, cascade_membership_generation
 
     if !cascade_history.Has(monitor_index)
         cascade_history[monitor_index] := []
@@ -31,20 +31,23 @@ RecordCascadeWindow(monitor_index, hwnd)
             return
     }
     cascade_history[monitor_index].Push(hwnd)
+    cascade_membership_generation += 1
 
     QueueFocusCornerUpdate()
 }
 
 RemoveCascadeWindowFromHistory(hwnd)
 {
-    global cascade_history
+    global cascade_history, cascade_membership_generation
 
     for monitor_index, history in cascade_history {
         index := history.Length
 
         while index >= 1 {
-            if history[index] = hwnd
+            if history[index] = hwnd {
                 history.RemoveAt(index)
+                cascade_membership_generation += 1
+            }
 
             index -= 1
         }
@@ -53,21 +56,20 @@ RemoveCascadeWindowFromHistory(hwnd)
 
 GetLiveCascadeHistory(monitor_index)
 {
-    global cascade_history, cascade_restore_batches
-
-    live_history := []
+    global cascade_history, cascade_restore_batches, cascade_slot_tolerance
+    global cascade_membership_generation, cascade_drag_generation
 
     if !cascade_history.Has(monitor_index)
-        return live_history
+        return []
 
-    previous_count := cascade_history[monitor_index].Length
-
-    for hwnd in cascade_history[monitor_index] {
-        if !WinExist("ahk_id " hwnd)
+    generation := cascade_membership_generation
+    drag_generation := cascade_drag_generation
+    history := cascade_history[monitor_index].Clone()
+    live_history := []
+    geometry := GetCanonicalCascadeGeometry(monitor_index)
+    for hwnd in history {
+        if !DllCall("IsWindow", "ptr", hwnd, "int")
             continue
-
-        ; Restore animations can briefly expose a non-slot rectangle. Keep the
-        ; saved members until the shared restore-completion check releases them.
         if IsCascadeWindowBeingDragged(hwnd)
             || (cascade_restore_batches.Has(monitor_index)
                 && cascade_restore_batches[monitor_index].targets.Has(hwnd))
@@ -75,36 +77,45 @@ GetLiveCascadeHistory(monitor_index)
             live_history.Push(hwnd)
             continue
         }
-
-        ; A minimized window has no useful cascade geometry. Keep its recorded
-        ; membership so restoring it does not silently remove it from history.
         try {
-            if WinGetMinMax("ahk_id " hwnd) = -1 {
+            state := WinGetMinMax(hwnd)
+            if state = -1 {
                 live_history.Push(hwnd)
                 continue
             }
+            if state != 0
+                continue
+            ; A failed geometry query is not evidence that a live member left.
+            if !TryGetCascadeLayoutOrigin(hwnd, &layout_monitor, &x, &y) {
+                live_history.Push(hwnd)
+                continue
+            }
+            if layout_monitor = monitor_index
+                && FindNearestCascadeSlot(x, y, geometry.slots, cascade_slot_tolerance)
+                live_history.Push(hwnd)
         }
         catch {
-            continue
+            if DllCall("IsWindow", "ptr", hwnd, "int")
+                live_history.Push(hwnd)
         }
-
-        ; Native drags and in-flight placements retain their original/intended
-        ; membership until the corresponding operation commits.
-        if !TryGetCascadeLayoutOrigin(hwnd, &layout_monitor, &layout_x, &layout_y)
-            || layout_monitor != monitor_index
-            continue
-
-        if !IsWindowInCascadeLayout(hwnd)
-            continue
-
-        live_history.Push(hwnd)
     }
 
-    cascade_history[monitor_index] := live_history
-
-    if live_history.Length < previous_count
-        QueueCascadeCompaction(monitor_index)
-
+    previous_critical := Critical("On")
+    try {
+        ; Do not erase newly placed/dropped members with an older snapshot.
+        if generation != cascade_membership_generation
+            || drag_generation != cascade_drag_generation
+            || IsCascadeRestoreInProgress(monitor_index)
+            return cascade_history.Has(monitor_index) ? cascade_history[monitor_index].Clone() : []
+        if live_history.Length != history.Length {
+            cascade_history[monitor_index] := live_history
+            cascade_membership_generation += 1
+            QueueCascadeCompaction(monitor_index)
+        }
+    }
+    finally {
+        Critical(previous_critical)
+    }
     return live_history
 }
 
@@ -526,8 +537,9 @@ GetNextCascadePosition(
 
 IsCascadeCompactionDeferred(monitor_index)
 {
-    ; Keep every drop destination stable until the mouse interaction is finished.
-    return HasCascadeWindowDrag() || IsCascadeCloseBatchActive(monitor_index)
+    global cascade_minimize_request_depth
+    ; Never mutate the layout halfway through a drag or window-state batch.
+    return cascade_minimize_request_depth > 0 || HasCascadeWindowDrag() || IsCascadeCloseBatchActive(monitor_index)
         || IsCascadeRestoreInProgress(monitor_index)
 }
 
@@ -537,49 +549,84 @@ QueueCascadeCompaction(monitor_index, preferred_hwnd := 0)
 
     if !monitor_index
         return
-
-    ; Ordinary cleanup must not erase the last explicit drop queued for this
-    ; monitor. Retain it through drag/close deferral, even if focus changes.
     if preferred_hwnd || !cascade_compaction_pending.Has(monitor_index)
         cascade_compaction_pending[monitor_index] := preferred_hwnd
+    if !IsCascadeCompactionDeferred(monitor_index)
+        ScheduleCascadeCompactionFlush()
+}
 
-    ; A close batch or native drag postpones layout mutation until it finishes.
-    if IsCascadeCompactionDeferred(monitor_index)
+RequeueCascadeCompaction(monitor_index, preferred_hwnd)
+{
+    global cascade_compaction_pending
+
+    previous_critical := Critical("On")
+    try {
+        ; A retry belongs to an older plan. A newer drop already queued wins.
+        if cascade_compaction_pending.Has(monitor_index)
+            && cascade_compaction_pending[monitor_index]
+            preferred_hwnd := cascade_compaction_pending[monitor_index]
+        QueueCascadeCompaction(monitor_index, preferred_hwnd)
+    }
+    finally {
+        Critical(previous_critical)
+    }
+}
+
+ScheduleCascadeCompactionFlush(recover := false)
+{
+    global cascade_compaction_timer_pending
+
+    ; Further events must not keep postponing an already scheduled flush.
+    if cascade_compaction_timer_pending && !recover
         return
-
-    SetTimer FlushCascadeCompactions, -120
+    cascade_compaction_timer_pending := true
+    SetTimer(FlushCascadeCompactions, -120)
 }
 
 FlushCascadeCompactions()
 {
-    global cascade_compaction_pending
+    global cascade_compaction_pending, cascade_compaction_timer_pending
+    static running := false
 
-    monitors := Map()
-    deferred_monitors := Map()
-
-    for monitor_index, preferred_hwnd in cascade_compaction_pending {
-        if IsCascadeCompactionDeferred(monitor_index) {
-            deferred_monitors[monitor_index] := preferred_hwnd
-            continue
-        }
-
-        monitors[monitor_index] := preferred_hwnd
+    previous_critical := Critical("On")
+    try {
+        cascade_compaction_timer_pending := false
+        if running
+            return
+        running := true
+        monitors := cascade_compaction_pending
+        cascade_compaction_pending := Map()
+    }
+    finally {
+        Critical(previous_critical)
     }
 
-    cascade_compaction_pending := deferred_monitors
-
-    for monitor_index, preferred_hwnd in monitors
-        CompactCascadeLayout(monitor_index, preferred_hwnd)
+    try {
+        for monitor_index, preferred_hwnd in monitors {
+            try {
+                if IsCascadeCompactionDeferred(monitor_index)
+                    RequeueCascadeCompaction(monitor_index, preferred_hwnd)
+                else
+                    CompactCascadeLayout(monitor_index, preferred_hwnd)
+            }
+            catch Error as err {
+                ; Retain this request for the slow recovery poll; finish the rest.
+                if !cascade_compaction_pending.Has(monitor_index)
+                    cascade_compaction_pending[monitor_index] := preferred_hwnd
+                DebugError("CompactCascadeLayout", err)
+            }
+        }
+    }
+    finally {
+        running := false
+        ; Requests raised during this flush remain in the new pending map.
+    }
 }
 
 CompactCascadeLayout(monitor_index, preferred_hwnd := 0)
 {
     global cascade_slot_tolerance
-    global layer_minimized_windows_by_monitor
-    global monitor_minimized_windows_by_monitor
-    global window_width_ratio, window_height_ratio
-    global edge_margin, minimum_width, minimum_height
-    global cascade_drag_generation, cascade_compaction_pending
+    global cascade_drag_generation, cascade_compaction_pending, cascade_membership_generation
 
     drag_generation := cascade_drag_generation
     ; Another monitor's compaction may have yielded to a newer drop. Prefer its
@@ -590,37 +637,17 @@ CompactCascadeLayout(monitor_index, preferred_hwnd := 0)
         preferred_hwnd := cascade_compaction_pending[monitor_index]
     }
     if IsCascadeCompactionDeferred(monitor_index) {
-        QueueCascadeCompaction(monitor_index, preferred_hwnd)
+        RequeueCascadeCompaction(monitor_index, preferred_hwnd)
         return
     }
 
-    ; A fully hidden monitor has nothing visible to compact.
-    if monitor_minimized_windows_by_monitor.Has(monitor_index)
-        return
-
+    ; A saved minimize set does not mean the entire monitor is hidden:
+    ; windows opened afterward remain visible and must still be compactable.
     windows := GetLiveCascadeHistory(monitor_index)
     managed_window_count := windows.Length
+    membership_generation := cascade_membership_generation
 
-    ; Keep a script-hidden layer out of compaction while packing the layers
-    ; that remain visible. Restoring the hidden layer compacts everything.
-    if layer_minimized_windows_by_monitor.Has(monitor_index) {
-        visible_windows := []
-
-        for hwnd in windows {
-            try {
-                if WinGetMinMax("ahk_id " hwnd) = -1
-                    continue
-            }
-            catch {
-                continue
-            }
-
-            visible_windows.Push(hwnd)
-        }
-
-        windows := visible_windows
-    }
-
+    ; Stack construction excludes minimized members without restoring them.
     if windows.Length = 0
         return
 
@@ -632,45 +659,8 @@ CompactCascadeLayout(monitor_index, preferred_hwnd := 0)
     if stacks.Length = 0
         return
 
-    MonitorGetWorkArea(
-        monitor_index,
-        &work_left,
-        &work_top,
-        &work_right,
-        &work_bottom
-    )
-
-    work_width := work_right - work_left
-    work_height := work_bottom - work_top
-
-    window_width := Max(
-        minimum_width,
-        Floor(work_width * window_width_ratio)
-    )
-
-    window_height := Max(
-        minimum_height,
-        Floor(work_height * window_height_ratio)
-    )
-
-    window_width := Min(
-        window_width,
-        work_width - edge_margin * 2
-    )
-
-    window_height := Min(
-        window_height,
-        work_height - edge_margin * 2
-    )
-
-    slots := BuildCascadeSlots(
-        work_left,
-        work_top,
-        work_right,
-        work_bottom,
-        window_width,
-        window_height
-    )
+    geometry := GetCanonicalCascadeGeometry(monitor_index)
+    slots := geometry.slots
 
     if slots.Length = 0
         return
@@ -694,21 +684,24 @@ CompactCascadeLayout(monitor_index, preferred_hwnd := 0)
         preferred_hwnd
     )
 
+    failed_moves := 0
     for slot_index, stack_windows in target_stacks {
         target_slot := slots[slot_index]
 
         for hwnd in stack_windows {
             ; Never apply an old plan after a newer drag has changed the layout.
-            if drag_generation != cascade_drag_generation {
-                QueueCascadeCompaction(monitor_index)
+            if drag_generation != cascade_drag_generation
+                || membership_generation != cascade_membership_generation {
+                RequeueCascadeCompaction(monitor_index, preferred_hwnd)
                 return
             }
             if IsCascadeCompactionDeferred(monitor_index) {
-                QueueCascadeCompaction(monitor_index, preferred_hwnd)
+                RequeueCascadeCompaction(monitor_index, preferred_hwnd)
                 return
             }
 
-            MoveCascadeWindowToSlot(hwnd, target_slot[1], target_slot[2])
+            if !MoveCascadeWindowToSlot(hwnd, target_slot[1], target_slot[2])
+                failed_moves += 1
         }
     }
 
@@ -725,12 +718,13 @@ CompactCascadeLayout(monitor_index, preferred_hwnd := 0)
             continue
 
         Loop stack_windows.Length - 1 {
-            if drag_generation != cascade_drag_generation {
-                QueueCascadeCompaction(monitor_index)
+            if drag_generation != cascade_drag_generation
+                || membership_generation != cascade_membership_generation {
+                RequeueCascadeCompaction(monitor_index, preferred_hwnd)
                 return
             }
             if IsCascadeCompactionDeferred(monitor_index) {
-                QueueCascadeCompaction(monitor_index, preferred_hwnd)
+                RequeueCascadeCompaction(monitor_index, preferred_hwnd)
                 return
             }
             upper_hwnd := stack_windows[A_Index]
@@ -751,6 +745,9 @@ CompactCascadeLayout(monitor_index, preferred_hwnd := 0)
     }
 
     QueueFocusCornerUpdate()
+    DebugLog("Cascade compaction pass. | monitor=" monitor_index
+        " | managed=" managed_window_count " | slots=" slots.Length
+        " | failed-moves=" failed_moves)
 }
 
 

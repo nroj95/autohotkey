@@ -155,8 +155,16 @@ MoveCascadeWindowToSlot(hwnd, target_x, target_y)
 {
     global placement_reservations
 
-    if IsCascadeWindowBeingDragged(hwnd)
+    ; A minimize can complete after planning but before this individual move.
+    if IsCascadeWindowBeingDragged(hwnd) || !WinExist(hwnd)
         return false
+    try {
+        if WinGetMinMax(hwnd) != 0
+            return false
+    }
+    catch {
+        return false
+    }
     if !TryGetVisibleFrameRect(
         hwnd,
         &current_x,
@@ -180,13 +188,11 @@ MoveCascadeWindowToSlot(hwnd, target_x, target_y)
     if placement_reservations.Has(hwnd)
         placement_reservations.Delete(hwnd)
 
-    raw_target := GetRawRectForVisibleTarget(
-        hwnd,
-        target_x,
-        target_y,
-        current_width,
-        current_height
-    )
+    raw_target := [
+        target_x - inset_left, target_y - inset_top,
+        current_width + inset_left + inset_right,
+        current_height + inset_top + inset_bottom
+    ]
 
     if IsCascadeWindowBeingDragged(hwnd)
         return false
@@ -595,4 +601,150 @@ BringCascadeForward(monitor_index)
     }
 
     ActivateCascadeWindow(last_used_hwnd)
+}
+
+
+; =============================================================================
+; conservative new-window foreground recovery
+; =============================================================================
+
+CaptureCascadeLaunchIntent(hwnd)
+{
+    global cascade_launch_hint, current_foreground_hwnd, previous_foreground_hwnd
+
+    CancelNewWindowFocus()
+    try window_class := WinGetClass(hwnd)
+    catch
+        return
+    if window_class = "Shell_TrayWnd" || window_class = "Shell_SecondaryTrayWnd" {
+        foreground := DllCall("GetForegroundWindow", "ptr")
+        if IsShellSurfaceWindow(foreground) {
+            if current_foreground_hwnd && !IsShellSurfaceWindow(current_foreground_hwnd)
+                foreground := current_foreground_hwnd
+            else if previous_foreground_hwnd && !IsShellSurfaceWindow(previous_foreground_hwnd)
+                foreground := previous_foreground_hwnd
+        }
+        cascade_launch_hint := {tick: A_TickCount, foreground: foreground}
+    }
+}
+
+CaptureNewWindowFocusContext(hwnd)
+{
+    global cascade_launch_hint, new_window_focus_timeout_ms
+
+    foreground := DllCall("GetForegroundWindow", "ptr")
+    if foreground = hwnd
+        return {foreground: foreground, hint: 0}
+    if IsObject(cascade_launch_hint)
+        && ((A_TickCount - cascade_launch_hint.tick) & 0xFFFFFFFF) <= new_window_focus_timeout_ms
+        return {foreground: cascade_launch_hint.foreground, hint: cascade_launch_hint}
+    return 0
+}
+
+StartNewWindowFocus(hwnd, context)
+{
+    global cascade_launch_hint, new_window_focus_request, new_window_focus_poll_ms
+    global new_window_focus_timeout_ms
+
+    if !IsObject(context)
+        return
+    if !IsObject(context.hint) && DllCall("GetForegroundWindow", "ptr") != hwnd
+        return
+    if IsObject(context.hint) && (context.hint != cascade_launch_hint
+        || ((A_TickCount - context.hint.tick) & 0xFFFFFFFF) > new_window_focus_timeout_ms)
+        return
+    try pid := WinGetPID(hwnd)
+    catch
+        return
+    new_window_focus_request := {
+        hwnd: hwnd, pid: pid, context: context,
+        started_tick: A_TickCount, attempts: 0
+    }
+    SetTimer(WatchNewWindowFocus, new_window_focus_poll_ms)
+}
+
+CancelNewWindowFocus(expected_request := 0)
+{
+    global new_window_focus_request, cascade_launch_hint
+    if IsObject(expected_request) && new_window_focus_request != expected_request
+        return
+    new_window_focus_request := 0
+    cascade_launch_hint := 0
+    SetTimer(WatchNewWindowFocus, 0)
+}
+
+ObserveNewWindowForeground(hwnd)
+{
+    global new_window_focus_request, cascade_launch_hint
+
+    if IsObject(new_window_focus_request) {
+        request := new_window_focus_request
+        if hwnd != request.hwnd && hwnd != request.context.foreground
+            && !IsShellSurfaceWindow(hwnd)
+            CancelNewWindowFocus(request)
+    }
+}
+
+WatchNewWindowFocus()
+{
+    global new_window_focus_request, new_window_focus_timeout_ms
+
+    request := new_window_focus_request
+    if !IsObject(request) {
+        SetTimer(WatchNewWindowFocus, 0)
+        return
+    }
+    try {
+        hwnd := request.hwnd
+        foreground := DllCall("GetForegroundWindow", "ptr")
+        if ((A_TickCount - request.started_tick) & 0xFFFFFFFF) >= new_window_focus_timeout_ms
+            || !WinExist(hwnd) || WinGetPID(hwnd) != request.pid
+            || !GetManagedCascadeMonitor(hwnd) || WinGetMinMax(hwnd) != 0
+            || HasCascadeWindowDrag() || HasFocusTabClick()
+        {
+            CancelNewWindowFocus(request)
+            return
+        }
+        ; Do not steal focus from a different app chosen while launch was settling.
+        if foreground != hwnd && foreground != request.context.foreground
+            && !IsShellSurfaceWindow(foreground)
+        {
+            CancelNewWindowFocus(request)
+            return
+        }
+        ; Shift+taskbar-click must finish before attempting foreground activation.
+        for key in ["LButton", "RButton", "MButton", "Shift", "Ctrl", "Alt", "LWin", "RWin"] {
+            if GetKeyState(key, "P")
+                return
+        }
+        if IsCascadeRestoreInProgress(GetManagedCascadeMonitor(hwnd))
+            return
+        if new_window_focus_request != request
+            return
+
+        request.attempts += 1
+        ; Use Windows' normal foreground permission rules. Never fake focus
+        ; messages, attach input queues, inject Alt, or toggle topmost status.
+        if foreground != hwnd
+            DllCall("SetForegroundWindow", "ptr", hwnd, "int")
+        if DllCall("GetForegroundWindow", "ptr") = hwnd {
+            ; An already-active window is not necessarily foremost in Z-order.
+            DllCall("SetWindowPos", "ptr", hwnd, "ptr", 0,
+                "int", 0, "int", 0, "int", 0, "int", 0,
+                "uint", 0x4213, "int") ; ASYNC | NOOWNERZORDER | NOACTIVATE | NOMOVE | NOSIZE
+            QueueFocusCornerUpdate()
+            DebugLog("New-window foreground confirmed. | hwnd=" hwnd
+                " | attempts=" request.attempts " | " DebugDescribeForegroundState())
+            CancelNewWindowFocus(request)
+        } else if request.attempts >= 3 {
+            DebugLog("New-window foreground denied. | hwnd=" hwnd
+                " | " DebugDescribeForegroundState())
+            CancelNewWindowFocus(request)
+        }
+    }
+    catch Error as err {
+        if new_window_focus_request = request
+            CancelNewWindowFocus(request)
+        DebugError("WatchNewWindowFocus", err)
+    }
 }

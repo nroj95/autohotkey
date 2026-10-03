@@ -43,6 +43,10 @@
 
 Persistent
 
+; Readiness watchers handle settling explicitly. Yield without the default
+; 100 ms sleep after each window command; do not use a busy-looping -1 delay.
+SetWinDelay 0
+
 A_IconTip := "Window Cascade"
 try TraySetIcon(A_ScriptDir "\icons\window-cascade.ico")
 

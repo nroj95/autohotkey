@@ -21,6 +21,13 @@ cascade_slot_tolerance := 56
 
 placement_delay_ms := 60
 
+; Only recent taskbar launches or already-foreground new windows may request focus.
+new_window_focus_timeout_ms := 3000
+new_window_focus_poll_ms := 100
+
+; Keep errors/lifecycle logging; expensive title/appearance diagnostics are opt-in.
+debug_verbose_enabled := false
+
 ; Restore requests can finish before their native/DWM rectangles settle.
 ; Poll only during restores; a failed restore must not lock compaction forever.
 cascade_restore_poll_ms := 50
@@ -44,7 +51,9 @@ placement_stabilize_tolerance := 6
 ; Keep its slot reserved while retrying without blocking Window Cascade.
 placement_stabilize_retry_ms := 500
 placement_stabilize_retry_limit := 20
+; A final confirmation is bounded too; never poll a failed placement forever.
 placement_stabilize_confirmation_ms := 2000
+placement_stabilize_confirmation_limit := 3
 
 ; If an application overrides a Cascade placement, give it time to finish
 ; managing its own geometry before posting another corrective move.
@@ -143,6 +152,8 @@ caps_layer_missing_since := 0
 caps_layer_dependency_lost := false
 
 pending_windows := Map()
+cascade_launch_hint := 0
+new_window_focus_request := 0
 handled_windows := Map()
 placement_reservations := Map()
 placement_stabilization_generations := Map()
@@ -152,12 +163,16 @@ startup_windows := Map()
 known_windows := Map()
 missed_window_poll_ms := 1000
 cascade_history := Map()
+cascade_membership_generation := 0
+cascade_minimized_observed := Map()
 cascade_mouse_press := 0
 cascade_window_drag := 0
 cascade_drag_generation := 0
 cascade_compaction_pending := Map()
+cascade_compaction_timer_pending := false
 cascade_restore_batches := Map()
 cascade_restore_request_depth := 0
+cascade_minimize_request_depth := 0
 cascade_close_batches := Map()
 layer_minimized_windows_by_monitor := Map()
 monitor_minimized_windows_by_monitor := Map()

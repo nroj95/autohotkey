@@ -637,6 +637,8 @@ RestoreMonitorCascade(monitor_index)
 
 MinimizeCascadeWindows(windows)
 {
+    global cascade_minimize_request_depth, cascade_membership_generation
+
     if windows.Length = 0
         return []
 
@@ -665,10 +667,20 @@ MinimizeCascadeWindows(windows)
         windows_to_minimize.Push(hwnd)
     }
 
-    for hwnd in windows_to_minimize {
-        ; A later minimize supersedes an unfinished restore of the same window.
-        RemoveWindowFromCascadeRestore(hwnd)
-        try WinMinimize("ahk_id " hwnd)
+    cascade_minimize_request_depth += 1
+    cascade_membership_generation += 1
+    try {
+        for hwnd in windows_to_minimize {
+            ; Do not reflow halfway through minimizing a whole cascade.
+            RemoveWindowFromCascadeRestore(hwnd)
+            CancelPlacementStabilization(hwnd)
+            ObserveCascadeMinimizedWindow(hwnd)
+            try WinMinimize("ahk_id " hwnd)
+        }
+    }
+    finally {
+        cascade_minimize_request_depth -= 1
+        ScheduleCascadeCompactionFlush()
     }
 
     return windows_to_minimize
@@ -768,7 +780,7 @@ RestoreCascadeWindowList(windows)
 
 TrackCascadeWindowRestores(windows)
 {
-    global cascade_restore_batches, cascade_restore_poll_ms
+    global cascade_restore_batches, cascade_restore_poll_ms, cascade_membership_generation
 
     tracked_batches := Map()
     for hwnd in windows {
@@ -786,11 +798,13 @@ TrackCascadeWindowRestores(windows)
             }
         }
         batch := cascade_restore_batches[monitor_index]
+        tracked_batches[monitor_index] := batch
+        if batch.targets.Has(hwnd) && batch.targets[hwnd] = pid
+            continue
         batch.targets[hwnd] := pid
         batch.generation += 1
-        batch.started_tick := A_TickCount
+        cascade_membership_generation += 1
         batch.snapshot := ""
-        tracked_batches[monitor_index] := batch
     }
 
     if tracked_batches.Count
@@ -812,9 +826,8 @@ WatchCascadeWindowRestores()
     global cascade_restore_settle_ms, cascade_restore_timeout_ms
     global cascade_slot_tolerance
 
-    ; This pass only reads geometry/state. Do not let another restore replace a
-    ; batch halfway through its completion check; never wait or move windows here.
-    Critical "On"
+    ; Read-only queries stay interruptible. The generation check below discards
+    ; a snapshot if a native callback or another restore changed its batch.
     if cascade_restore_request_depth
         return
 
@@ -871,38 +884,48 @@ WatchCascadeWindowRestores()
             }
         }
 
-        ; A native callback may have superseded this snapshot during a query.
-        if !cascade_restore_batches.Has(monitor_index)
-            || cascade_restore_batches[monitor_index] != batch
-            || batch.generation != generation
-            continue
+        previous_critical := Critical("On")
+        try {
+            ; A native callback may have superseded this snapshot during a query.
+            if !cascade_restore_batches.Has(monitor_index)
+                || cascade_restore_batches[monitor_index] != batch
+                || batch.generation != generation
+                continue
 
-        for hwnd in stale_targets
-            batch.targets.Delete(hwnd)
+            for hwnd in stale_targets
+                batch.targets.Delete(hwnd)
 
-        now := A_TickCount
-        settled := batch.targets.Count = 0
-        if !ready {
-            batch.snapshot := ""
-        } else if snapshot != batch.snapshot {
-            batch.snapshot := snapshot
-            batch.stable_since := now
-        } else if ((now - batch.stable_since) & 0xFFFFFFFF) >= cascade_restore_settle_ms {
-            settled := true
+            now := A_TickCount
+            settled := batch.targets.Count = 0
+            if !ready {
+                batch.snapshot := ""
+            } else if snapshot != batch.snapshot {
+                batch.snapshot := snapshot
+                batch.stable_since := now
+            } else if ((now - batch.stable_since) & 0xFFFFFFFF) >= cascade_restore_settle_ms {
+                settled := true
+            }
+
+            timed_out := ((now - batch.started_tick) & 0xFFFFFFFF) >= cascade_restore_timeout_ms
+            if !settled && !timed_out
+                continue
+
+            if settled && ready {
+                for hwnd in batch.targets
+                    ForgetCascadeMinimizedObservation(hwnd)
+            }
+            cascade_restore_batches.Delete(monitor_index)
+            ; Rebuild from the current history, including windows opened while hidden.
+            ; The existing planner still preserves explicit drop-slot preferences.
+            QueueCascadeCompaction(monitor_index)
+            QueueFocusCornerUpdate()
+            DebugLog("Cascade restore reconciliation. | monitor=" monitor_index
+                " | reason=" (settled ? "settled" : "timeout")
+                " | targets=" batch.targets.Count)
         }
-
-        timed_out := ((now - batch.started_tick) & 0xFFFFFFFF) >= cascade_restore_timeout_ms
-        if !settled && !timed_out
-            continue
-
-        cascade_restore_batches.Delete(monitor_index)
-        ; Rebuild from the current history, including windows opened while hidden.
-        ; The existing planner still preserves explicit drop-slot preferences.
-        QueueCascadeCompaction(monitor_index)
-        QueueFocusCornerUpdate()
-        DebugLog("Cascade restore reconciliation. | monitor=" monitor_index
-            " | reason=" (settled ? "settled" : "timeout")
-            " | targets=" batch.targets.Count)
+        finally {
+            Critical(previous_critical)
+        }
     }
 
     if !cascade_restore_batches.Count
@@ -972,4 +995,68 @@ RemoveWindowFromMonitorWindowLists(window_lists, hwnd)
 
     for monitor_index in empty_monitors
         window_lists.Delete(monitor_index)
+}
+
+
+; =============================================================================
+; missed restore-event and deferred-work recovery
+; =============================================================================
+
+ObserveCascadeMinimizedWindow(hwnd)
+{
+    global cascade_minimized_observed, cascade_membership_generation
+    try {
+        pid := WinGetPID(hwnd)
+        if !cascade_minimized_observed.Has(hwnd) || cascade_minimized_observed[hwnd] != pid {
+            cascade_minimized_observed[hwnd] := pid
+            cascade_membership_generation += 1
+        }
+    }
+}
+
+ForgetCascadeMinimizedObservation(hwnd)
+{
+    global cascade_minimized_observed
+    if cascade_minimized_observed.Has(hwnd)
+        cascade_minimized_observed.Delete(hwnd)
+}
+
+ReconcileCascadeRuntimeState()
+{
+    global cascade_history, cascade_minimized_observed, cascade_compaction_pending
+
+    ; Reuse the discovery fallback. A missed MINIMIZEEND must not require another
+    ; user toggle, and a queued compaction must not depend on one timer delivery.
+    for monitor_index, history in cascade_history.Clone() {
+        for hwnd in history.Clone() {
+            if !DllCall("IsWindow", "ptr", hwnd, "int") {
+                ForgetWindow(hwnd)
+                continue
+            }
+            try {
+                if WinGetMinMax(hwnd) = -1 {
+                    if !cascade_minimized_observed.Has(hwnd)
+                        ObserveCascadeMinimizedWindow(hwnd)
+                } else if cascade_minimized_observed.Has(hwnd) {
+                    pid := cascade_minimized_observed[hwnd]
+                    ForgetCascadeMinimizedObservation(hwnd)
+                    if WinGetPID(hwnd) = pid
+                        TrackCascadeWindowRestores([hwnd])
+                }
+            }
+            catch {
+                continue
+            }
+        }
+    }
+    for hwnd in cascade_minimized_observed.Clone() {
+        if !GetManagedCascadeMonitor(hwnd) || !DllCall("IsWindow", "ptr", hwnd, "int")
+            ForgetCascadeMinimizedObservation(hwnd)
+    }
+    for monitor_index in cascade_compaction_pending {
+        if !IsCascadeCompactionDeferred(monitor_index) {
+            ScheduleCascadeCompactionFlush(true)
+            break
+        }
+    }
 }

@@ -171,7 +171,8 @@ PlaceNewWindow(
     source_hwnd,
     queued_monitor := 0,
     retry_count := 0,
-    settle_complete := false
+    settle_complete := false,
+    request := 0
 )
 {
     global pending_windows, handled_windows, placement_reservations
@@ -180,12 +181,14 @@ PlaceNewWindow(
     global window_width_ratio, window_height_ratio
     global edge_margin, minimum_width, minimum_height
 
+    retry_scheduled := false
+    owned_reservation := 0
     try {
-        if handled_windows.Has(hwnd) || IsCascadeWindowBeingDragged(hwnd)
+        if !IsCurrentNewWindowPlacement(hwnd, request)
+            || handled_windows.Has(hwnd) || IsCascadeWindowBeingDragged(hwnd)
             return
-
-        if pending_windows.Has(hwnd)
-            pending_windows.Delete(hwnd)
+        if !WinExist(hwnd) || WinGetPID(hwnd) != request.pid
+            return
 
         DebugLog(
             "PlaceNewWindow begin."
@@ -196,17 +199,13 @@ PlaceNewWindow(
             . " | source=" DebugDescribeWindow(source_hwnd)
         )
 
-        if !WinExist("ahk_id " hwnd) {
-            return
-        }
-
         retry_reason := GetPlacementReadinessReason(hwnd)
 
         if retry_reason != ""
             && retry_count < placement_ready_retry_limit
         {
             next_retry := retry_count + 1
-            pending_windows[hwnd] := true
+            retry_scheduled := true
 
             DebugLog(
                 "Placement readiness retry."
@@ -222,7 +221,8 @@ PlaceNewWindow(
                     source_hwnd,
                     queued_monitor,
                     next_retry,
-                    settle_complete
+                    settle_complete,
+                    request
                 ),
                 -placement_ready_retry_ms
             )
@@ -238,7 +238,7 @@ PlaceNewWindow(
             )
 
             if queued_monitor && source_is_shell_or_gone {
-                pending_windows[hwnd] := true
+                retry_scheduled := true
 
                 SetTimer(
                     PlaceNewWindow.Bind(
@@ -246,7 +246,8 @@ PlaceNewWindow(
                         source_hwnd,
                         queued_monitor,
                         retry_count,
-                        true
+                        true,
+                        request
                     ),
                     -placement_settle_delay_ms
                 )
@@ -295,10 +296,11 @@ PlaceNewWindow(
 
         ; Slot selection and reservation must be atomic. An asynchronous move
         ; may not reach its target before another window needs a slot.
-        Critical "On"
+        previous_critical := Critical("On")
 
         try {
-            if handled_windows.Has(hwnd) || IsCascadeWindowBeingDragged(hwnd)
+            if !IsCurrentNewWindowPlacement(hwnd, request)
+                || handled_windows.Has(hwnd) || IsCascadeWindowBeingDragged(hwnd)
                 return
             position := GetNextCascadePosition(
                 target_monitor,
@@ -313,14 +315,15 @@ PlaceNewWindow(
             target_x := position[1]
             target_y := position[2]
 
-            placement_reservations[hwnd] := Map(
+            owned_reservation := Map(
                 "monitor", target_monitor,
                 "x", target_x,
                 "y", target_y
             )
+            placement_reservations[hwnd] := owned_reservation
         }
         finally {
-            Critical "Off"
+            Critical(previous_critical)
         }
 
         raw_target := GetRawRectForVisibleTarget(
@@ -370,7 +373,8 @@ PlaceNewWindow(
 
         set_window_pos_start_tick := A_TickCount
 
-        if handled_windows.Has(hwnd) || IsCascadeWindowBeingDragged(hwnd)
+        if !IsCurrentNewWindowPlacement(hwnd, request)
+            || handled_windows.Has(hwnd) || IsCascadeWindowBeingDragged(hwnd)
             return
 
         set_window_pos_result := DllCall(
@@ -396,7 +400,7 @@ PlaceNewWindow(
         )
 
         if !set_window_pos_result {
-            if placement_reservations.Has(hwnd)
+            if placement_reservations.Has(hwnd) && placement_reservations[hwnd] = owned_reservation
                 placement_reservations.Delete(hwnd)
 
             DebugLog(
@@ -408,7 +412,8 @@ PlaceNewWindow(
         }
 
         ; A native drag may have taken ownership while the async move was posted.
-        if handled_windows.Has(hwnd) || IsCascadeWindowBeingDragged(hwnd)
+        if !IsCurrentNewWindowPlacement(hwnd, request)
+            || handled_windows.Has(hwnd) || IsCascadeWindowBeingDragged(hwnd)
             return
         handled_windows[hwnd] := true
         RecordCascadeWindow(target_monitor, hwnd)
@@ -426,6 +431,7 @@ PlaceNewWindow(
             window_width,
             window_height
         )
+        StartNewWindowFocus(hwnd, request.focus)
 
     }
     catch Error as err {
@@ -441,7 +447,15 @@ PlaceNewWindow(
             return
         }
 
-        return
+        DebugError("PlaceNewWindow", err)
+    }
+    finally {
+        if !retry_scheduled && IsCurrentNewWindowPlacement(hwnd, request) {
+            pending_windows.Delete(hwnd)
+            if !handled_windows.Has(hwnd) && placement_reservations.Has(hwnd)
+                && placement_reservations[hwnd] = owned_reservation
+                placement_reservations.Delete(hwnd)
+        }
     }
 }
 
@@ -452,13 +466,22 @@ PlaceNewWindow(
 
 CancelPlacementStabilization(hwnd)
 {
-    global placement_stabilization_generations
+    global placement_stabilization_generations, placement_reservations
 
-    ; Removing the current generation invalidates every callback already bound
-    ; to it. A later placement receives a new generation, so stale callbacks
-    ; can never become current again for the same HWND.
     if hwnd && placement_stabilization_generations.Has(hwnd)
         placement_stabilization_generations.Delete(hwnd)
+    if hwnd && placement_reservations.Has(hwnd)
+        placement_reservations.Delete(hwnd)
+}
+
+FinishPlacementStabilization(hwnd, generation)
+{
+    if !IsCurrentPlacementStabilization(hwnd, generation)
+        return
+    CancelPlacementStabilization(hwnd)
+    ; Do not queue a fresh compaction here: an application-enforced offset could
+    ; otherwise restart the same correction cycle indefinitely after its limit.
+    QueueFocusCornerUpdate()
 }
 
 SchedulePlacementStabilization(
@@ -514,15 +537,19 @@ StabilizePlacedWindow(
     stabilization_generation,
     delay_ms,
     attempt := 0,
-    passive_stage := 0
+    passive_stage := 0,
+    confirmation_count := 0
 )
 {
     global handled_windows, placement_reservations
     global placement_stabilize_tolerance
     global placement_stabilize_retry_ms
     global placement_stabilize_retry_limit
-    global placement_stabilize_confirmation_ms
+    global placement_stabilize_confirmation_ms, placement_stabilize_confirmation_limit
     global placement_stabilize_backoff_delays_ms
+
+    if !IsCurrentPlacementStabilization(hwnd, stabilization_generation)
+        return
 
     DebugLog(
         "Stabilization callback."
@@ -533,30 +560,14 @@ StabilizePlacedWindow(
         . " | hwnd=" hwnd
     )
 
-    ; Never let an old callback touch state belonging to a newer placement.
-    if !IsCurrentPlacementStabilization(
-        hwnd,
-        stabilization_generation
-    ) {
-        return
-    }
-
     if !handled_windows.Has(hwnd) {
-        if IsCurrentPlacementStabilization(hwnd, stabilization_generation)
-            && placement_reservations.Has(hwnd)
-        {
-            placement_reservations.Delete(hwnd)
-        }
+        FinishPlacementStabilization(hwnd, stabilization_generation)
 
         return
     }
 
     if !WinExist("ahk_id " hwnd) {
-        if IsCurrentPlacementStabilization(hwnd, stabilization_generation)
-            && placement_reservations.Has(hwnd)
-        {
-            placement_reservations.Delete(hwnd)
-        }
+        FinishPlacementStabilization(hwnd, stabilization_generation)
 
         return
     }
@@ -564,11 +575,7 @@ StabilizePlacedWindow(
     try {
         ; Do not fight an intentional maximize/minimize transition.
         if WinGetMinMax("ahk_id " hwnd) != 0 {
-            if IsCurrentPlacementStabilization(hwnd, stabilization_generation)
-                && placement_reservations.Has(hwnd)
-            {
-                placement_reservations.Delete(hwnd)
-            }
+            FinishPlacementStabilization(hwnd, stabilization_generation)
 
             return
         }
@@ -584,11 +591,7 @@ StabilizePlacedWindow(
             &current_inset_right,
             &current_inset_bottom
         ) {
-            if IsCurrentPlacementStabilization(hwnd, stabilization_generation)
-                && placement_reservations.Has(hwnd)
-            {
-                placement_reservations.Delete(hwnd)
-            }
+            FinishPlacementStabilization(hwnd, stabilization_generation)
 
             return
         }
@@ -617,11 +620,7 @@ StabilizePlacedWindow(
         )
 
         if !needs_correction {
-            if IsCurrentPlacementStabilization(hwnd, stabilization_generation)
-                && placement_reservations.Has(hwnd)
-            {
-                placement_reservations.Delete(hwnd)
-            }
+            FinishPlacementStabilization(hwnd, stabilization_generation)
 
             DebugLog(
                 "Placement reservation released."
@@ -634,8 +633,12 @@ StabilizePlacedWindow(
         }
 
         if attempt >= placement_stabilize_retry_limit {
-            ; Stop posting additional moves after the correction limit, but
-            ; continue checking so the reserved slot is not reused prematurely.
+            ; Bound confirmation-only polling as well as corrective moves.
+            if confirmation_count >= placement_stabilize_confirmation_limit {
+                DebugLog("Placement stabilization exhausted. | hwnd=" hwnd)
+                FinishPlacementStabilization(hwnd, stabilization_generation)
+                return
+            }
             SetTimer(
                 StabilizePlacedWindow.Bind(
                     hwnd,
@@ -646,7 +649,8 @@ StabilizePlacedWindow(
                     stabilization_generation,
                     placement_stabilize_confirmation_ms,
                     attempt,
-                    passive_stage
+                    passive_stage,
+                    confirmation_count + 1
                 ),
                 -placement_stabilize_confirmation_ms
             )
@@ -772,11 +776,7 @@ StabilizePlacedWindow(
         )
 
         if !stabilization_result {
-            if IsCurrentPlacementStabilization(hwnd, stabilization_generation)
-                && placement_reservations.Has(hwnd)
-            {
-                placement_reservations.Delete(hwnd)
-            }
+            FinishPlacementStabilization(hwnd, stabilization_generation)
 
             DebugLog(
                 "Placement reservation released."
@@ -813,7 +813,15 @@ StabilizePlacedWindow(
             . " | hwnd=" hwnd
         )
     }
-    catch {
-        return
+    catch Error as err {
+        FinishPlacementStabilization(hwnd, stabilization_generation)
+        DebugError("StabilizePlacedWindow", err)
     }
+}
+
+
+IsCurrentNewWindowPlacement(hwnd, request)
+{
+    global pending_windows
+    return IsObject(request) && pending_windows.Has(hwnd) && pending_windows[hwnd] = request
 }
