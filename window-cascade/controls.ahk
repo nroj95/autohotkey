@@ -205,13 +205,25 @@ HandleCascadeCommandMessage(command_id, parameter, message_id, target_hwnd)
     global cascade_command_close_active, cascade_command_close_scope
     global cascade_command_gather_to_monitor, cascade_command_show_help
     global cascade_command_move_monitor_left, cascade_command_move_monitor_right
+    global cascade_command_toggle_cascading
 
     ; HWND_BROADCAST also reaches script-owned GUIs. Run each command only
     ; once through AutoHotkey's hidden main window.
     if target_hwnd != A_ScriptHwnd
         return
 
-    if !IsCapsLockLayerRunning() || ActiveWindowBlocksCascadeCommands()
+    if !IsCapsLockLayerRunning()
+        return
+
+    ; Script-level pause stays available even when window-management commands
+    ; are blocked by a maximized or fullscreen active window.
+    if command_id = cascade_command_toggle_cascading {
+        CancelPendingAdoptionUndo()
+        ToggleCascading()
+        return
+    }
+
+    if ActiveWindowBlocksCascadeCommands()
         return
 
     if command_id != cascade_command_adopt_active

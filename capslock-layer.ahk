@@ -55,6 +55,7 @@ cascade_command_gather_to_monitor := 13
 cascade_command_show_help := 14
 cascade_command_move_monitor_left := 15
 cascade_command_move_monitor_right := 16
+cascade_command_toggle_cascading := 17
 
 window_hotkeys_command_message := DllCall(
     "RegisterWindowMessage",
@@ -308,6 +309,11 @@ CapsLock & h::
     KeyWait "h"
 }
 
+CapsLock & p::PostPlainWindowCascadeCommandOnce(
+    cascade_command_toggle_cascading,
+    "p"
+)
+
 ; Window Hotkeys.
 CapsLock & g::PostRegisteredCommand(window_hotkeys_cycle_steam_message)
 
@@ -384,6 +390,7 @@ m::UseArmedWindowCascadeCommand(cascade_command_toggle_minimize, "m")
 F4::UseArmedWindowCascadeCommand(cascade_command_close_scope, "F4")
 Delete::UseArmedWindowCascadeCommand(cascade_command_close_active, "Delete")
 h::UseArmedWindowCascadeCommand(cascade_command_show_help, "h")
+p::UseArmedWindowCascadeCommand(cascade_command_toggle_cascading, "p")
 
 ; Window Hotkeys.
 g::UseArmedRegisteredCommand(window_hotkeys_cycle_steam_message, "g")

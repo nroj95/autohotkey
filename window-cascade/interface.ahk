@@ -146,6 +146,7 @@ ToggleWindowCascadeHelp(*)
     help_text :=
     (
     "Caps + H             Toggle this help`n"
+    "Caps + P             Pause / resume automatic cascading`n"
     "`n"
     "CAPSLOCK LAYER REQUIRED`n"
     "Keep capslock-layer.ahk running with Window Cascade.`n"
@@ -173,7 +174,7 @@ ToggleWindowCascadeHelp(*)
     "NOTES`n"
     "Alt commands require held Caps.`n"
     "Space / Tab for layer rotation is selected from the tray menu.`n"
-    "Cascade commands are disabled while the active window is maximized or fullscreen.`n"
+    "Window-management commands are disabled while the active window is maximized or fullscreen.`n"
     "If CapsLock Layer stops, Window Cascade exits after a short reload grace period.`n"
     "`n"
     "FOCUS TABS`n"

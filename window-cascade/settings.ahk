@@ -155,3 +155,4 @@ cascade_command_gather_to_monitor := 13
 cascade_command_show_help := 14
 cascade_command_move_monitor_left := 15
 cascade_command_move_monitor_right := 16
+cascade_command_toggle_cascading := 17
