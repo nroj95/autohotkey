@@ -39,7 +39,7 @@ the launcher remains at the repository root. startup shortcuts, `icons/window-ca
 
 ## focus-tab gestures
 
-pressing a tab focuses its window immediately. while held, that tab stays visible and follows a small, bounded horizontal preview; the application window itself does not move. releasing after a deliberate left/right swipe rotates one previous/next layer in that slot. small movement, mostly vertical movement, or returning near the starting point is an ordinary focus click. a single-window slot does not rotate.
+pressing a tab focuses its window immediately. multi-layer slots keep the pressed tab visible and allow a small, bounded horizontal preview; the application window itself does not move. releasing after a deliberate left/right swipe rotates one previous/next layer in that slot. small movement, mostly vertical movement, or returning near the starting point is an ordinary focus click. a single-layer slot consumes the tab immediately on press and never enters swipe tracking or preview.
 
 the default threshold is 36 screen-coordinate pixels, with horizontal travel at least 1.5 times the vertical travel. `focus_tab_*` settings control the threshold, preview, opacity, and gesture-only polling interval. no speed requirement or repeating rotation is applied.
 
@@ -71,7 +71,7 @@ for Window Cascade changes, check:
 
 - new-window placement and delayed window startup
 - focus tabs: instant focus on press, visible held tab, and normal hiding on release
-- swipes: left/right on release, one layer per gesture, small/vertical/back-to-start movement, and single-window slots
+- swipes: left/right on release, one layer per gesture, small/vertical/back-to-start movement, and immediate consume-only clicks for single-layer slots
 - release outside the tab or on another monitor; ordinary app clicks and drags must remain unaffected
 - cancel with Escape, focus another app, close/minimize/move the target, and reload/exit while holding
 - slot swaps, slot/layer rotation, and exposed-stack ordering

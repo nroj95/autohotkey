@@ -94,7 +94,8 @@ BeginFocusTabGesture(*)
         release_missing_since: 0,
         preview_offset: 0,
         preview_alpha: focus_tab_drag_alpha,
-        slot_index: 0
+        slot_index: 0,
+        consume_only: false
     }
     focus_tab_gesture := gesture
 
@@ -123,14 +124,28 @@ BeginFocusTabGesture(*)
         gesture.was_topmost := !!(WinGetExStyle(marker) & 0x8)
 
         ; One-window geometry is enough to pin the slot. The live stack is
-        ; resolved again at release, so closed windows are never reused.
+        ; checked once on press to decide whether a swipe can do anything.
         slots := BuildCascadeSlotStacks([gesture.target_hwnd], cascade_slot_tolerance)
         if slots.Length = 1
             gesture.slot_index := slots[1]["slot_index"]
 
+        gesture.consume_only := !FocusTabSlotHasOtherLayers(
+            gesture.target_hwnd,
+            gesture.monitor_index,
+            gesture.slot_index
+        )
+
         gesture.ready := true
         if !IsFocusTabGestureTargetValid(gesture) {
             CancelFocusTabGesture()
+            return
+        }
+
+        ; A single-layer slot is a pure press action. Keep ownership of the
+        ; matching release, but hide the tab immediately and never preview it.
+        if gesture.consume_only {
+            HideFocusCornerOverlay(gesture.target_hwnd)
+            QueueFocusCornerUpdate()
             return
         }
 
@@ -150,6 +165,34 @@ BeginFocusTabGesture(*)
     }
 }
 
+FocusTabSlotHasOtherLayers(target_hwnd, monitor_index, slot_index)
+{
+    if !monitor_index || !slot_index
+        return false
+
+    for stack_info in GetCascadeSlotStacksForMonitor(monitor_index) {
+        if stack_info["slot_index"] != slot_index
+            continue
+
+        contains_target := false
+
+        for stack_hwnd in stack_info["windows"] {
+            if stack_hwnd = target_hwnd {
+                contains_target := true
+                break
+            }
+        }
+
+        return (
+            contains_target
+            && stack_info["windows"].Length > 1
+        )
+    }
+
+    return false
+}
+
+
 IsHeldFocusTab(hwnd)
 {
     global focus_tab_gesture
@@ -157,6 +200,7 @@ IsHeldFocusTab(hwnd)
     return (
         IsObject(focus_tab_gesture)
         && !focus_tab_gesture.cancelled
+        && !focus_tab_gesture.consume_only
         && focus_tab_gesture.target_hwnd = hwnd
     )
 }
@@ -194,7 +238,7 @@ UpdateFocusTabGesture()
         }
         gesture.release_missing_since := 0
 
-        if gesture.cancelled
+        if gesture.cancelled || gesture.consume_only
             return
 
         if !IsFocusTabGestureTargetValid(gesture)
@@ -312,7 +356,11 @@ FinishFocusTabGesture(*)
 
         gesture := focus_tab_gesture
         direction := 0
-        if IsFocusTabGestureTargetValid(gesture) && gesture.slot_index {
+        if (
+            !gesture.consume_only
+            && IsFocusTabGestureTargetValid(gesture)
+            && gesture.slot_index
+        ) {
             if IsObject(focus_tab_release_point) {
                 mouse_x := focus_tab_release_point.x
                 mouse_y := focus_tab_release_point.y
