@@ -53,7 +53,7 @@ minimum_width := 320
 minimum_height := 220
 
 ; Each cascade slot gets at most one visible clickable focus marker.
-focus_corner_size := 24
+focus_corner_size := 25
 focus_corner_thickness := 22
 focus_corner_overlap := 2
 ; Coalesce event-driven focus-tab updates. The slow timer below is only a
@@ -80,7 +80,7 @@ focus_tab_color_presets := Map(
 ; Alpha 1 is reserved for the hidden state so overlays remain hit-testable.
 focus_corner_visible := true
 focus_corner_inactive_slot_alpha := 72
-focus_corner_active_slot_alpha := 120
+focus_corner_active_slot_alpha := 255
 
 ; Only watch for a missed mouse-up while a focus-tab click owns the button.
 focus_tab_release_poll_ms := 50
