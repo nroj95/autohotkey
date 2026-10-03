@@ -2,18 +2,16 @@
 ; Included into the same script; functions share the existing global state.
 
 ; =============================================================================
-; focus-tab gestures and ordinary mouse clicks
+; focus-tab clicks and ordinary mouse clicks
 ; =============================================================================
 
-; Consume both halves of a tab click. The release still belongs to the tab
-; after the pointer leaves it, including after a cancelled swipe.
-#HotIf CanStartFocusTabGesture()
-*LButton::BeginFocusTabGesture()
+; Act once on press and consume the matching release, even outside the tab.
+; Holding the button never repeats the action or moves a window/tab.
+#HotIf CanStartFocusTabClick()
+*LButton::BeginFocusTabClick()
 
-#HotIf CanFinishFocusTabGesture()
-*LButton Up::FinishFocusTabGesture()
-#HotIf HasFocusTabGesture()
-*Escape::CancelFocusTabGesture()
+#HotIf HasFocusTabClick()
+*LButton Up::FinishFocusTabClick()
 #HotIf
 
 ; Any ordinary mouse click commits a just-adopted window. Wildcards make this

@@ -15,8 +15,8 @@ launch `../window-cascade.ahk`, not the files in this directory. the launcher ow
 | `navigation.ahk` | focusing, swapping, slot/layer rotation, spatial navigation, and bringing a cascade forward. |
 | `placement.ahk` | explicit placement, readiness retries, new-window placement, and asynchronous stabilization. |
 | `commands.ahk` | adoption and one-shot adoption undo, gathering, cross-monitor moves, close commands, minimize/restore operations, and minimize-state cleanup. |
-| `focus-corners.ahk` | focus overlays, their lifetime and position, held-tab visibility, and active-slot coloring. |
-| `focus-tab-gestures.ahk` | instant press-to-focus, swipe tracking and preview, target validation, cancellation, and release cleanup. |
+| `focus-corners.ahk` | one visible tab per slot, overlay lifetime and position, representative handoff, and active-slot coloring. |
+| `focus-tab-clicks.ahk` | instant press-to-focus/cycle, live target validation, mouse-release pairing, and missed-release recovery. |
 | `windows.ahk` | window filtering, visible/raw frame geometry, monitor lookup, and monitor-selection policy. |
 | `interface.ahk` | tray menu, help, startup shortcut, rotate-key and focus-tab color persistence, and compatibility checks. |
 | `debug.ahk` | logging, log-reset messages, error reporting, and diagnostic window descriptions. |
@@ -37,15 +37,25 @@ keep the `cascade_command_*` IDs in `settings.ahk` synchronized with the matchin
 
 the launcher remains at the repository root. startup shortcuts, `icons/window-cascade.ico`, `window-cascade-debug.log`, and the settings file under `%LOCALAPPDATA%\Window Cascade\settings.ini` keep their existing paths.
 
-## focus-tab gestures
+## focus-tab clicks
 
-pressing a tab focuses its window immediately. multi-layer slots keep the pressed tab visible and allow a small, bounded horizontal preview; the application window itself does not move. releasing after a deliberate left/right swipe rotates one previous/next layer in that slot. small movement, mostly vertical movement, or returning near the starting point is an ordinary focus click. a single-layer slot consumes the tab immediately on press and never enters swipe tracking or preview.
+each monitor/slot shows at most one focus tab. an inactive slot represents its exposed window; the active slot represents the next layer below the foreground window. a focused single-layer slot has no tab. deeper layers remain managed but their tabs stay hidden, so opacity no longer indicates stack depth. the full-height marker follows the highest slot regardless of which layer represents it.
 
-the default threshold is 36 screen-coordinate pixels, with horizontal travel at least 1.5 times the vertical travel. `focus_tab_*` settings control the threshold, preview, opacity, and gesture-only polling interval. no speed requirement or repeating rotation is applied.
+pressing an inactive slot's tab focuses its exposed window immediately. pressing the active slot's tab rotates the foreground window to the back of that slot's stack and focuses the next layer. repeated clicks visit every layer in order (A -> B -> C -> A), rather than alternating between the first two windows.
 
-`controls.ahk` pairs mouse-down and mouse-up through AutoHotkey's mouse hook, rather than relying on foreground-only mouse capture after another process has been activated. the press records the overlay, target HWND, monitor, and slot. release belongs to that gesture even outside the tab; ordinary clicks elsewhere retain their native behavior. cancelling with Escape, losing focus, or invalidating the target cancels rotation, but still consumes the matching release. reload/exit clears the preview and stops the gesture timer.
+all actions happen once on mouse-down. the pressed tab is hidden immediately; the renderer selects the new representative without waiting for mouse-up. holding, dragging, and releasing add no action. there is no swipe preview, temporary opacity/topmost override, or Escape binding; keyboard slot/layer rotation is unchanged.
+
+the renderer hides the old representative before showing its replacement. geometry queries stay interruptible; the selection and hide/show handoff run together, and stale foreground or click-generation snapshots are retried.
+
+`controls.ahk` pairs mouse-down and mouse-up through AutoHotkey's mouse hook. hit-testing captures the overlay, target HWND, and foreground HWND before the press handler resolves live slot membership. stale targets are skipped rather than retargeted. even a skipped click owns its matching release outside the tab or after its target closes; ordinary application clicks and drags retain their native behavior. `focus_tab_release_poll_ms` controls a temporary missed-release guard that only clears mouse ownership and never performs a focus/cycle action. reload/exit stops that guard.
 
 focus-tab colors are selected separately for the active and inactive slots from the tray. the selections persist under `[FocusTabs]` in `%LOCALAPPDATA%\Window Cascade\settings.ini`; defaults are Green for the active slot and Grey for inactive slots.
+
+### appearance diagnostics
+
+normal tab rendering reapplies opacity and repaints changed or newly shown overlays. overlay operations use pure HWNDs so hidden-window lookup does not depend on `DetectHiddenWindows`. the configured opacity values remain unchanged, and deeper tabs do not contribute additional opacity.
+
+when debug logging is enabled, `Focus-tab appearance.` entries are written only when the observed state changes. they include the active window, active-slot window count, click ownership, tab role, color, cached base alpha, native alpha, visibility, topmost state, Z-order predecessor, and rectangle. clicks do not override opacity. compare entries from a faint and a clear state when investigating intermittent appearance changes.
 
 ## scoped close batching
 
@@ -70,10 +80,11 @@ Window Cascade seeds windows already open at startup for discovery but does not 
 for Window Cascade changes, check:
 
 - new-window placement and delayed window startup
-- focus tabs: instant focus on press, visible held tab, and normal hiding on release
-- swipes: left/right on release, one layer per gesture, small/vertical/back-to-start movement, and immediate consume-only clicks for single-layer slots
-- release outside the tab or on another monitor; ordinary app clicks and drags must remain unaffected
-- cancel with Escape, focus another app, close/minimize/move the target, and reload/exit while holding
+- focus tabs: at most one visible tab per monitor/slot, correct exposed/next-layer target, and stable opacity across stack depths
+- focus-tab clicks: inactive slots focus without rotation; repeated active-slot clicks visit all layers in a three-or-more-window stack
+- focus-tab handoff: no overlapping replacement, immediate single-layer tab disappearance, and full-height marker preserved after rotation
+- holding/dragging/releasing: no preview or repeat action; release outside the tab or on another monitor is still consumed
+- ordinary app clicks/drags and Escape retain native behavior; also test close/minimize/move, focus changes, and reload/exit while holding
 - slot swaps, slot/layer rotation, and exposed-stack ordering
 - scoped closes: current layer and full monitor close without intermediate compaction
 - manual drag release: crossing the release boundary removes the window and dragging it over another slot does not re-adopt it

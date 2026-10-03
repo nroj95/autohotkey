@@ -100,10 +100,6 @@ SetFocusTabColor(target_group, color_name, *)
         return
     }
 
-    ; The tray cannot normally be used during a left-button gesture, but keep
-    ; color changes atomic if another input path invokes this function later.
-    CancelFocusTabGesture()
-
     if target_group = "active" {
         focus_corner_active_slot_color_name := color_name
         focus_corner_active_slot_color := focus_tab_color_presets[color_name]
@@ -300,9 +296,10 @@ ToggleWindowCascadeHelp(*)
     "If CapsLock Layer stops, Window Cascade exits after a short reload grace period.`n"
     "`n"
     "FOCUS TABS`n"
-    "Press a left-edge focus tab to focus its window immediately.`n"
-    "Hold, swipe left / right, then release for the previous / next layer in that slot.`n"
-    "The held tab stays visible. Small movements just focus.`n"
+    "Each slot shows at most one tab: its exposed window, or the next layer below the active window.`n"
+    "Press an inactive slot's tab to focus its exposed window immediately.`n"
+    "Press the active slot's tab to cycle to the next layer; repeated clicks visit every layer.`n"
+    "Single-layer slot: the tab disappears on press. Holding, dragging, and release add no action.`n"
     "Tabs in the active slot and inactive slots can use different tray-selected colors.`n"
     "Use Show focus tabs in the tray to show or hide them.`n"
     "`n"

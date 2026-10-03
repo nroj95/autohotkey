@@ -52,7 +52,7 @@ edge_margin := 12
 minimum_width := 320
 minimum_height := 220
 
-; Unfocused cascade windows get a clickable bottom-left focus marker.
+; Each cascade slot gets at most one visible clickable focus marker.
 focus_corner_size := 24
 focus_corner_thickness := 22
 focus_corner_overlap := 2
@@ -61,9 +61,9 @@ focus_corner_overlap := 2
 focus_corner_update_ms := 50
 focus_corner_fallback_ms := 1000
 
-; Focus-tab colors are chosen from a small fixed palette. The active-slot color
-; applies to hidden layers behind the foreground window; the foreground window's
-; own tab remains hidden. Transparency still shows approximate stack depth.
+; Focus-tab colors are chosen from a small fixed palette. An inactive slot
+; represents its exposed window; the active slot represents the next layer.
+; Deeper tabs stay hidden, so opacity no longer accumulates with stack depth.
 focus_tab_color_presets := Map(
     "Grey", "808080",
     "Red", "F44336",
@@ -82,14 +82,8 @@ focus_corner_visible := true
 focus_corner_inactive_slot_alpha := 72
 focus_corner_active_slot_alpha := 120
 
-; Swipe distances use the same screen-coordinate pixels as MouseGetPos.
-; Require deliberate, mostly horizontal movement; a long hold is still a click.
-focus_tab_swipe_threshold_px := 36
-focus_tab_swipe_horizontal_ratio := 1.5
-focus_tab_drag_preview_limit_px := 24
-focus_tab_drag_alpha := 180
-focus_tab_swipe_ready_alpha := 255
-focus_tab_gesture_poll_ms := 16
+; Only watch for a missed mouse-up while a focus-tab click owns the button.
+focus_tab_release_poll_ms := 50
 
 ; The dependency must be running. Startup and reload grace periods tolerate
 ; normal process-start ordering without introducing standalone operation.
@@ -166,8 +160,8 @@ focus_corner_overlays := Map()
 focus_corner_targets := Map()
 focus_corner_update_pending := false
 focus_tab_pending_press := 0
-focus_tab_gesture := 0
-focus_tab_release_point := 0
+focus_tab_click := 0
+focus_tab_click_generation := 0
 
 current_foreground_hwnd := WinExist("A")
 previous_foreground_hwnd := 0

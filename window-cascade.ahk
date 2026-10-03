@@ -104,7 +104,7 @@ SetTimer(CheckCompatibilitySettings, -500)
 #Include "%A_ScriptDir%\window-cascade\placement.ahk"
 #Include "%A_ScriptDir%\window-cascade\commands.ahk"
 #Include "%A_ScriptDir%\window-cascade\focus-corners.ahk"
-#Include "%A_ScriptDir%\window-cascade\focus-tab-gestures.ahk"
+#Include "%A_ScriptDir%\window-cascade\focus-tab-clicks.ahk"
 #Include "%A_ScriptDir%\window-cascade\windows.ahk"
 #Include "%A_ScriptDir%\window-cascade\interface.ahk"
 #Include "%A_ScriptDir%\window-cascade\debug.ahk"
@@ -119,7 +119,7 @@ HandleScriptExit(exit_reason, exit_code)
     global caps_layer_dependency_lost, focus_corner_overlays
 
     SetTimer(WatchCapsLockLayer, 0)
-    try StopFocusTabGesture(false)
+    try StopFocusTabClick()
     try StopWindowHooks()
 
     ; A dependency failure is different from an ordinary script reload. Recover

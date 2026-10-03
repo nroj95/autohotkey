@@ -31,43 +31,26 @@ RunQueuedFocusCornerUpdate()
 
 UpdateFocusCornerOverlays()
 {
-    global focus_corner_overlays, focus_tab_gesture
+    global focus_corner_overlays, focus_tab_click_generation, cascade_slot_tolerance
+    static update_generation := 0
 
-    active_hwnd := DllCall(
-        "GetForegroundWindow",
-        "ptr"
-    )
+    generation := ++update_generation
+    click_generation := focus_tab_click_generation
+    active_hwnd := DllCall("GetForegroundWindow", "ptr")
 
-    holding_focus_tab := (
-        IsObject(focus_tab_gesture)
-        && !focus_tab_gesture.cancelled
-        && focus_tab_gesture.ready
-    )
-
-    ; The marker timer must never mutate cascade membership. A window can be
-    ; temporarily between geometries while Explorer or placement settles.
+    ; Geometry reads stay interruptible. Never mutate membership while rendering.
     live_windows := GetCascadeWindowsForOverlay()
     live_targets := Map()
+    visible_windows := []
     visible_bounds := Map()
-    active_slot_targets := GetActiveFocusCornerSlotTargets(
-        active_hwnd,
-        live_windows
-    )
-
     highest_hwnd_by_monitor := Map()
     highest_y_by_monitor := Map()
 
-    ; Cache geometry and identify the highest cascade window on each monitor.
     for hwnd in live_windows {
         live_targets[hwnd] := true
 
-        if !DllCall(
-            "IsWindowVisible",
-            "ptr", hwnd,
-            "int"
-        ) {
+        if !DllCall("IsWindowVisible", "ptr", hwnd, "int")
             continue
-        }
 
         try {
             if WinGetMinMax("ahk_id " hwnd) != 0
@@ -88,10 +71,10 @@ UpdateFocusCornerOverlays()
         }
 
         monitor_index := GetMonitorForWindow(hwnd)
-
         if !monitor_index
             continue
 
+        visible_windows.Push(hwnd)
         visible_bounds[hwnd] := [
             window_x,
             window_y,
@@ -108,54 +91,103 @@ UpdateFocusCornerOverlays()
         }
     }
 
-    for hwnd in live_windows {
-        ; The pressed tab stays visible at its gesture-preview position.
-        if IsHeldFocusTab(hwnd)
-            continue
+    ; Stack keys already include the monitor; equal slot numbers never merge.
+    slot_stacks := BuildCascadeSlotStacks(visible_windows, cascade_slot_tolerance)
+    z_ranks := GetCascadeWindowZRanks()
 
-        ; Focusing the held window exposes the previous layer's tab in the
-        ; same slot. Hide those sibling tabs until the gesture ends.
-        if holding_focus_tab && active_slot_targets.Has(hwnd) {
-            HideFocusCornerOverlay(hwnd)
-            continue
+    ; Keep the hide/show handoff together, but do not lock the geometry queries.
+    previous_critical := A_IsCritical
+    Critical "On"
+    try {
+        ; A newer refresh or tab press may have changed the stack during queries.
+        if generation != update_generation
+            return
+        if active_hwnd != DllCall("GetForegroundWindow", "ptr")
+            || click_generation != focus_tab_click_generation
+        {
+            QueueFocusCornerUpdate()
+            return
         }
 
-        if (
-            hwnd = active_hwnd
-            || !visible_bounds.Has(hwnd)
-        ) {
-            HideFocusCornerOverlay(hwnd)
-            continue
+        selected_targets := Map()
+        active_slot_targets := Map()
+
+        for stack_info in slot_stacks {
+            ordered_windows := SortCascadeWindowsByZOrder(
+                stack_info["windows"],
+                z_ranks
+            )
+            selected_hwnd := SelectFocusCornerSlotTarget(
+                ordered_windows,
+                active_hwnd
+            )
+            contains_active := false
+            full_height := false
+
+            for hwnd in ordered_windows {
+                if hwnd = active_hwnd
+                    contains_active := true
+
+                monitor_index := visible_bounds[hwnd][5]
+                if highest_hwnd_by_monitor[monitor_index] = hwnd
+                    full_height := true
+            }
+
+            if contains_active {
+                for hwnd in ordered_windows
+                    active_slot_targets[hwnd] := true
+            }
+
+            ; Full height belongs to the highest slot, not one particular layer.
+            if selected_hwnd
+                selected_targets[selected_hwnd] := full_height
         }
 
-        bounds := visible_bounds[hwnd]
-        monitor_index := bounds[5]
+        stale_targets := []
 
-        is_highest_on_monitor := (
-            highest_hwnd_by_monitor.Has(monitor_index)
-            && highest_hwnd_by_monitor[monitor_index] = hwnd
-        )
+        ; Hide every old representative before showing any replacement.
+        ; Cached per-window GUIs stay reusable without stacking visible pixels.
+        for hwnd, overlay in focus_corner_overlays {
+            if !live_targets.Has(hwnd)
+                stale_targets.Push(hwnd)
+            else if !selected_targets.Has(hwnd)
+                HideFocusCornerOverlay(hwnd)
+        }
 
-        ShowFocusCornerOverlay(
-            hwnd,
-            bounds[1],
-            bounds[2],
-            bounds[3],
-            bounds[4],
-            is_highest_on_monitor,
-            active_slot_targets.Has(hwnd)
-        )
+        for hwnd in stale_targets
+            DestroyFocusCornerOverlay(hwnd)
+
+        for hwnd, full_height in selected_targets {
+            if hwnd = active_hwnd || !WinExist("ahk_id " hwnd)
+                continue
+
+            bounds := visible_bounds[hwnd]
+            try {
+                ShowFocusCornerOverlay(
+                    hwnd,
+                    bounds[1],
+                    bounds[2],
+                    bounds[3],
+                    bounds[4],
+                    full_height,
+                    active_slot_targets.Has(hwnd)
+                )
+            }
+            catch Error as err {
+                ; Closing targets must not interrupt updates for the other slots.
+                DebugError("ShowFocusCornerOverlay", err)
+            }
+        }
+    }
+    finally {
+        Critical(previous_critical)
     }
 
-    stale_targets := []
+    ; External applications can still change foreground focus during rendering.
+    if active_hwnd != DllCall("GetForegroundWindow", "ptr")
+        QueueFocusCornerUpdate()
 
-    for hwnd, overlay in focus_corner_overlays {
-        if !live_targets.Has(hwnd)
-            stale_targets.Push(hwnd)
-    }
-
-    for hwnd in stale_targets
-        DestroyFocusCornerOverlay(hwnd)
+    DebugFocusCornerAppearance(active_hwnd, active_slot_targets)
 }
 
 GetCascadeWindowsForOverlay()
@@ -189,42 +221,16 @@ GetCascadeWindowsForOverlay()
     return windows
 }
 
-GetActiveFocusCornerSlotTargets(active_hwnd, live_windows)
+SelectFocusCornerSlotTarget(ordered_windows, active_hwnd)
 {
-    global cascade_slot_tolerance
-
-    targets := Map()
-
-    if !active_hwnd
-        return targets
-
-    ; Build from the already-filtered overlay windows so this visual refresh
-    ; never mutates cascade membership or compaction state.
-    stacks := BuildCascadeSlotStacks(
-        live_windows,
-        cascade_slot_tolerance
-    )
-
-    for stack_info in stacks {
-        contains_active := false
-
-        for stack_hwnd in stack_info["windows"] {
-            if stack_hwnd = active_hwnd {
-                contains_active := true
-                break
-            }
-        }
-
-        if !contains_active
-            continue
-
-        for stack_hwnd in stack_info["windows"]
-            targets[stack_hwnd] := true
-
-        break
+    ; Inactive slot: exposed window. Active slot: first layer below foreground.
+    ; A focused single-window slot has no remaining tab to show.
+    for hwnd in ordered_windows {
+        if hwnd != active_hwnd
+            return hwnd
     }
 
-    return targets
+    return 0
 }
 
 
@@ -265,6 +271,10 @@ ShowFocusCornerOverlay(
         CreateFocusCornerOverlay(hwnd, marker_color, marker_alpha)
 
     overlay := focus_corner_overlays[hwnd]
+    appearance_changed := (
+        overlay.color != marker_color
+        || overlay.alpha != marker_alpha
+    )
 
     if overlay.color != marker_color {
         overlay.gui.BackColor := marker_color
@@ -281,12 +291,14 @@ ShowFocusCornerOverlay(
         && overlay.window_height = window_height
         && overlay.full_height = full_height
     ) {
-        ; Gesture previews temporarily change native alpha without changing the
-        ; semantic value above. Reassert it even when geometry did not change.
+        ; Reapply the selected appearance even when geometry did not change.
         try WinSetTransparent(
             focus_corner_visible ? marker_alpha : 1,
-            "ahk_id " overlay.gui.Hwnd
+            overlay.gui.Hwnd
         )
+        if appearance_changed
+            WinRedraw(overlay.gui.Hwnd)
+
         PlaceFocusCornerAboveTarget(hwnd, overlay)
         return
     }
@@ -319,9 +331,12 @@ ShowFocusCornerOverlay(
 
     WinSetTransparent(
         focus_corner_visible ? marker_alpha : 1,
-        "ahk_id " overlay.gui.Hwnd
+        overlay.gui.Hwnd
     )
 
+    ; A reused hidden GUI can have a new BackColor but an old painted surface.
+    ; Repaint after showing it; changing alpha alone does not repaint its pixels.
+    WinRedraw(overlay.gui.Hwnd)
     PlaceFocusCornerAboveTarget(hwnd, overlay)
 
     overlay.window_x := window_x
@@ -362,9 +377,6 @@ PlaceFocusCornerAboveTarget(hwnd, overlay)
 HideFocusCornerOverlay(hwnd)
 {
     global focus_corner_overlays
-
-    if IsHeldFocusTab(hwnd)
-        return
 
     if !focus_corner_overlays.Has(hwnd)
         return
@@ -413,9 +425,6 @@ DestroyFocusCornerOverlay(hwnd)
     global focus_corner_overlays
     global focus_corner_targets
 
-    if IsHeldFocusTab(hwnd)
-        CancelFocusTabGesture()
-
     if !focus_corner_overlays.Has(hwnd)
         return
 
@@ -440,8 +449,6 @@ ToggleFocusCornerVisibility(*)
     global focus_corner_visible
     global focus_corner_overlays
 
-    ; Cancel rather than repainting a tab in the middle of a gesture.
-    CancelFocusTabGesture()
     focus_corner_visible := !focus_corner_visible
 
     for hwnd, overlay in focus_corner_overlays {
@@ -449,7 +456,7 @@ ToggleFocusCornerVisibility(*)
 
         try WinSetTransparent(
             transparency,
-            "ahk_id " overlay.gui.Hwnd
+            overlay.gui.Hwnd
         )
     }
 

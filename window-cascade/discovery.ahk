@@ -310,7 +310,6 @@ HandleWinEvent(
     global startup_windows
     global placement_enabled
     global desktop_monitor_hint, desktop_monitor_hint_tick
-    global focus_tab_gesture
 
     try {
         EVENT_SYSTEM_FOREGROUND := 0x0003
@@ -321,10 +320,6 @@ HandleWinEvent(
         CHILDID_SELF := 0
 
         if event = EVENT_SYSTEM_FOREGROUND {
-            if IsObject(focus_tab_gesture) && focus_tab_gesture.ready
-                && hwnd != focus_tab_gesture.target_hwnd
-                CancelFocusTabGesture()
-
             if hwnd && hwnd != current_foreground_hwnd {
                 CancelPendingAdoptionUndo()
 
@@ -379,7 +374,8 @@ HandleWinEvent(
         if event = EVENT_OBJECT_LOCATIONCHANGE {
             ; Only a physical left-button drag can release membership here.
             ; Script-driven placement and ordinary application moves stay managed.
-            if GetKeyState("LButton", "P")
+            ; A consumed focus-tab click cannot start a native window drag.
+            if GetKeyState("LButton", "P") && !HasFocusTabClick()
                 ReleaseDraggedCascadeWindow(hwnd)
 
             return
@@ -495,9 +491,6 @@ ForgetWindow(hwnd)
     global cascade_history
     global startup_windows, known_windows
     global current_foreground_hwnd, previous_foreground_hwnd
-
-    if IsHeldFocusTab(hwnd)
-        CancelFocusTabGesture()
 
     ; Do not wait for the next visual sweep: a destroyed target must never leave
     ; its script-owned focus GUI behind.

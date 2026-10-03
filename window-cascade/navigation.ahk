@@ -221,7 +221,7 @@ RotateCascadeSlotForWindow(
     z_ranks := GetCascadeWindowZRanks()
 
     for stack_info in stacks {
-        ; A gesture must never migrate to a different slot while the button is held.
+        ; A tab click can pin rotation to the slot it actually resolved.
         if expected_slot && stack_info["slot_index"] != expected_slot
             continue
 
