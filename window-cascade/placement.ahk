@@ -5,9 +5,9 @@
 ; explicit placement on a monitor
 ; =============================================================================
 
-PlaceCascadeWindowOnMonitor(hwnd, target_monitor)
+PlaceCascadeWindowOnMonitor(hwnd, target_monitor, requested_position := 0)
 {
-    global handled_windows, known_windows
+    global handled_windows, known_windows, pending_windows, placement_reservations
     global window_width_ratio, window_height_ratio
     global edge_margin, minimum_width, minimum_height
 
@@ -15,6 +15,9 @@ PlaceCascadeWindowOnMonitor(hwnd, target_monitor)
         return false
 
     window := "ahk_id " hwnd
+    CancelPlacementStabilization(hwnd)
+    if placement_reservations.Has(hwnd)
+        placement_reservations.Delete(hwnd)
     previous_monitor := GetManagedCascadeMonitor(hwnd)
 
     try {
@@ -57,7 +60,9 @@ PlaceCascadeWindowOnMonitor(hwnd, target_monitor)
         ; least-used-slot allocator then fills the current layer first.
         RemoveCascadeWindowFromHistory(hwnd)
 
-        position := GetNextCascadePosition(
+        ; A mouse drop supplies the nearest slot explicitly. Keyboard adoption
+        ; and new-window placement keep using the normal least-used-slot policy.
+        position := IsObject(requested_position) ? requested_position : GetNextCascadePosition(
             target_monitor,
             work_left,
             work_top,
@@ -78,6 +83,9 @@ PlaceCascadeWindowOnMonitor(hwnd, target_monitor)
             window_height
         )
 
+        placement_reservations[hwnd] := Map(
+            "monitor", target_monitor, "x", target_x, "y", target_y
+        )
         WinMove(
             raw_target[1],
             raw_target[2],
@@ -88,6 +96,8 @@ PlaceCascadeWindowOnMonitor(hwnd, target_monitor)
 
         handled_windows[hwnd] := true
         known_windows[hwnd] := true
+        if pending_windows.Has(hwnd)
+            pending_windows.Delete(hwnd)
 
         RecordCascadeWindow(target_monitor, hwnd)
 
@@ -105,6 +115,8 @@ PlaceCascadeWindowOnMonitor(hwnd, target_monitor)
         return true
     }
     catch Error as err {
+        if placement_reservations.Has(hwnd)
+            placement_reservations.Delete(hwnd)
         error_number := 0
 
         try
@@ -169,6 +181,9 @@ PlaceNewWindow(
     global edge_margin, minimum_width, minimum_height
 
     try {
+        if handled_windows.Has(hwnd) || IsCascadeWindowBeingDragged(hwnd)
+            return
+
         if pending_windows.Has(hwnd)
             pending_windows.Delete(hwnd)
 
@@ -283,6 +298,8 @@ PlaceNewWindow(
         Critical "On"
 
         try {
+            if handled_windows.Has(hwnd) || IsCascadeWindowBeingDragged(hwnd)
+                return
             position := GetNextCascadePosition(
                 target_monitor,
                 work_left,
@@ -353,6 +370,9 @@ PlaceNewWindow(
 
         set_window_pos_start_tick := A_TickCount
 
+        if handled_windows.Has(hwnd) || IsCascadeWindowBeingDragged(hwnd)
+            return
+
         set_window_pos_result := DllCall(
             "SetWindowPos",
             "ptr", hwnd,
@@ -387,6 +407,9 @@ PlaceNewWindow(
             return
         }
 
+        ; A native drag may have taken ownership while the async move was posted.
+        if handled_windows.Has(hwnd) || IsCascadeWindowBeingDragged(hwnd)
+            return
         handled_windows[hwnd] := true
         RecordCascadeWindow(target_monitor, hwnd)
 

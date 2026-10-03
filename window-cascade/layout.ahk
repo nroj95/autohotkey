@@ -26,6 +26,10 @@ RecordCascadeWindow(monitor_index, hwnd)
     if !cascade_history.Has(monitor_index)
         cascade_history[monitor_index] := []
 
+    for existing_hwnd in cascade_history[monitor_index] {
+        if existing_hwnd = hwnd
+            return
+    }
     cascade_history[monitor_index].Push(hwnd)
 
     QueueFocusCornerUpdate()
@@ -62,6 +66,11 @@ GetLiveCascadeHistory(monitor_index)
         if !WinExist("ahk_id " hwnd)
             continue
 
+        if IsCascadeWindowBeingDragged(hwnd) {
+            live_history.Push(hwnd)
+            continue
+        }
+
         ; A minimized window has no useful cascade geometry. Keep its recorded
         ; membership so restoring it does not silently remove it from history.
         try {
@@ -74,7 +83,10 @@ GetLiveCascadeHistory(monitor_index)
             continue
         }
 
-        if GetMonitorForWindow(hwnd) != monitor_index
+        ; Native drags and in-flight placements retain their original/intended
+        ; membership until the corresponding operation commits.
+        if !TryGetCascadeLayoutOrigin(hwnd, &layout_monitor, &layout_x, &layout_y)
+            || layout_monitor != monitor_index
             continue
 
         if !IsWindowInCascadeLayout(hwnd)
@@ -93,19 +105,58 @@ GetLiveCascadeHistory(monitor_index)
 
 IsWindowInCascadeLayout(hwnd)
 {
-    global cascade_release_tolerance
+    global cascade_slot_tolerance
 
     if !hwnd || !WinExist("ahk_id " hwnd)
         return false
 
     stacks := BuildCascadeSlotStacks(
         [hwnd],
-        cascade_release_tolerance
+        cascade_slot_tolerance
     )
 
     return stacks.Length > 0
 }
 
+
+TryGetCascadeLayoutOrigin(hwnd, &monitor_index, &x, &y)
+{
+    global cascade_window_drag, placement_reservations
+
+    if IsCascadeWindowBeingDragged(hwnd) && !cascade_window_drag.completing {
+        monitor_index := cascade_window_drag.source_monitor
+            ? cascade_window_drag.source_monitor : cascade_window_drag.monitor
+        x := cascade_window_drag.frame_x
+        y := cascade_window_drag.frame_y
+        return true
+    }
+    if placement_reservations.Has(hwnd) {
+        reservation := placement_reservations[hwnd]
+        monitor_index := reservation["monitor"]
+        x := reservation["x"]
+        y := reservation["y"]
+        return true
+    }
+
+    monitor_index := GetMonitorForWindow(hwnd)
+    return monitor_index && GetVisibleWindowBounds(hwnd, &x, &y, &width, &height)
+}
+
+GetCanonicalCascadeGeometry(monitor_index)
+{
+    global window_width_ratio, window_height_ratio
+    global edge_margin, minimum_width, minimum_height
+
+    MonitorGetWorkArea(monitor_index, &left, &top, &right, &bottom)
+    width := Min(Max(minimum_width, Floor((right - left) * window_width_ratio)),
+        right - left - edge_margin * 2)
+    height := Min(Max(minimum_height, Floor((bottom - top) * window_height_ratio)),
+        bottom - top - edge_margin * 2)
+    return {
+        width: width, height: height,
+        slots: BuildCascadeSlots(left, top, right, bottom, width, height)
+    }
+}
 
 ; =============================================================================
 ; slots, stacks, and exposed layers
@@ -151,83 +202,19 @@ GetCurrentCascadeLayerWindows(monitor_index)
 
 BuildCascadeSlotStacks(windows, tolerance)
 {
-    global window_width_ratio, window_height_ratio
-    global edge_margin, minimum_width, minimum_height
-
     stacks := []
     stacks_by_slot := Map()
+    geometry_by_monitor := Map()
 
     for hwnd in windows {
         try {
-            if WinGetMinMax("ahk_id " hwnd) = -1
+            if !IsCascadeWindowBeingDragged(hwnd) && WinGetMinMax(hwnd) != 0
                 continue
-
-            monitor_index := GetMonitorForWindow(hwnd)
-
-            if !monitor_index
+            if !TryGetCascadeLayoutOrigin(hwnd, &monitor_index, &window_x, &window_y)
                 continue
-
-            MonitorGetWorkArea(
-                monitor_index,
-                &work_left,
-                &work_top,
-                &work_right,
-                &work_bottom
-            )
-
-            work_width := work_right - work_left
-            work_height := work_bottom - work_top
-
-            canonical_width := Floor(
-                work_width * window_width_ratio
-            )
-
-            canonical_height := Floor(
-                work_height * window_height_ratio
-            )
-
-            canonical_width := Max(
-                minimum_width,
-                canonical_width
-            )
-
-            canonical_height := Max(
-                minimum_height,
-                canonical_height
-            )
-
-            canonical_width := Min(
-                canonical_width,
-                work_width - edge_margin * 2
-            )
-
-            canonical_height := Min(
-                canonical_height,
-                work_height - edge_margin * 2
-            )
-
-            slots := BuildCascadeSlots(
-                work_left,
-                work_top,
-                work_right,
-                work_bottom,
-                canonical_width,
-                canonical_height
-            )
-
-            if !TryGetVisibleFrameRect(
-                hwnd,
-                &window_x,
-                &window_y,
-                &window_width,
-                &window_height,
-                &window_inset_left,
-                &window_inset_top,
-                &window_inset_right,
-                &window_inset_bottom
-            ) {
-                continue
-            }
+            if !geometry_by_monitor.Has(monitor_index)
+                geometry_by_monitor[monitor_index] := GetCanonicalCascadeGeometry(monitor_index)
+            slots := geometry_by_monitor[monitor_index].slots
         }
         catch {
             continue
@@ -399,7 +386,7 @@ FindNearestCascadeSlot(
         if delta_x > tolerance || delta_y > tolerance
             continue
 
-        distance := delta_x + delta_y
+        distance := delta_x * delta_x + delta_y * delta_y
 
         if !best_slot_index
             || distance < best_distance
@@ -435,28 +422,15 @@ GetCascadeSlotCounts(
             if placement_reservations.Has(hwnd)
                 continue
 
-            if GetMonitorForWindow(hwnd) != monitor_index
+            if !TryGetCascadeLayoutOrigin(hwnd, &layout_monitor, &window_x, &window_y)
+                || layout_monitor != monitor_index
                 continue
 
             try {
-                if WinGetMinMax("ahk_id " hwnd) = -1
+                if !IsCascadeWindowBeingDragged(hwnd) && WinGetMinMax("ahk_id " hwnd) != 0
                     continue
             }
             catch {
-                continue
-            }
-
-            if !TryGetVisibleFrameRect(
-                hwnd,
-                &window_x,
-                &window_y,
-                &window_width,
-                &window_height,
-                &window_inset_left,
-                &window_inset_top,
-                &window_inset_right,
-                &window_inset_bottom
-            ) {
                 continue
             }
 
@@ -545,6 +519,12 @@ GetNextCascadePosition(
 ; layout compaction
 ; =============================================================================
 
+IsCascadeCompactionDeferred(monitor_index)
+{
+    ; Keep every drop destination stable until the mouse interaction is finished.
+    return HasCascadeWindowDrag() || IsCascadeCloseBatchActive(monitor_index)
+}
+
 QueueCascadeCompaction(monitor_index)
 {
     global cascade_compaction_pending
@@ -554,8 +534,8 @@ QueueCascadeCompaction(monitor_index)
 
     cascade_compaction_pending[monitor_index] := true
 
-    ; A scoped close owns the monitor until every requested window is gone.
-    if IsCascadeCloseBatchActive(monitor_index)
+    ; A close batch or native drag postpones layout mutation until it finishes.
+    if IsCascadeCompactionDeferred(monitor_index)
         return
 
     SetTimer FlushCascadeCompactions, -120
@@ -569,7 +549,7 @@ FlushCascadeCompactions()
     deferred_monitors := Map()
 
     for monitor_index in cascade_compaction_pending {
-        if IsCascadeCloseBatchActive(monitor_index) {
+        if IsCascadeCompactionDeferred(monitor_index) {
             deferred_monitors[monitor_index] := true
             continue
         }
@@ -590,6 +570,11 @@ CompactCascadeLayout(monitor_index)
     global monitor_minimized_windows_by_monitor
     global window_width_ratio, window_height_ratio
     global edge_margin, minimum_width, minimum_height
+
+    if IsCascadeCompactionDeferred(monitor_index) {
+        QueueCascadeCompaction(monitor_index)
+        return
+    }
 
     ; A fully hidden monitor has nothing visible to compact.
     if monitor_minimized_windows_by_monitor.Has(monitor_index)
@@ -711,6 +696,11 @@ CompactCascadeLayout(monitor_index)
         target_stacks.Push([])
 
     for linear_index, hwnd in ordered_windows {
+        ; A native drag can begin while an earlier WinMove yields to Windows.
+        if IsCascadeCompactionDeferred(monitor_index) {
+            QueueCascadeCompaction(monitor_index)
+            return
+        }
         target_slot_index := Mod(linear_index - 1, slots.Length) + 1
         target_slot := slots[target_slot_index]
 

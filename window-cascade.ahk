@@ -32,7 +32,7 @@
 ; - compact holes forward across slots and layers after managed windows disappear.
 ; - rotate one slot across layers or rotate every slot to expose the next layer.
 ; - focus and swap current-layer windows by physical top-to-bottom order.
-; - let manually moved windows relinquish their old slot automatically.
+; - resolve mouse drops once: snap/adopt near a slot, otherwise leave the cascade.
 ; - move, auto-adopt, and smart-sort windows across monitors with Caps + Alt + Left/Right.
 ; - reject obvious child/helper windows before queueing placement.
 ; - forget destroyed window handles so recycled hwnd values remain safe.
@@ -99,6 +99,7 @@ SetTimer(CheckCompatibilitySettings, -500)
 
 #Include "%A_ScriptDir%\window-cascade\controls.ahk"
 #Include "%A_ScriptDir%\window-cascade\discovery.ahk"
+#Include "%A_ScriptDir%\window-cascade\window-drag.ahk"
 #Include "%A_ScriptDir%\window-cascade\layout.ahk"
 #Include "%A_ScriptDir%\window-cascade\navigation.ahk"
 #Include "%A_ScriptDir%\window-cascade\placement.ahk"

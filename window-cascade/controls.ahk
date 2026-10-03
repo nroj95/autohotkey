@@ -16,7 +16,7 @@
 
 ; Any ordinary mouse click commits a just-adopted window. Wildcards make this
 ; apply even while modifier keys are held; tilde preserves the native click.
-~*LButton::CancelPendingAdoptionUndo()
+~*LButton::CaptureCascadeMousePress()
 ~*RButton::CancelPendingAdoptionUndo()
 ~*MButton::CancelPendingAdoptionUndo()
 ~*XButton1::CancelPendingAdoptionUndo()
@@ -26,7 +26,12 @@
 ; the user clicks between monitors, or may update foreground focus after the
 ; mouse-up event. Inspect the actual window under the cursor instead.
 ; Match the wildcard release above so its contextual variant takes priority.
-~*LButton Up::CaptureDesktopMonitorHint()
+~*LButton Up::CaptureCascadeMouseRelease()
+
+; Observe native drag cancellation without consuming Escape from the app.
+#HotIf HasCascadeWindowDrag()
+~*Escape::CancelCascadeWindowDrop()
+#HotIf
 
 
 ; =============================================================================
@@ -136,6 +141,10 @@ RestoreCascadeWindowsAfterDependencyLoss()
 
 ActiveWindowBlocksCascadeCommands()
 {
+    ; Do not rotate, gather or reposition windows underneath a native drag.
+    if HasCascadeWindowDrag()
+        return true
+
     active_hwnd := WinExist("A")
 
     if !active_hwnd || IsShellSurfaceWindow(active_hwnd)

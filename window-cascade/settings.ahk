@@ -14,14 +14,10 @@ cascade_x := 28
 cascade_y := 24
 
 
-; A manually moved window still counts as occupying a canonical slot when its
-; top-left corner remains close enough to that slot.
-cascade_slot_tolerance := 14
-
-; A managed window leaves the cascade after being deliberately moved away
-; from every canonical slot. Keep this looser than exact slot matching so
-; small manual adjustments do not release a window accidentally.
-cascade_release_tolerance := 56
+; One tolerance for slot membership and mouse drops (screen-coordinate pixels).
+; During a native drag, the original slot is retained. On release, the visible
+; top-left must be within this distance on both axes; the closest slot wins.
+cascade_slot_tolerance := 56
 
 placement_delay_ms := 60
 
@@ -150,6 +146,9 @@ startup_windows := Map()
 known_windows := Map()
 missed_window_poll_ms := 1000
 cascade_history := Map()
+cascade_mouse_press := 0
+cascade_window_drag := 0
+cascade_drag_generation := 0
 cascade_compaction_pending := Map()
 cascade_close_batches := Map()
 layer_minimized_windows_by_monitor := Map()
@@ -178,7 +177,7 @@ win_event_callback := 0
 foreground_hook := 0
 window_show_hook := 0
 window_destroy_hook := 0
-window_location_hook := 0
+window_move_size_hook := 0
 
 cascade_command_message := 0
 

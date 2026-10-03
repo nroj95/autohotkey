@@ -178,12 +178,13 @@ StartWindowHooks()
 {
     global win_event_callback
     global foreground_hook, window_show_hook, window_destroy_hook
-    global window_location_hook
+    global window_move_size_hook
 
     EVENT_SYSTEM_FOREGROUND := 0x0003
     EVENT_OBJECT_DESTROY := 0x8001
     EVENT_OBJECT_SHOW := 0x8002
-    EVENT_OBJECT_LOCATIONCHANGE := 0x800B
+    EVENT_SYSTEM_MOVESIZESTART := 0x000A
+    EVENT_SYSTEM_MOVESIZEEND := 0x000B
 
     WINEVENT_OUTOFCONTEXT := 0x0000
     WINEVENT_SKIPOWNPROCESS := 0x0002
@@ -230,10 +231,10 @@ StartWindowHooks()
     )
 
 
-    window_location_hook := DllCall(
+    window_move_size_hook := DllCall(
         "SetWinEventHook",
-        "uint", EVENT_OBJECT_LOCATIONCHANGE,
-        "uint", EVENT_OBJECT_LOCATIONCHANGE,
+        "uint", EVENT_SYSTEM_MOVESIZESTART,
+        "uint", EVENT_SYSTEM_MOVESIZEEND,
         "ptr", 0,
         "ptr", win_event_callback,
         "uint", 0,
@@ -246,7 +247,7 @@ StartWindowHooks()
         !foreground_hook
         || !window_show_hook
         || !window_destroy_hook
-        || !window_location_hook
+        || !window_move_size_hook
     ) {
 
         MsgBox(
@@ -262,11 +263,12 @@ StopWindowHooks()
 {
     global win_event_callback
     global foreground_hook, window_show_hook, window_destroy_hook
-    global window_location_hook
+    global window_move_size_hook
 
     SetTimer(WatchForMissedWindows, 0)
     SetTimer(UpdateFocusCornerOverlays, 0)
     SetTimer(RunQueuedFocusCornerUpdate, 0)
+    SetTimer(WatchCascadeWindowDrag, 0)
 
 
     if foreground_hook {
@@ -284,9 +286,9 @@ StopWindowHooks()
         window_destroy_hook := 0
     }
 
-    if window_location_hook {
-        DllCall("UnhookWinEvent", "ptr", window_location_hook)
-        window_location_hook := 0
+    if window_move_size_hook {
+        DllCall("UnhookWinEvent", "ptr", window_move_size_hook)
+        window_move_size_hook := 0
     }
 
     if win_event_callback {
@@ -315,7 +317,8 @@ HandleWinEvent(
         EVENT_SYSTEM_FOREGROUND := 0x0003
         EVENT_OBJECT_DESTROY := 0x8001
         EVENT_OBJECT_SHOW := 0x8002
-        EVENT_OBJECT_LOCATIONCHANGE := 0x800B
+        EVENT_SYSTEM_MOVESIZESTART := 0x000A
+        EVENT_SYSTEM_MOVESIZEEND := 0x000B
         OBJID_WINDOW := 0
         CHILDID_SELF := 0
 
@@ -371,13 +374,13 @@ HandleWinEvent(
         }
 
 
-        if event = EVENT_OBJECT_LOCATIONCHANGE {
-            ; Only a physical left-button drag can release membership here.
-            ; Script-driven placement and ordinary application moves stay managed.
-            ; A consumed focus-tab click cannot start a native window drag.
-            if GetKeyState("LButton", "P") && !HasFocusTabClick()
-                ReleaseDraggedCascadeWindow(hwnd)
+        if event = EVENT_SYSTEM_MOVESIZESTART {
+            BeginCascadeWindowDrag(hwnd, event_time)
+            return
+        }
 
+        if event = EVENT_SYSTEM_MOVESIZEEND {
+            EndCascadeWindowDrag(hwnd)
             return
         }
 
@@ -437,45 +440,9 @@ HandleWinEvent(
 
         QueueWindowPlacement(hwnd, source_hwnd)
     }
-    catch {
-        return
+    catch Error as err {
+        DebugError("HandleWinEvent", err)
     }
-}
-
-
-; =============================================================================
-; manual cascade release
-; =============================================================================
-
-ReleaseDraggedCascadeWindow(hwnd)
-{
-    global placement_reservations
-
-    managed_monitor := GetManagedCascadeMonitor(hwnd)
-
-    if !managed_monitor || IsWindowInCascadeLayout(hwnd)
-        return false
-
-    ; Crossing the release boundary is one-way. Keep the HWND known/handled so
-    ; dragging it back over a canonical slot cannot make discovery adopt it.
-    CancelPlacementStabilization(hwnd)
-    RemoveCascadeWindowFromHistory(hwnd)
-    RemoveWindowFromMinimizeState(hwnd)
-
-    if placement_reservations.Has(hwnd)
-        placement_reservations.Delete(hwnd)
-
-    DestroyFocusCornerOverlay(hwnd)
-    QueueCascadeCompaction(managed_monitor)
-    QueueFocusCornerUpdate()
-
-    DebugLog(
-        "Cascade window released by drag."
-        . " | monitor=" managed_monitor
-        . " | " DebugDescribeWindow(hwnd)
-    )
-
-    return true
 }
 
 
@@ -497,6 +464,9 @@ ForgetWindow(hwnd)
     DestroyFocusCornerOverlay(hwnd)
 
     affected_monitor := GetManagedCascadeMonitor(hwnd)
+
+    if IsCascadeWindowBeingDragged(hwnd)
+        StopCascadeWindowDrag()
 
     if IsPendingAdoptionUndoFor(hwnd)
         pending_adoption_undo := 0

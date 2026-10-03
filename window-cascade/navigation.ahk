@@ -153,6 +153,10 @@ SwapActiveCascadeWindow(direction)
 
 MoveCascadeWindowToSlot(hwnd, target_x, target_y)
 {
+    global placement_reservations
+
+    if IsCascadeWindowBeingDragged(hwnd)
+        return false
     if !TryGetVisibleFrameRect(
         hwnd,
         &current_x,
@@ -167,6 +171,15 @@ MoveCascadeWindowToSlot(hwnd, target_x, target_y)
         return false
     }
 
+    if current_x = target_x && current_y = target_y
+        return true
+
+    ; Compaction must replace the previous stabilization destination, otherwise
+    ; its delayed retry could pull a just-dropped window back to an old slot.
+    CancelPlacementStabilization(hwnd)
+    if placement_reservations.Has(hwnd)
+        placement_reservations.Delete(hwnd)
+
     raw_target := GetRawRectForVisibleTarget(
         hwnd,
         target_x,
@@ -175,6 +188,11 @@ MoveCascadeWindowToSlot(hwnd, target_x, target_y)
         current_height
     )
 
+    if IsCascadeWindowBeingDragged(hwnd)
+        return false
+    placement_reservations[hwnd] := Map(
+        "monitor", GetMonitorForWindow(hwnd), "x", target_x, "y", target_y
+    )
     try {
         WinMove(
             raw_target[1],
@@ -185,9 +203,13 @@ MoveCascadeWindowToSlot(hwnd, target_x, target_y)
         )
     }
     catch {
+        if placement_reservations.Has(hwnd)
+            placement_reservations.Delete(hwnd)
         return false
     }
 
+    if !IsCascadeWindowBeingDragged(hwnd)
+        SchedulePlacementStabilization(hwnd, target_x, target_y, current_width, current_height)
     return true
 }
 

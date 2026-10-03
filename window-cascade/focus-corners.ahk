@@ -32,10 +32,12 @@ RunQueuedFocusCornerUpdate()
 UpdateFocusCornerOverlays()
 {
     global focus_corner_overlays, focus_tab_click_generation, cascade_slot_tolerance
+    global cascade_drag_generation
     static update_generation := 0
 
     generation := ++update_generation
     click_generation := focus_tab_click_generation
+    drag_generation := cascade_drag_generation
     active_hwnd := DllCall("GetForegroundWindow", "ptr")
 
     ; Geometry reads stay interruptible. Never mutate membership while rendering.
@@ -104,6 +106,7 @@ UpdateFocusCornerOverlays()
             return
         if active_hwnd != DllCall("GetForegroundWindow", "ptr")
             || click_generation != focus_tab_click_generation
+            || drag_generation != cascade_drag_generation
         {
             QueueFocusCornerUpdate()
             return
@@ -202,7 +205,7 @@ GetCascadeWindowsForOverlay()
             if seen.Has(hwnd)
                 continue
 
-            if !WinExist("ahk_id " hwnd)
+            if !WinExist("ahk_id " hwnd) || IsCascadeWindowBeingDragged(hwnd)
                 continue
 
             if GetMonitorForWindow(hwnd) != monitor_index

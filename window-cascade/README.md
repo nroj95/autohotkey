@@ -11,6 +11,7 @@ launch `../window-cascade.ahk`, not the files in this directory. the launcher ow
 | `settings.ahk` | defaults, persisted rotate-key and focus-tab color selections, shared runtime state, and CapsLock Layer command IDs. |
 | `controls.ahk` | focus-tab mouse bindings, ordinary desktop-click handling, required CapsLock Layer presence/watch logic, and registered-message dispatch. |
 | `discovery.ahk` | desktop monitor hints, the startup window snapshot, discovery polling, placement queueing, Windows event hooks, and destroyed-window cleanup. |
+| `window-drag.ahk` | native mouse-drag tracking, release-time snap/adopt/release decisions, and deferred-layout recovery. |
 | `layout.ahk` | managed history, canonical slot geometry, occupancy, stacks, exposed layers, compaction, and Z-order sorting. |
 | `navigation.ahk` | focusing, swapping, slot/layer rotation, spatial navigation, and bringing a cascade forward. |
 | `placement.ahk` | explicit placement, readiness retries, new-window placement, and asynchronous stabilization. |
@@ -43,7 +44,7 @@ each monitor/slot shows at most one focus tab. an inactive slot represents its e
 
 pressing an inactive slot's tab focuses its exposed window immediately. pressing the active slot's tab rotates the foreground window to the back of that slot's stack and focuses the next layer. repeated clicks visit every layer in order (A -> B -> C -> A), rather than alternating between the first two windows.
 
-all actions happen once on mouse-down. the pressed tab is hidden immediately; the renderer selects the new representative without waiting for mouse-up. holding, dragging, and releasing add no action. there is no swipe preview, temporary opacity/topmost override, or Escape binding; keyboard slot/layer rotation is unchanged.
+all actions happen once on mouse-down. the pressed tab is hidden immediately; the renderer selects the new representative without waiting for mouse-up. holding, dragging, and releasing add no action. there is no swipe preview, temporary opacity/topmost override, or focus-tab Escape binding; keyboard slot/layer rotation is unchanged.
 
 the renderer hides the old representative before showing its replacement. geometry queries stay interruptible; the selection and hide/show handoff run together, and stale foreground or click-generation snapshots are retried.
 
@@ -61,9 +62,17 @@ when debug logging is enabled, `Focus-tab appearance.` entries are written only 
 
 `Caps + F4` and `Caps + Alt + F4` register their full close scope before sending any `WinClose` requests. destroy events remove windows from that batch, while layout compaction for the affected monitor stays deferred. the final destroyed target releases the batch and allows one queued compaction, so the cascade does not repeatedly reflow between individual closes.
 
-## manual cascade release
+## window drag and drop
 
-a managed window dragged beyond `cascade_release_tolerance` is removed from cascade history immediately. that release is one-way: dragging the same window over another canonical slot does not re-adopt it. `Caps + Insert` is the explicit way to adopt or re-slot an existing window; newly opened windows still follow normal automatic placement.
+`cascade_slot_tolerance` is the single membership/drop tolerance, defaulting to 56 screen-coordinate pixels on each axis. the old separate release tolerance is removed. slot proximity is measured from the window's visible top-left corner, not the pointer. among eligible canonical positions, the nearest position by squared distance wins; equal distances prefer the earlier slot.
+
+a native mouse drag preserves its starting cascade membership and logical slot until the move loop finishes and the mouse button is released. passing outside the tolerance while still holding does not remove the window. focus tabs for the dragged window are hidden, compaction is deferred, and old placement corrections are cancelled so they cannot fight the drag.
+
+on release near a slot, the window snaps to that exact canonical position and the normal monitor-relative cascade size. this can move an existing member, re-adopt a released window, or adopt another eligible normal application window. the destination monitor must already have a visible cascade; the last managed window can also return to its own cascade. dropping elsewhere leaves the window unmanaged at the dropped position. ordinary clicks, content drags and edge resizes do not adopt windows; Escape retains native cancellation behavior.
+
+a successful drop queues ordinary compaction on the affected cascades after the drag finishes. compaction closes gaps and packs layers, so the final slot can shift from the initially selected drop slot. its placement correction uses the final destination instead of pulling the window back to an earlier one. dropped-out windows stay known/handled, so merely focusing or showing them again does not auto-adopt them.
+
+`Caps + Insert` remains available for explicit adoption and re-slotting, and newly opened windows still use normal automatic placement. pause still controls automatic new-window placement; intentional drag/drop remains a manual operation. keyboard cascade commands are held off during a native move/resize interaction. the temporary drag watcher stops on completion, cancellation, destruction, or script exit.
 
 ## checking a change
 
@@ -87,7 +96,10 @@ for Window Cascade changes, check:
 - ordinary app clicks/drags and Escape retain native behavior; also test close/minimize/move, focus changes, and reload/exit while holding
 - slot swaps, slot/layer rotation, and exposed-stack ordering
 - scoped closes: current layer and full monitor close without intermediate compaction
-- manual drag release: crossing the release boundary removes the window and dragging it over another slot does not re-adopt it
+- mouse drops: 14/15/55/56 px offsets all snap with the same tolerance; outside every slot releases only on mouse-up
+- drag away and back while still held; drag to another slot/monitor; no mid-drag pruning, reflow, or corrective move
+- adopt an unmanaged window by dropping near an existing cascade; outside/empty-monitor drops remain unmanaged
+- cancelled drags, edge resizing, rapid successive drags, target closure, and delayed new-window placement during a drag
 - minimize/restore and automatic placement reset
 - adoption and the one-shot adoption undo path
 - gathering and cross-monitor moves

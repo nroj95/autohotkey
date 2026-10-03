@@ -26,7 +26,7 @@ AdoptActiveWindow()
     managed_monitor := GetManagedCascadeMonitor(hwnd)
 
     ; Prune stale membership before deciding whether this is a true adoption.
-    ; A window deliberately moved beyond release tolerance should be adoptable.
+    ; A window released by a completed drop is adoptable again.
     if managed_monitor {
         GetLiveCascadeHistory(managed_monitor)
         managed_monitor := GetManagedCascadeMonitor(hwnd)
