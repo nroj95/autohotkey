@@ -61,15 +61,19 @@ automatically arranges ordinary windows into a cascading layout.
 it includes controls for:
 
 - moving through cascade windows
-- adopting an existing window and undoing the most recent adoption
-- rotating stacked windows
+- adopting and re-slotting existing windows, including drag-and-drop
+- rotating stacked windows and cycling slot layers
 - moving managed windows across monitors
-- minimizing and restoring the cascade
-- resetting automatic placement
-- pausing cascading
+- minimizing and restoring one or all cascades
+- closing the current layer or all layers on a monitor
+- pausing automatic placement
 - checking for conflicting Windows or PowerToys settings
 
-press a focus tab to focus its window immediately. hold the button, swipe left or right, and release to show the previous or next layer in that slot. the tab stays visible while held; a normal click does not change layers.
+focus tabs show at most one clickable marker per slot. clicking an inactive slot focuses its exposed window; clicking the active slot cycles to the next layer in that stack. holding, dragging, or releasing a focus tab adds no extra action.
+
+windows can also be dragged near an existing cascade slot to snap or adopt them. dragging a managed window away from the cascade releases it on mouse-up.
+
+new-window placement includes guarded foreground recovery for taskbar launches where Windows briefly hands focus back to the shell, including Shift + taskbar launches.
 
 focus-tab colors can be configured from the tray separately for the active and inactive slots.
 
