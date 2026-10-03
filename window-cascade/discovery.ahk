@@ -104,6 +104,7 @@ QueueWindowPlacement(hwnd, source_hwnd)
 WatchForMissedWindows()
 {
     global known_windows
+    global debug_enabled, debug_verbose_enabled
     global pending_windows, handled_windows
     global current_foreground_hwnd, previous_foreground_hwnd
     global placement_enabled
@@ -116,10 +117,12 @@ WatchForMissedWindows()
         ; reconsidered every polling cycle.
         known_windows[hwnd] := true
 
-        DebugLog(
-            "Poll discovered HWND."
-            . " | " DebugDescribeWindow(hwnd)
-        )
+        if debug_enabled && debug_verbose_enabled {
+            DebugLog(
+                "Poll discovered HWND."
+                . " | " DebugDescribeWindow(hwnd)
+            )
+        }
 
         if !placement_enabled
             continue
@@ -128,10 +131,12 @@ WatchForMissedWindows()
             continue
 
         if !IsPlausibleTopLevelWindow(hwnd) {
-            DebugLog(
-                "Poll rejected by top-level prefilter."
-                . " | " DebugDescribeWindow(hwnd)
-            )
+            if debug_enabled && debug_verbose_enabled {
+                DebugLog(
+                    "Poll rejected by top-level prefilter."
+                    . " | " DebugDescribeWindow(hwnd)
+                )
+            }
             continue
         }
 
@@ -347,6 +352,7 @@ HandleWinEvent(
     global startup_windows
     global placement_enabled
     global desktop_monitor_hint, desktop_monitor_hint_tick
+    global debug_enabled, debug_verbose_enabled
 
     try {
         EVENT_SYSTEM_FOREGROUND := 0x0003
@@ -396,12 +402,20 @@ HandleWinEvent(
 
 
         if event = EVENT_OBJECT_DESTROY {
-            DebugLog(
-                "Destroy event."
-                . " | " DebugDescribeWindow(hwnd)
-            )
-
             was_managed := !!GetManagedCascadeMonitor(hwnd)
+
+            ; Filter logging, not cleanup. The first event clears tracking, so
+            ; repeated/unrelated destroys are quiet unless verbose logging is on.
+            if (
+                debug_enabled
+                && (debug_verbose_enabled || was_managed
+                    || pending_windows.Has(hwnd) || handled_windows.Has(hwnd))
+            ) {
+                DebugLog(
+                    "Destroy event."
+                    . " | " DebugDescribeWindow(hwnd)
+                )
+            }
 
             ForgetWindow(hwnd)
 
@@ -444,20 +458,24 @@ HandleWinEvent(
         if GetManagedCascadeMonitor(hwnd)
             QueueFocusCornerUpdate()
 
-        DebugLog(
-            "Show event."
-            . " | pending=" pending_windows.Has(hwnd)
-            . " | handled=" handled_windows.Has(hwnd)
-            . " | " DebugDescribeWindow(hwnd)
-        )
+        if debug_enabled && debug_verbose_enabled {
+            DebugLog(
+                "Show event."
+                . " | pending=" pending_windows.Has(hwnd)
+                . " | handled=" handled_windows.Has(hwnd)
+                . " | " DebugDescribeWindow(hwnd)
+            )
+        }
 
         ; EVENT_OBJECT_SHOW also fires when some existing minimized windows are
         ; restored. Only windows absent from the startup snapshot are new.
         if startup_windows.Has(hwnd) {
-            DebugLog(
-                "Show event skipped: window existed at script startup."
-                . " | " DebugDescribeWindow(hwnd)
-            )
+            if debug_enabled && debug_verbose_enabled {
+                DebugLog(
+                    "Show event skipped: window existed at script startup."
+                    . " | " DebugDescribeWindow(hwnd)
+                )
+            }
             return
         }
 

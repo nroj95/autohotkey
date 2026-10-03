@@ -605,7 +605,7 @@ BringCascadeForward(monitor_index)
 
 
 ; =============================================================================
-; conservative new-window foreground recovery
+; guarded new-window foreground recovery
 ; =============================================================================
 
 CaptureCascadeLaunchIntent(hwnd)
@@ -624,7 +624,10 @@ CaptureCascadeLaunchIntent(hwnd)
             else if previous_foreground_hwnd && !IsShellSurfaceWindow(previous_foreground_hwnd)
                 foreground := previous_foreground_hwnd
         }
-        cascade_launch_hint := {tick: A_TickCount, foreground: foreground}
+        cascade_launch_hint := {
+            tick: A_TickCount,
+            foreground: foreground
+        }
     }
 }
 
@@ -633,11 +636,15 @@ CaptureNewWindowFocusContext(hwnd)
     global cascade_launch_hint, new_window_focus_timeout_ms
 
     foreground := DllCall("GetForegroundWindow", "ptr")
-    if foreground = hwnd
-        return {foreground: foreground, hint: 0}
     if IsObject(cascade_launch_hint)
         && ((A_TickCount - cascade_launch_hint.tick) & 0xFFFFFFFF) <= new_window_focus_timeout_ms
-        return {foreground: cascade_launch_hint.foreground, hint: cascade_launch_hint}
+        return {
+            foreground: cascade_launch_hint.foreground,
+            hint: cascade_launch_hint,
+            proved_foreground: foreground = hwnd
+        }
+    if foreground = hwnd
+        return {foreground: foreground, hint: 0, proved_foreground: true}
     return 0
 }
 
@@ -648,7 +655,18 @@ StartNewWindowFocus(hwnd, context)
 
     if !IsObject(context)
         return
-    if !IsObject(context.hint) && DllCall("GetForegroundWindow", "ptr") != hwnd
+
+    ; Foreground events can start recovery before placement finishes. Keep
+    ; this marker after cancellation so placement cannot restart that request.
+    recovery_started := false
+    try recovery_started := !!context.recovery_started
+    if recovery_started
+        return
+
+    foreground := DllCall("GetForegroundWindow", "ptr")
+    proved_foreground := false
+    try proved_foreground := !!context.proved_foreground
+    if !IsObject(context.hint) && !proved_foreground && foreground != hwnd
         return
     if IsObject(context.hint) && (context.hint != cascade_launch_hint
         || ((A_TickCount - context.hint.tick) & 0xFFFFFFFF) > new_window_focus_timeout_ms)
@@ -658,8 +676,15 @@ StartNewWindowFocus(hwnd, context)
         return
     new_window_focus_request := {
         hwnd: hwnd, pid: pid, context: context,
-        started_tick: A_TickCount, attempts: 0
+        started_tick: A_TickCount, attempts: 0, visual_synced: false,
+        saw_target_foreground: proved_foreground || foreground = hwnd,
+        shell_settle: IsObject(context.hint)
+            || proved_foreground || foreground = hwnd,
+        launch_settle_started_tick: A_TickCount, launch_settle_attempts: 0,
+        launch_settle_fallback_used: false, launch_settle_logged: false
     }
+    context.recovery_started := true
+    SyncNewWindowForegroundVisual(new_window_focus_request)
     SetTimer(WatchNewWindowFocus, new_window_focus_poll_ms)
 }
 
@@ -675,19 +700,150 @@ CancelNewWindowFocus(expected_request := 0)
 
 ObserveNewWindowForeground(hwnd)
 {
-    global new_window_focus_request, cascade_launch_hint
+    global new_window_focus_request, cascade_launch_hint, pending_windows
+
+    ; SHOW and FOREGROUND are separate WinEvents and their order is not stable.
+    ; If this HWND is still waiting for placement, preserve foreground ownership
+    ; on that placement request so StartNewWindowFocus() cannot lose the proof.
+    if hwnd && pending_windows.Has(hwnd) {
+        pending_request := pending_windows[hwnd]
+        if IsObject(pending_request) {
+            if IsObject(pending_request.focus) {
+                pending_request.focus.proved_foreground := true
+            } else {
+                pending_request.focus := {
+                    foreground: hwnd,
+                    hint: 0,
+                    proved_foreground: true
+                }
+            }
+            DebugLog("Pending new-window foreground proof captured. | hwnd=" hwnd)
+
+            ; Start protection immediately. Waiting until placement completes
+            ; leaves a few hundred milliseconds for the shell to take focus.
+            StartNewWindowFocus(hwnd, pending_request.focus)
+        }
+    }
 
     if IsObject(new_window_focus_request) {
         request := new_window_focus_request
-        if hwnd != request.hwnd && hwnd != request.context.foreground
+        if hwnd = request.hwnd {
+            request.saw_target_foreground := true
+            request.visual_synced := false
+            SyncNewWindowForegroundVisual(request)
+            return
+        }
+
+        request.visual_synced := false
+
+        ; Before the target has ever owned foreground, the original source is an
+        ; expected part of launch settling. After it has owned foreground, any
+        ; real application switch is intentional; only shell surfaces are noise.
+        if request.saw_target_foreground {
+            if !IsShellSurfaceWindow(hwnd)
+                CancelNewWindowFocus(request)
+        } else if hwnd != request.context.foreground
             && !IsShellSurfaceWindow(hwnd)
             CancelNewWindowFocus(request)
     }
 }
 
+
+SyncNewWindowForegroundVisual(request)
+{
+    if !IsObject(request) || request.visual_synced
+        return false
+    if DllCall("GetForegroundWindow", "ptr") != request.hwnd
+        return false
+
+    ; Remove this HWND's stale marker only while it really owns foreground.
+    ; The overlay renderer still chooses the next layer's tab independently.
+    request.visual_synced := true
+    HideFocusCornerOverlay(request.hwnd)
+    QueueFocusCornerUpdate()
+    return true
+}
+
+
+RecoverNewWindowDuringShellSettle(request, foreground)
+{
+    global new_window_shell_settle_ms
+
+    if !request.shell_settle
+        return false
+
+    if ((A_TickCount - request.launch_settle_started_tick) & 0xFFFFFFFF)
+        >= new_window_shell_settle_ms
+        return false
+
+    ; Mouse buttons and command modifiers still own the interaction.
+    for key in ["LButton", "RButton", "MButton", "Ctrl", "Alt", "LWin", "RWin"] {
+        if GetKeyState(key, "P")
+            return true
+    }
+
+    ; Never force a launch that has not already proved foreground ownership.
+    if !request.saw_target_foreground
+        return true
+
+    if !request.launch_settle_logged {
+        request.launch_settle_logged := true
+        DebugLog("New-window shell settle. | hwnd=" request.hwnd
+            . " | " DebugDescribeForegroundState())
+    }
+
+    if foreground = request.hwnd {
+        SyncNewWindowForegroundVisual(request)
+        return true
+    }
+
+    ; Once the target has genuinely owned foreground, only a shell/taskbar
+    ; handoff counts as transient launch noise. A real application switch,
+    ; including back to the original source, cancels recovery before this path.
+    if !IsShellSurfaceWindow(foreground)
+        return true
+
+    request.launch_settle_attempts += 1
+    method := "SetForegroundWindow"
+    DllCall("SetForegroundWindow", "ptr", request.hwnd, "int")
+
+    used_fallback := false
+    if DllCall("GetForegroundWindow", "ptr") != request.hwnd
+        && request.launch_settle_attempts >= 3
+        && !request.launch_settle_fallback_used
+    {
+        ; WinActivate can synthesize Alt during its built-in recovery.
+        ; Keep it to one fallback for this foreground-proven request; do not
+        ; replace it with an unconditional startup or close-command workaround.
+        method := "WinActivate"
+        used_fallback := true
+        request.launch_settle_fallback_used := true
+        try WinActivate(request.hwnd)
+    }
+
+    if DllCall("GetForegroundWindow", "ptr") = request.hwnd {
+        request.launch_settle_attempts := 0
+        request.visual_synced := false
+        SyncNewWindowForegroundVisual(request)
+        DebugLog("New-window shell foreground recovered. | hwnd="
+            . request.hwnd
+            . " | method=" method
+            . " | " DebugDescribeForegroundState())
+    } else if used_fallback {
+        DebugLog("New-window shell foreground denied. | hwnd="
+            . request.hwnd
+            . " | method=" method
+            . " | " DebugDescribeForegroundState())
+    }
+
+    return true
+}
+
+
 WatchNewWindowFocus()
 {
     global new_window_focus_request, new_window_focus_timeout_ms
+    global pending_windows
 
     request := new_window_focus_request
     if !IsObject(request) {
@@ -697,23 +853,38 @@ WatchNewWindowFocus()
     try {
         hwnd := request.hwnd
         foreground := DllCall("GetForegroundWindow", "ptr")
-        if ((A_TickCount - request.started_tick) & 0xFFFFFFFF) >= new_window_focus_timeout_ms
-            || !WinExist(hwnd) || WinGetPID(hwnd) != request.pid
-            || !GetManagedCascadeMonitor(hwnd) || WinGetMinMax(hwnd) != 0
+        SyncNewWindowForegroundVisual(request)
+        if !WinExist(hwnd) || WinGetPID(hwnd) != request.pid
+            || (!GetManagedCascadeMonitor(hwnd) && !pending_windows.Has(hwnd))
+            || WinGetMinMax(hwnd) != 0
             || HasCascadeWindowDrag() || HasFocusTabClick()
         {
             CancelNewWindowFocus(request)
             return
         }
-        ; Do not steal focus from a different app chosen while launch was settling.
-        if foreground != hwnd && foreground != request.context.foreground
-            && !IsShellSurfaceWindow(foreground)
-        {
+        ; Before first ownership, the original source may still be foreground.
+        ; After the target has owned foreground, any non-shell app switch is a
+        ; deliberate user choice and must cancel the guarded settle window.
+        if foreground != hwnd && !IsShellSurfaceWindow(foreground) {
+            if request.saw_target_foreground
+                || foreground != request.context.foreground
+            {
+                CancelNewWindowFocus(request)
+                return
+            }
+        }
+
+        if RecoverNewWindowDuringShellSettle(request, foreground)
+            return
+
+        if ((A_TickCount - request.started_tick) & 0xFFFFFFFF) >= new_window_focus_timeout_ms {
             CancelNewWindowFocus(request)
             return
         }
-        ; Shift+taskbar-click must finish before attempting foreground activation.
-        for key in ["LButton", "RButton", "MButton", "Shift", "Ctrl", "Alt", "LWin", "RWin"] {
+
+        ; Outside the shell-settle workaround, wait for the launch gesture and
+        ; command modifiers to finish before normal foreground recovery.
+        for key in ["LButton", "RButton", "MButton", "Ctrl", "Alt", "LWin", "RWin"] {
             if GetKeyState(key, "P")
                 return
         }
@@ -723,10 +894,21 @@ WatchNewWindowFocus()
             return
 
         request.attempts += 1
-        ; Use Windows' normal foreground permission rules. Never fake focus
-        ; messages, attach input queues, inject Alt, or toggle topmost status.
+        method := "SetForegroundWindow"
+
+        ; Try the ordinary Win32 request first. WinActivate may synthesize
+        ; Alt during its own recovery, so reserve it for the final attempt of
+        ; this authorized request rather than running it on every activation.
         if foreground != hwnd
             DllCall("SetForegroundWindow", "ptr", hwnd, "int")
+
+        if DllCall("GetForegroundWindow", "ptr") != hwnd
+            && request.attempts >= 3
+        {
+            method := "WinActivate"
+            try WinActivate(hwnd)
+        }
+
         if DllCall("GetForegroundWindow", "ptr") = hwnd {
             ; An already-active window is not necessarily foremost in Z-order.
             DllCall("SetWindowPos", "ptr", hwnd, "ptr", 0,
@@ -734,11 +916,12 @@ WatchNewWindowFocus()
                 "uint", 0x4213, "int") ; ASYNC | NOOWNERZORDER | NOACTIVATE | NOMOVE | NOSIZE
             QueueFocusCornerUpdate()
             DebugLog("New-window foreground confirmed. | hwnd=" hwnd
-                " | attempts=" request.attempts " | " DebugDescribeForegroundState())
+                " | method=" method " | attempts=" request.attempts
+                " | " DebugDescribeForegroundState())
             CancelNewWindowFocus(request)
         } else if request.attempts >= 3 {
             DebugLog("New-window foreground denied. | hwnd=" hwnd
-                " | " DebugDescribeForegroundState())
+                " | method=" method " | " DebugDescribeForegroundState())
             CancelNewWindowFocus(request)
         }
     }

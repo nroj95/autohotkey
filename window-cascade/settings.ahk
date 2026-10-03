@@ -21,11 +21,15 @@ cascade_slot_tolerance := 56
 
 placement_delay_ms := 60
 
-; Only recent taskbar launches or already-foreground new windows may request focus.
+; Recent taskbar hints and ordinary focus requests use this timeout.
 new_window_focus_timeout_ms := 3000
 new_window_focus_poll_ms := 100
+; Measured from recovery start, not added after the ordinary timeout.
+; Foreground-proven new windows may recover from shell handoffs during this period.
+new_window_shell_settle_ms := 5000
 
-; Keep errors/lifecycle logging; expensive title/appearance diagnostics are opt-in.
+; Keep actionable lifecycle/error logs. Raw show/destroy/poll events and detailed
+; window-title/appearance snapshots are opt-in.
 debug_verbose_enabled := false
 
 ; Restore requests can finish before their native/DWM rectangles settle.

@@ -275,13 +275,55 @@ DebugFocusCornerAppearance(active_hwnd, active_slot_targets)
 
 DebugDescribeForegroundState()
 {
+    global debug_enabled
+
+    if !debug_enabled
+        return ""
+
     ; Foreground, thread activation and keyboard focus are different handles.
     ; Capture them only for launch-recovery diagnostics, never on every repaint.
     info := Buffer(24 + 6 * A_PtrSize, 0)
     NumPut("uint", info.Size, info)
-    result := "foreground=" DllCall("GetForegroundWindow", "ptr")
-    if DllCall("GetGUIThreadInfo", "uint", 0, "ptr", info, "int")
-        result .= " | thread-active=" NumGet(info, 8, "ptr")
-            . " | keyboard-focus=" NumGet(info, 8 + A_PtrSize, "ptr")
+
+    foreground := DllCall("GetForegroundWindow", "ptr")
+    result := (
+        "foreground=" foreground
+        . " | foreground-pid=" DebugGetWindowProcessId(foreground)
+    )
+
+    if DllCall("GetGUIThreadInfo", "uint", 0, "ptr", info, "int") {
+        thread_active := NumGet(info, 8, "ptr")
+        keyboard_focus := NumGet(info, 8 + A_PtrSize, "ptr")
+        keyboard_focus_root := (
+            keyboard_focus
+            ? DllCall("GetAncestor", "ptr", keyboard_focus, "uint", 2, "ptr") ; GA_ROOT
+            : 0
+        )
+
+        result .= (
+            " | thread-active=" thread_active
+            . " | keyboard-focus=" keyboard_focus
+            . " | keyboard-focus-root=" keyboard_focus_root
+            . " | keyboard-focus-pid=" DebugGetWindowProcessId(keyboard_focus)
+            . " | focus-root-is-foreground=" (keyboard_focus_root = foreground)
+        )
+    }
+
     return result
+}
+
+
+DebugGetWindowProcessId(hwnd)
+{
+    if !hwnd
+        return 0
+
+    pid := 0
+    DllCall(
+        "GetWindowThreadProcessId",
+        "ptr", hwnd,
+        "uint*", &pid,
+        "uint"
+    )
+    return pid
 }

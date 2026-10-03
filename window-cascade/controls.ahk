@@ -287,7 +287,9 @@ HandleCascadeCommandMessage(command_id, parameter, message_id, target_hwnd)
             BringCommandMonitorCascadeForward()
 
         case cascade_command_close_active:
-            Send "!{F4}"
+            ; Close without synthetic modifiers. Foreground recovery has its own
+            ; guarded fallback and must not depend on this close command.
+            try WinClose("A")
 
         case cascade_command_close_scope:
             if parameter
