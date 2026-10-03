@@ -84,7 +84,7 @@ SetTimer(WatchCapsLockLayer, caps_layer_check_ms)
 
 ; Window events normally keep focus tabs aligned. Keep a slow timer only as
 ; insurance for an event that Windows may occasionally fail to deliver.
-OnMessage(0x0202, HandleFocusCornerClick) ; WM_LBUTTONUP
+OnMessage(0x0201, HandleFocusCornerClick) ; WM_LBUTTONDOWN
 SetTimer(UpdateFocusCornerOverlays, focus_corner_fallback_ms)
 
 ; FancyZones can directly compete with new-window placement.
