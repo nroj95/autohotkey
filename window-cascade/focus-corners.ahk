@@ -31,11 +31,17 @@ RunQueuedFocusCornerUpdate()
 
 UpdateFocusCornerOverlays()
 {
-    global focus_corner_overlays
+    global focus_corner_overlays, focus_tab_gesture
 
     active_hwnd := DllCall(
         "GetForegroundWindow",
         "ptr"
+    )
+
+    holding_focus_tab := (
+        IsObject(focus_tab_gesture)
+        && !focus_tab_gesture.cancelled
+        && focus_tab_gesture.ready
     )
 
     ; The marker timer must never mutate cascade membership. A window can be
@@ -106,6 +112,13 @@ UpdateFocusCornerOverlays()
         ; The pressed tab stays visible at its gesture-preview position.
         if IsHeldFocusTab(hwnd)
             continue
+
+        ; Focusing the held window exposes the previous layer's tab in the
+        ; same slot. Hide those sibling tabs until the gesture ends.
+        if holding_focus_tab && active_slot_targets.Has(hwnd) {
+            HideFocusCornerOverlay(hwnd)
+            continue
+        }
 
         if (
             hwnd = active_hwnd
