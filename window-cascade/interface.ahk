@@ -61,6 +61,20 @@ ToggleCascading(*)
 
     placement_enabled := !placement_enabled
     UpdateTrayMenu()
+
+    ; Restart the clear timer so rapid toggles leave the latest state visible.
+    SetTimer ClearCascadeStatusTip, 0
+    ToolTip (
+        placement_enabled
+        ? "cascading resumed"
+        : "cascading paused"
+    ), , , 3
+    SetTimer ClearCascadeStatusTip, -1400
+}
+
+ClearCascadeStatusTip()
+{
+    ToolTip , , , 3
 }
 
 ToggleStartup(*)
