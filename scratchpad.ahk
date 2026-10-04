@@ -8,13 +8,13 @@
 ; requirements and ownership
 ; - use 64-bit AutoHotkey v2 and Notepad3 7.26.602.1 (normal privileges).
 ; - launch one dedicated Notepad3 window; never adopt ordinary editor windows.
-; - retain the existing nroj.Scratchpad.* command interface for CapsLock Layer.
+; - run independently of CapsLock Layer and other companion scripts.
 ; - mark the editor with nroj.WindowCascade.Ignore before positioning/showing it.
 ;
 ; controls
-; - Caps + B toggles; Caps + N creates; Caps + J / L switch pages.
-; - inside the editor: Escape hides, Ctrl + N creates, Ctrl + PgUp/PgDn switch.
-; - Ctrl + S uses the same checked save path as autosave. F12 is opt-in.
+; - global toggle defaults to Win + F12 and is configurable from the tray menu.
+; - inside the editor: Escape hides, Ctrl + N creates, Ctrl + Alt + PgUp/PgDn switch.
+; - Ctrl + S uses the same checked save path as autosave.
 ;
 ; persistence and safety
 ; - pages are ordinary files directly inside the configured scratch directory.
@@ -64,21 +64,15 @@ $^s::
     scratchpad.QueueCommand("save")
     KeyWait "s"
 }
-$^PgUp::
+$^!PgUp::
 {
     scratchpad.QueueCommand("previous")
     KeyWait "PgUp"
 }
-$^PgDn::
+$^!PgDn::
 {
     scratchpad.QueueCommand("next")
     KeyWait "PgDn"
-}
-#HotIf IsSet(scratchpad) && scratchpad.enable_f12
-$F12::
-{
-    scratchpad.QueueCommand("toggle")
-    KeyWait "F12"
 }
 #HotIf
 
@@ -141,6 +135,21 @@ class ScratchpadController
         this.editor_profile := this.data_directory "\Notepad3.ini"
         this.error_log := this.data_directory "\errors.log"
         this.startup_shortcut := A_Startup "\Scratchpad.lnk"
+        this.toggle_hotkey_name := ""
+        this.toggle_hotkey_ahk := ""
+        this.toggle_hotkey_key := ""
+        this.toggle_hotkey_callback := ObjBindMethod(this, "HandleToggleHotkey")
+        this.toggle_hotkey_presets := [
+            "Win+F12",
+            "F12",
+            "Ctrl+F12",
+            "Ctrl+Shift+F12",
+            "Ctrl+Alt+F12",
+            "Win+F10",
+            "Ctrl+Alt+Space"
+        ]
+        this.toggle_hotkey_menu := 0
+        this.custom_hotkey_gui := 0
         this.mutex_handle := 0
 
         this.mutex_handle := DllCall("CreateMutexW", "ptr", 0, "int", false,
@@ -168,7 +177,6 @@ class ScratchpadController
         this.animation_ms := this.ReadNumber("Window", "AnimationDurationMs", 180, 0, 1000)
         this.always_on_top := this.ReadNumber("Window", "AlwaysOnTop", 1, 0, 1)
         this.autosave_ms := this.ReadNumber("Saving", "AutosaveIntervalMs", 2000, 500, 60000)
-        this.enable_f12 := this.ReadNumber("Controls", "EnableF12", 0, 0, 1)
         this.allowed_extensions := "|md|txt|ps1|psm1|psd1|py|pyw|ahk|lua|js|ts|jsx|tsx|"
             . "json|jsonc|yaml|yml|xml|html|htm|css|scss|ini|cfg|conf|toml|log|"
             . "sh|bash|bat|cmd|sql|c|cpp|h|hpp|cs|rs|go|java|rb|php|csv|tsv|"
@@ -176,21 +184,13 @@ class ScratchpadController
         this.process_commands_callback := ObjBindMethod(this, "ProcessCommands")
         this.autosave_callback := ObjBindMethod(this, "Autosave")
         OnExit ObjBindMethod(this, "OnScriptExit")
+
+        ; Hidden owner/sender window for WM_COPYDATA page switches.
+        this.controller_window := Gui("+ToolWindow", this.controller_title)
+
         this.BuildTrayMenu()
-        this.message_callbacks := []
-        for command, name in Map("toggle", "nroj.Scratchpad.Toggle",
-            "new", "nroj.Scratchpad.New", "previous", "nroj.Scratchpad.Previous",
-            "next", "nroj.Scratchpad.Next") {
-            message_id := DllCall("RegisterWindowMessageW", "str", name, "uint")
-            if !message_id
-                throw OSError(A_LastError, "RegisterWindowMessageW")
-            callback := ObjBindMethod(this, "ReceiveCommand", command)
-            this.message_callbacks.Push(callback)
-            OnMessage message_id, callback
-        }
-        ; Expose the readiness title only after all message handlers exist.
-        this.controller_window := Gui("+ToolWindow", "nroj.Scratchpad.Starting")
-        this.controller_window.Title := this.controller_title
+        configured_hotkey := IniRead(this.settings_path, "Controls", "ToggleHotkey", "Win+F12")
+        this.SetToggleHotkey(configured_hotkey, false)
         SetTimer this.autosave_callback, this.autosave_ms
     }
 
@@ -199,9 +199,14 @@ class ScratchpadController
         if !FileExist(this.settings_path) {
             settings := "[Paths]`nScratchDirectory=D:\toolbox\scratch`nNotepad3Executable=`n"
                 . "`n[Window]`nWidthPercent=75`nHeightPercent=60`nAnimationDurationMs=180`nAlwaysOnTop=1`n"
-                . "`n[Saving]`nAutosaveIntervalMs=2000`n`n[Controls]`nEnableF12=0`n"
+                . "`n[Saving]`nAutosaveIntervalMs=2000`n`n[Controls]`nToggleHotkey=Win+F12`n"
             FileAppend settings, this.settings_path, "UTF-16"
         }
+        if IniRead(this.settings_path, "Controls", "ToggleHotkey", "<missing>") = "<missing>" {
+            legacy_f12 := this.ReadNumber("Controls", "EnableF12", 0, 0, 1)
+            IniWrite legacy_f12 ? "F12" : "Win+F12", this.settings_path, "Controls", "ToggleHotkey"
+        }
+        try IniDelete this.settings_path, "Controls", "EnableF12"
         ; Do not reuse NotepadExecutable: an existing value points at Notepad++.
         if IniRead(this.settings_path, "Paths", "Notepad3Executable", "<missing>") = "<missing>"
             IniWrite "", this.settings_path, "Paths", "Notepad3Executable"
@@ -218,11 +223,136 @@ class ScratchpadController
         return Min(maximum, Max(minimum, Round(value)))
     }
 
-    ReceiveCommand(command, w_param, l_param, message, receiving_hwnd)
+    HandleToggleHotkey(*)
     {
-        ; Broadcasts also reach the script's own window: handle each command once.
-        if receiving_hwnd = this.controller_window.Hwnd
-            this.QueueCommand(command)
+        source_window := WinExist("A")
+
+        if this.command_queue.Length >= 8
+            return
+
+        this.command_queue.Push({
+            name: "toggle",
+            source_window: source_window
+        })
+
+        SetTimer this.process_commands_callback, -1
+    }
+
+    SetToggleHotkey(name, persist := true)
+    {
+        parsed := this.ParseToggleHotkey(name)
+        old_name := this.toggle_hotkey_name
+        old_hotkey := this.toggle_hotkey_ahk
+        old_key := this.toggle_hotkey_key
+
+        if old_hotkey != ""
+            try Hotkey old_hotkey, "Off"
+
+        try {
+            if parsed.ahk != ""
+                Hotkey parsed.ahk, this.toggle_hotkey_callback, "On"
+        }
+        catch as failure {
+            if old_hotkey != ""
+                try Hotkey old_hotkey, this.toggle_hotkey_callback, "On"
+            this.toggle_hotkey_name := old_name
+            this.toggle_hotkey_ahk := old_hotkey
+            this.toggle_hotkey_key := old_key
+            throw Error("Could not register the toggle shortcut " parsed.name ".`n`n" failure.Message)
+        }
+
+        this.toggle_hotkey_name := parsed.name
+        this.toggle_hotkey_ahk := parsed.ahk
+        this.toggle_hotkey_key := parsed.key
+        if persist
+            IniWrite parsed.name, this.settings_path, "Controls", "ToggleHotkey"
+        this.UpdateToggleHotkeyMenu()
+    }
+
+    ParseToggleHotkey(name)
+    {
+        name := StrReplace(Trim(name), " ", "")
+        if name = "" || StrLower(name) = "disabled"
+            return {name: "Disabled", ahk: "", key: ""}
+
+        parts := StrSplit(name, "+")
+        if parts.Length < 1
+            throw Error("Invalid toggle shortcut: " name)
+
+        key := parts.Pop()
+        if key = ""
+            throw Error("The toggle shortcut needs a non-modifier key.")
+
+        modifiers := Map("win", false, "ctrl", false, "shift", false, "alt", false)
+        for modifier in parts {
+            normalized := StrLower(modifier)
+            if !modifiers.Has(normalized)
+                throw Error("Unsupported toggle modifier: " modifier)
+            if modifiers[normalized]
+                throw Error("Duplicate toggle modifier: " modifier)
+            modifiers[normalized] := true
+        }
+
+        if parts.Length = 0 && !RegExMatch(key, "i)^F(?:[1-9]|1[0-9]|2[0-4])$")
+            throw Error("A custom toggle shortcut needs a modifier unless it is an F-key.")
+
+        canonical_key := RegExMatch(key, "i)^F(?:[1-9]|1[0-9]|2[0-4])$")
+            ? StrUpper(key) : this.CanonicalKeyName(key)
+        ahk := (modifiers["win"] ? "#" : "")
+            . (modifiers["ctrl"] ? "^" : "")
+            . (modifiers["shift"] ? "+" : "")
+            . (modifiers["alt"] ? "!" : "")
+            . canonical_key
+        canonical := (modifiers["win"] ? "Win+" : "")
+            . (modifiers["ctrl"] ? "Ctrl+" : "")
+            . (modifiers["shift"] ? "Shift+" : "")
+            . (modifiers["alt"] ? "Alt+" : "")
+            . canonical_key
+        return {name: canonical, ahk: ahk, key: canonical_key}
+    }
+
+    CanonicalKeyName(key)
+    {
+        switch StrLower(key) {
+            case "space": return "Space"
+            case "tab": return "Tab"
+            case "enter": return "Enter"
+            case "escape", "esc": return "Escape"
+            case "backspace", "bs": return "Backspace"
+            case "delete", "del": return "Delete"
+            case "insert", "ins": return "Insert"
+            case "home": return "Home"
+            case "end": return "End"
+            case "pgup": return "PgUp"
+            case "pgdn": return "PgDn"
+            case "up": return "Up"
+            case "down": return "Down"
+            case "left": return "Left"
+            case "right": return "Right"
+        }
+        if StrLen(key) = 1
+            return StrUpper(key)
+        return key
+    }
+
+    FriendlyFromHotkeyControl(raw_hotkey, include_win)
+    {
+        if raw_hotkey = ""
+            throw Error("Press a shortcut before choosing Use.")
+
+        ctrl := InStr(raw_hotkey, "^") != 0
+        shift := InStr(raw_hotkey, "+") != 0
+        alt := InStr(raw_hotkey, "!") != 0
+        key := RegExReplace(raw_hotkey, "^[\^+!#<>*$~]+")
+        if key = ""
+            throw Error("The custom shortcut needs a non-modifier key.")
+
+        friendly := (include_win ? "Win+" : "")
+            . (ctrl ? "Ctrl+" : "")
+            . (shift ? "Shift+" : "")
+            . (alt ? "Alt+" : "")
+            . key
+        return this.ParseToggleHotkey(friendly).name
     }
 
     QueueCommand(command, *)
@@ -894,15 +1024,20 @@ class ScratchpadController
         A_TrayMenu.Delete()
         A_TrayMenu.Add("Toggle scratchpad", ObjBindMethod(this, "QueueCommand", "toggle"))
         A_TrayMenu.Default := "Toggle scratchpad"
-        A_TrayMenu.Add("New page", ObjBindMethod(this, "QueueCommand", "new"))
-        A_TrayMenu.Add("Previous page", ObjBindMethod(this, "QueueCommand", "previous"))
-        A_TrayMenu.Add("Next page", ObjBindMethod(this, "QueueCommand", "next"))
+
+        this.toggle_hotkey_menu := Menu()
+        for preset in this.toggle_hotkey_presets
+            this.toggle_hotkey_menu.Add(this.DisplayHotkeyName(preset), ObjBindMethod(this, "ChooseToggleHotkey", preset))
+        this.toggle_hotkey_menu.Add()
+        this.toggle_hotkey_menu.Add("Custom...", ObjBindMethod(this, "ShowCustomHotkeyDialog"))
+        this.toggle_hotkey_menu.Add("Disabled", ObjBindMethod(this, "ChooseToggleHotkey", "Disabled"))
+        A_TrayMenu.Add("Toggle shortcut", this.toggle_hotkey_menu)
+
         A_TrayMenu.Add()
         A_TrayMenu.Add("Open scratch folder", (*) => Run('explorer.exe "' this.scratch_directory '"'))
         A_TrayMenu.Add("Open settings", (*) => Run('notepad.exe "' this.settings_path '"'))
         A_TrayMenu.Add("How to use", ObjBindMethod(this, "ShowHelp"))
         A_TrayMenu.Add()
-        A_TrayMenu.Add("Enable standalone F12", ObjBindMethod(this, "ToggleF12"))
         A_TrayMenu.Add("Run at startup", ObjBindMethod(this, "ToggleStartup"))
         A_TrayMenu.Add()
         A_TrayMenu.Add("Reload", ObjBindMethod(this, "QueueCommand", "reload"))
@@ -910,11 +1045,82 @@ class ScratchpadController
         this.UpdateTrayChecks()
     }
 
-    ToggleF12(*)
+    DisplayHotkeyName(name)
     {
-        this.enable_f12 := !this.enable_f12
-        IniWrite this.enable_f12, this.settings_path, "Controls", "EnableF12"
-        this.UpdateTrayChecks()
+        return StrReplace(name, "+", " + ")
+    }
+
+    ChooseToggleHotkey(name, *)
+    {
+        try this.SetToggleHotkey(name)
+        catch as failure
+            MsgBox failure.Message, "Scratchpad shortcut", "Iconx 4096"
+    }
+
+    UpdateToggleHotkeyMenu()
+    {
+        if !this.toggle_hotkey_menu
+            return
+
+        for preset in this.toggle_hotkey_presets
+            try this.toggle_hotkey_menu.Uncheck(this.DisplayHotkeyName(preset))
+        try this.toggle_hotkey_menu.Uncheck("Custom...")
+        try this.toggle_hotkey_menu.Uncheck("Disabled")
+
+        is_preset := false
+        for preset in this.toggle_hotkey_presets {
+            if preset = this.toggle_hotkey_name {
+                this.toggle_hotkey_menu.Check(this.DisplayHotkeyName(preset))
+                is_preset := true
+                break
+            }
+        }
+        if !is_preset {
+            if this.toggle_hotkey_name = "Disabled"
+                this.toggle_hotkey_menu.Check("Disabled")
+            else
+                this.toggle_hotkey_menu.Check("Custom...")
+        }
+    }
+
+    ShowCustomHotkeyDialog(*)
+    {
+        if this.custom_hotkey_gui {
+            try this.custom_hotkey_gui.Show()
+            return
+        }
+
+        custom_gui := Gui("+AlwaysOnTop", "Scratchpad shortcut")
+        custom_gui.SetFont("s10", "Segoe UI")
+        custom_gui.AddText("w330", "Press a key combination. Use the Win checkbox for Windows-key shortcuts.")
+        hotkey_control := custom_gui.AddHotkey("xm w250")
+        win_control := custom_gui.AddCheckBox("xm y+10", "Include Win")
+        custom_gui.AddText("xm y+10 w330", "Plain letters and numbers require a modifier; F1-F24 may be used alone.")
+        use_button := custom_gui.AddButton("xm y+14 w90 Default", "Use")
+        cancel_button := custom_gui.AddButton("x+8 w90", "Cancel")
+
+        use_button.OnEvent("Click", UseCustomHotkey)
+        cancel_button.OnEvent("Click", CloseCustomHotkey)
+        custom_gui.OnEvent("Close", CloseCustomHotkey)
+        custom_gui.OnEvent("Escape", CloseCustomHotkey)
+        this.custom_hotkey_gui := custom_gui
+        custom_gui.Show()
+
+        UseCustomHotkey(*) {
+            try {
+                friendly := this.FriendlyFromHotkeyControl(hotkey_control.Value, !!win_control.Value)
+                this.SetToggleHotkey(friendly)
+                CloseCustomHotkey()
+            }
+            catch as failure {
+                MsgBox failure.Message, "Scratchpad shortcut", "Iconx 4096"
+            }
+        }
+
+        CloseCustomHotkey(*) {
+            try custom_gui.Destroy()
+            this.custom_hotkey_gui := 0
+        }
     }
 
     ToggleStartup(*)
@@ -930,10 +1136,7 @@ class ScratchpadController
 
     UpdateTrayChecks()
     {
-        if this.enable_f12
-            A_TrayMenu.Check("Enable standalone F12")
-        else
-            A_TrayMenu.Uncheck("Enable standalone F12")
+        this.UpdateToggleHotkeyMenu()
         if FileExist(this.startup_shortcut)
             A_TrayMenu.Check("Run at startup")
         else
@@ -956,16 +1159,14 @@ class ScratchpadController
 
         help_text :=
         (
-        "SHORTCUTS`n"
-        "Caps + B                Toggle scratchpad`n"
-        "Caps + N                New page`n"
-        "Caps + J / L            Previous / next page`n"
-        "Tap Caps, then key      One-shot command`n"
+        "GLOBAL`n"
+        this.DisplayHotkeyName(this.toggle_hotkey_name) "   Toggle scratchpad`n"
+        "Change the toggle shortcut from the tray menu.`n"
         "`n"
         "INSIDE THE EDITOR`n"
         "Escape                  Hide scratchpad`n"
         "Ctrl + N / Ctrl + S     New page / save page`n"
-        "Ctrl + PgUp / PgDn      Previous / next page`n"
+        "Ctrl + Alt + PgUp/PgDn  Previous / next page`n"
         "`n"
         "PAGES`n"
         "New pages are named automatically.`n"
@@ -979,7 +1180,8 @@ class ScratchpadController
         "Undo history survives hiding, but not switching pages.`n"
         "`n"
         "WINDOW`n"
-        "F12 is optional and disabled by default.`n"
+        "The global toggle defaults to Win + F12.`n"
+        "Presets, Custom... and Disabled are available in the tray menu.`n"
         "Window size and animation can be changed in settings.ini.`n"
         "Exit saves and closes the scratch editor; Reload keeps it.`n"
         "`n"

@@ -27,23 +27,19 @@ the one-shot indicator appears where the mouse pointer was when the layer was ar
 
 turns a dedicated Notepad3 window into a persistent, top-edge scratch drawer for temporary notes and code.
 
-Scratchpad is launched on demand by `capslock-layer.ahk`, so it does not need its own startup entry. it requires **64-bit AutoHotkey v2** and Notepad3. if Notepad3 cannot be located automatically, select its `Notepad3.exe` when prompted.
+Scratchpad is standalone. run `scratchpad.ahk` directly or enable **Run at startup** from its tray menu. it requires **64-bit AutoHotkey v2** and Notepad3. if Notepad3 cannot be located automatically, select its `Notepad3.exe` when prompted.
 
 #### controls
 
 | shortcut | action |
 |---|---|
-| Caps+B | show or hide the scratchpad |
-| Caps+N | create a new scratch page and show it |
-| Caps+J / Caps+L | previous / next page, wrapping at the ends |
+| Win+F12 | show or hide the scratchpad (default global toggle) |
 | Escape, inside the editor | hide the scratchpad |
 | Ctrl+N, inside the editor | create a new scratch page |
 | Ctrl+S, inside the editor | save the current page |
-| Ctrl+PgUp / Ctrl+PgDn, inside the editor | previous / next page |
+| Ctrl+Alt+PgUp / Ctrl+Alt+PgDn, inside the editor | previous / next page |
 
-one-shot Caps works too: tap Caps, then B, N, J or L. editor-only shortcuts apply only while the owned Notepad3 editor has focus.
-
-F12 is disabled by default. it can be enabled from the Scratchpad tray menu for standalone operation without CapsLock Layer.
+the global toggle is configurable from the Scratchpad tray menu. presets include `Win+F12`, `F12`, several F12 modifier combinations, `Win+F10` and `Ctrl+Alt+Space`; **Custom...** accepts another keyboard combination, and **Disabled** turns the global toggle off. non-F-key custom shortcuts require at least one modifier.
 
 #### window behavior
 
@@ -94,10 +90,10 @@ AlwaysOnTop=1
 AutosaveIntervalMs=2000
 
 [Controls]
-EnableF12=0
+ToggleHotkey=Win+F12
 ```
 
-leave `Notepad3Executable` blank for automatic detection, or enter the full path without surrounding quotes. edit the settings through the tray menu, then reload. `AnimationDurationMs=0` disables motion and `AlwaysOnTop=0` allows ordinary windows to cover the drawer.
+leave `Notepad3Executable` blank for automatic detection, or enter the full path without surrounding quotes. `ToggleHotkey` stores the friendly shortcut name, for example `Win+F12` or `Ctrl+Shift+Space`. edit the settings through the tray menu, then reload. `AnimationDurationMs=0` disables motion and `AlwaysOnTop=0` allows ordinary windows to cover the drawer.
 
 the current-page record is stored in `%LOCALAPPDATA%\Scratchpad\state.ini`, the dedicated editor configuration is stored in `%LOCALAPPDATA%\Scratchpad\Notepad3.ini`, and errors are logged to `%LOCALAPPDATA%\Scratchpad\errors.log`.
 
@@ -198,7 +194,7 @@ Win Key Overhaul is fully standalone and does not depend on the other root-level
 
 run root-level `.ahk` launchers rather than module files inside `window-cascade/` or `win-key-overhaul/`.
 
-start `capslock-layer.ahk` before `window-cascade.ahk`. CapsLock Layer starts `scratchpad.ahk` on demand when a Scratchpad command is used, so Scratchpad does not need its own startup entry. Win Key Overhaul and the other utilities can run independently unless their own documentation says otherwise.
+start `capslock-layer.ahk` before `window-cascade.ahk`. Scratchpad, Win Key Overhaul and the other utilities run independently unless their own documentation says otherwise.
 
 each main script provides a tray menu with its own controls and a **Run at startup** option where applicable.
 
