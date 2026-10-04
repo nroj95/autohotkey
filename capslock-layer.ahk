@@ -55,6 +55,20 @@ cascade_command_show_help := 14
 cascade_command_move_monitor_left := 15
 cascade_command_move_monitor_right := 16
 
+; Keep these names in sync with scratchpad.ahk.
+scratchpad_toggle_message := DllCall(
+    "RegisterWindowMessage", "str", "nroj.Scratchpad.Toggle", "uint"
+)
+scratchpad_new_message := DllCall(
+    "RegisterWindowMessage", "str", "nroj.Scratchpad.New", "uint"
+)
+scratchpad_previous_message := DllCall(
+    "RegisterWindowMessage", "str", "nroj.Scratchpad.Previous", "uint"
+)
+scratchpad_next_message := DllCall(
+    "RegisterWindowMessage", "str", "nroj.Scratchpad.Next", "uint"
+)
+
 debug_reset_logs_message := DllCall(
     "RegisterWindowMessage",
     "str", "WindowDebug.ResetLogs",
@@ -92,6 +106,7 @@ SetCapsLockState "Off"
 ; - provide Windows Terminal copy and clear macros.
 ; - provide numpad 0-9 through caps lock on keyboards without a numpad.
 ; - provide Window Cascade commands independently of the extra-key mappings.
+; - route scratchpad commands to the optional scratchpad.ahk companion.
 ; - provide a tray-menu toggle for launching the script with Windows.
 ; =============================================================================
 
@@ -261,6 +276,12 @@ CapsLock & Delete::PostPlainWindowCascadeCommandOnce(
 
 CapsLock & h::PostPlainWindowCascadeCommandOnce(cascade_command_show_help, "h")
 
+; Scratchpad commands. These keys do not replace the existing extra-key mappings.
+CapsLock & b::PostPlainScratchpadCommandOnce(scratchpad_toggle_message, "b")
+CapsLock & n::PostPlainScratchpadCommandOnce(scratchpad_new_message, "n")
+CapsLock & j::PostPlainScratchpadCommandOnce(scratchpad_previous_message, "j")
+CapsLock & l::PostPlainScratchpadCommandOnce(scratchpad_next_message, "l")
+
 ; Diagnostics.
 CapsLock & F5::PostRegisteredCommand(debug_reset_logs_message)
 
@@ -335,6 +356,12 @@ F4::UseArmedWindowCascadeCommand(cascade_command_close_scope, "F4")
 F7::UseArmedWindowCascadeCommand(cascade_command_gather_to_monitor, "F7")
 Delete::UseArmedWindowCascadeCommand(cascade_command_close_active, "Delete")
 h::UseArmedWindowCascadeCommand(cascade_command_show_help, "h")
+
+; Scratchpad commands have the same meaning in the one-shot layer.
+b::UseArmedScratchpadCommand(scratchpad_toggle_message, "b")
+n::UseArmedScratchpadCommand(scratchpad_new_message, "n")
+j::UseArmedScratchpadCommand(scratchpad_previous_message, "j")
+l::UseArmedScratchpadCommand(scratchpad_next_message, "l")
 
 ; Diagnostics.
 F5::UseArmedRegisteredCommand(debug_reset_logs_message, "F5")
@@ -698,6 +725,74 @@ PostWindowCascadeCommand(command_id, parameter := 0)
 
 
 ; =============================================================================
+; Scratchpad integration
+; =============================================================================
+
+PostPlainScratchpadCommandOnce(message_id, physical_key)
+{
+    try {
+        if !GetKeyState("Shift", "P") && !GetKeyState("Alt", "P")
+            && !GetKeyState("Ctrl", "P") && !GetKeyState("LWin", "P")
+            && !GetKeyState("RWin", "P")
+        {
+            DisarmCapsLayer()
+            PostScratchpadCommand(message_id)
+        }
+    }
+    finally {
+        KeyWait physical_key
+    }
+}
+
+UseArmedScratchpadCommand(message_id, physical_key)
+{
+    HideCapsLayerTip()
+    SetTimer DisarmCapsLayer, 0
+    try {
+        PostScratchpadCommand(message_id)
+        KeyWait physical_key
+    }
+    finally {
+        DisarmCapsLayer()
+    }
+}
+
+PostScratchpadCommand(message_id)
+{
+    previous_detect_hidden := A_DetectHiddenWindows
+    DetectHiddenWindows True
+    try {
+        controller_title := "nroj.Scratchpad.Controller ahk_class AutoHotkeyGUI"
+        controller_hwnd := WinExist(controller_title)
+        if !controller_hwnd {
+            scratchpad_path := A_ScriptDir "\scratchpad.ahk"
+            if !FileExist(scratchpad_path)
+                throw Error("Place scratchpad.ahk beside capslock-layer.ahk first.")
+
+            ; Start the companion only when it is actually needed.
+            if A_PtrSize = 8 && !A_IsCompiled
+                Run '"' A_AhkPath '" "' scratchpad_path '"', A_ScriptDir
+            else
+                Run '"' scratchpad_path '"', A_ScriptDir
+            controller_hwnd := WinWait(controller_title, , 10)
+            if !controller_hwnd
+                throw Error("Scratchpad did not become ready. Check its startup message.")
+        }
+
+        ; Address just the ready controller, rather than broadcasting twice to
+        ; both the script's hidden window and its companion GUI.
+        PostMessage message_id, 0, 0, , "ahk_id " controller_hwnd
+    }
+    catch as failure {
+        MsgBox failure.Message, "Scratchpad", "Iconx"
+    }
+    finally {
+        DetectHiddenWindows previous_detect_hidden
+    }
+}
+
+
+; =============================================================================
 ; registered command integration
 ; =============================================================================
 
@@ -823,6 +918,11 @@ ShowCapsLockLayerHelp(*)
     "WINDOW MANAGEMENT`n"
     "Window Cascade extends the Caps layer with window controls.`n"
     "See its help page for shortcuts. Caps + M disables / resumes the cascade.`n"
+    "`n"
+    "SCRATCHPAD`n"
+    "Caps + B                 Toggle (starts scratchpad.ahk when needed)`n"
+    "Caps + N                 New page`n"
+    "Caps + J / L             Previous / next page`n"
     "`n"
     "CAPS LOCK`n"
     "Double-tap Left Shift   Toggle actual Caps Lock"
