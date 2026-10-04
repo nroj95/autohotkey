@@ -3,37 +3,35 @@
 #Warn
 
 ; =============================================================================
-; Scratchpad - a persistent, keyboard-driven Notepad++ drawer
+; Scratchpad - a persistent, keyboard-driven Notepad3 drawer
 ; =============================================================================
-; responsibilities
-; - own one dedicated Notepad++ instance, not the user's ordinary editor windows.
-; - slide the window down from the active monitor's work-area top, then back up.
-; - create timestamped pages in D:\toolbox\scratch and remember the current page.
-; - save before hiding or switching; never dismiss a save/overwrite dialog.
-; - expose registered commands to capslock-layer.ahk without requiring it to run.
+; requirements and ownership
+; - use 64-bit AutoHotkey v2 and Notepad3 7.26.602.1 (normal privileges).
+; - launch one dedicated Notepad3 window; never adopt ordinary editor windows.
+; - retain the existing nroj.Scratchpad.* command interface for CapsLock Layer.
+; - mark the editor with nroj.WindowCascade.Ignore before positioning/showing it.
 ;
-; controls supplied by the accompanying CapsLock Layer
-;   Caps + B       toggle                 Caps + N       new page
-;   Caps + J       previous page          Caps + L       next page
-;   tap Caps, then B / N / J / L works too.
+; controls
+; - Caps + B toggles; Caps + N creates; Caps + J / L switch pages.
+; - inside the editor: Escape hides, Ctrl + N creates, Ctrl + PgUp/PgDn switch.
+; - Ctrl + S uses the same checked save path as autosave. F12 is opt-in.
 ;
-; while the scratch editor has focus
-;   Escape         hide (completion/calltip popups get Escape first)
-;   Ctrl + N       new page
-;   Ctrl + PgUp    previous page          Ctrl + PgDn    next page
+; persistence and safety
+; - pages are ordinary files directly inside the configured scratch directory.
+; - new pages use scratch-yyyyMMdd-HHmmss.md, UTF-8 without BOM and LF.
+; - save before hide/switch/exit; refuse automatic overwrites after disk conflicts.
+; - page switching reuses the same window via Notepad3's WM_COPYDATA protocol.
+; - undo survives hiding/reload, not loading another page; caret/scroll are cached.
+; - native Save As is supported inside the scratch folder. Rename closed pages.
+; - Exit saves and normally closes ONLY the owned editor. Reload reattaches.
 ;
-; configuration and lifecycle
-; - settings: %LOCALAPPDATA%\Scratchpad\settings.ini (created on first run).
-; - Notepad++ profile: %LOCALAPPDATA%\Scratchpad\Notepad++.
-; - the tray menu can enable standalone F12 and optional Windows startup.
-; - CapsLock Layer can launch this companion on demand; startup is not required.
-; - exiting this script reveals the editor instead of killing its process.
-;
-; design boundaries
-; - page switches close the old tab: undo history does not survive page switches.
-; - caret, scroll and selected built-in language are remembered in memory.
-; - rename an OPEN page through Notepad++ File > Rename, not Explorer.
-; - pages are local plaintext, not encrypted notes or a versioned backup system.
+; settings and implementation boundaries
+; - controller: %LOCALAPPDATA%\Scratchpad\settings.ini and state.ini.
+; - editor: %LOCALAPPDATA%\Scratchpad\Notepad3.ini (separate from normal settings).
+; - the old Notepad++ executable setting/profile are ignored, not deleted.
+; - no clipboard swaps, injected keystroke saves, process killing or remote memory.
+; - Notepad3 native messages/IDs are isolated in Notepad3Bridge below. They are
+;   source-level interfaces, not a promised stable plugin API; test editor updates.
 ; =============================================================================
 
 Persistent
@@ -41,7 +39,6 @@ DetectHiddenWindows True
 SetTitleMatchMode 2
 SetWinDelay -1
 SetControlDelay -1
-
 A_IconTip := "Scratchpad"
 try TraySetIcon(A_ScriptDir "\icons\scratchpad.ico")
 
@@ -52,39 +49,37 @@ catch as startup_failure {
 }
 
 #HotIf ScratchpadEditorFocused()
-
 $Esc::
 {
     scratchpad.HandleEscape()
     KeyWait "Escape"
 }
-
 $^n::
 {
     scratchpad.QueueCommand("new")
     KeyWait "n"
 }
-
+$^s::
+{
+    scratchpad.QueueCommand("save")
+    KeyWait "s"
+}
 $^PgUp::
 {
     scratchpad.QueueCommand("previous")
     KeyWait "PgUp"
 }
-
 $^PgDn::
 {
     scratchpad.QueueCommand("next")
     KeyWait "PgDn"
 }
-
 #HotIf IsSet(scratchpad) && scratchpad.enable_f12
-
 $F12::
 {
     scratchpad.QueueCommand("toggle")
     KeyWait "F12"
 }
-
 #HotIf
 
 ScratchpadEditorFocused()
@@ -95,33 +90,39 @@ ScratchpadEditorFocused()
         return false
     if !WinActive("ahk_id " scratchpad.window_hwnd)
         return false
+    if !scratchpad.bridge || scratchpad.bridge.tainted
+        return false
 
-    ; An editor may keep keyboard focus while a native menu is open.
+    ; Read the actual focused HWND instead of relying on a ClassNN string.
     thread_info := Buffer(72, 0) ; GUITHREADINFO, 64-bit
     NumPut("uint", thread_info.Size, thread_info)
-    if DllCall("GetGUIThreadInfo", "uint", 0, "ptr", thread_info, "int")
-        && (NumGet(thread_info, 4, "uint") & 0x1E)
+
+    if !DllCall("GetGUIThreadInfo", "uint", 0, "ptr", thread_info, "int")
         return false
 
-    ; Find/Replace dialogs and other controls retain their normal keys.
-    try return InStr(ControlGetFocus("ahk_id " scratchpad.window_hwnd), "Scintilla") = 1
-    catch
+    ; Native menus, popup menus and move/size loops keep their normal shortcuts.
+    if NumGet(thread_info, 4, "uint") & 0x1E
         return false
+
+    focused_hwnd := NumGet(thread_info, 16, "ptr")
+    return focused_hwnd = scratchpad.bridge.editor_hwnd
 }
 
 
 class ScratchpadController
 {
     ; =========================================================================
-    ; startup, configuration and command routing
+    ; configuration and serialized commands
     ; =========================================================================
 
     __New()
     {
         this.window_hwnd := 0
+        this.editor_pid := 0
         this.bridge := 0
         this.busy := false
         this.autosave_paused := false
+        this.exit_prepared := false
         this.command_queue := []
         this.page_views := Map()
         this.page_views.CaseSense := "Off"
@@ -131,17 +132,17 @@ class ScratchpadController
         this.persisted_stamp := ""
         this.previous_window := 0
         this.last_bounds := 0
-        this.window_marker := "nroj.Scratchpad.NotepadWindow"
+        this.window_marker := "nroj.Scratchpad.Notepad3Window"
         this.cascade_ignore_marker := "nroj.WindowCascade.Ignore"
         this.controller_title := "nroj.Scratchpad.Controller"
         this.data_directory := EnvGet("LOCALAPPDATA") "\Scratchpad"
         this.settings_path := this.data_directory "\settings.ini"
         this.state_path := this.data_directory "\state.ini"
-        this.profile_directory := this.data_directory "\Notepad++"
+        this.editor_profile := this.data_directory "\Notepad3.ini"
+        this.error_log := this.data_directory "\errors.log"
         this.startup_shortcut := A_Startup "\Scratchpad.lnk"
         this.mutex_handle := 0
 
-        ; The named mutex also protects against running differently named copies.
         this.mutex_handle := DllCall("CreateMutexW", "ptr", 0, "int", false,
             "str", "Local\nroj.Scratchpad.Controller", "ptr")
         mutex_error := A_LastError
@@ -150,21 +151,18 @@ class ScratchpadController
         if mutex_error = 183 {
             DllCall("CloseHandle", "ptr", this.mutex_handle)
             this.mutex_handle := 0
-            MsgBox "Scratchpad is already running. Use its tray menu to exit before running another copy.",
-                "Scratchpad", "Iconi"
-            ExitApp
+            throw Error("Scratchpad is already running. Exit the other copy first.")
         }
 
         DirCreate this.data_directory
-        DirCreate this.profile_directory
-        this.CreateEditorProfile()
         this.CreateDefaultSettings()
         this.scratch_directory := RTrim(IniRead(this.settings_path, "Paths",
             "ScratchDirectory", "D:\toolbox\scratch"), "\/")
         if !RegExMatch(this.scratch_directory, "i)^(?:[a-z]:\\|\\\\)")
             throw Error("ScratchDirectory must be an absolute Windows path.")
         DirCreate this.scratch_directory
-
+        ; Resolve . and .. before enforcing the direct-child page boundary.
+        this.scratch_directory := RTrim(ScratchpadFullPath(this.scratch_directory), "\/")
         this.width_percent := this.ReadNumber("Window", "WidthPercent", 75, 30, 100)
         this.height_percent := this.ReadNumber("Window", "HeightPercent", 60, 20, 100)
         this.animation_ms := this.ReadNumber("Window", "AnimationDurationMs", 180, 0, 1000)
@@ -177,57 +175,39 @@ class ScratchpadController
 
         this.process_commands_callback := ObjBindMethod(this, "ProcessCommands")
         this.autosave_callback := ObjBindMethod(this, "Autosave")
-        this.exit_callback := ObjBindMethod(this, "OnScriptExit")
-        OnExit this.exit_callback
+        OnExit ObjBindMethod(this, "OnScriptExit")
         this.BuildTrayMenu()
-
-        ; Register before exposing the ready window, so the first command is safe.
         this.message_callbacks := []
-        for command, message_name in Map(
-            "toggle", "nroj.Scratchpad.Toggle",
-            "new", "nroj.Scratchpad.New",
-            "previous", "nroj.Scratchpad.Previous",
-            "next", "nroj.Scratchpad.Next"
-        ) {
-            message_id := DllCall("RegisterWindowMessageW", "str", message_name, "uint")
+        for command, name in Map("toggle", "nroj.Scratchpad.Toggle",
+            "new", "nroj.Scratchpad.New", "previous", "nroj.Scratchpad.Previous",
+            "next", "nroj.Scratchpad.Next") {
+            message_id := DllCall("RegisterWindowMessageW", "str", name, "uint")
             if !message_id
                 throw OSError(A_LastError, "RegisterWindowMessageW")
             callback := ObjBindMethod(this, "ReceiveCommand", command)
             this.message_callbacks.Push(callback)
             OnMessage message_id, callback
         }
+        ; Expose the readiness title only after all message handlers exist.
         this.controller_window := Gui("+ToolWindow", "nroj.Scratchpad.Starting")
         this.controller_window.Title := this.controller_title
         SetTimer this.autosave_callback, this.autosave_ms
     }
 
-    CreateEditorProfile()
-    {
-        profile_path := this.profile_directory "\config.xml"
-        if FileExist(profile_path)
-            return
-        ; Only seed the dedicated profile. Disabling session snapshots makes a
-        ; native editor close use its normal save prompt, not an unsaved session.
-        profile := '<?xml version="1.0" encoding="UTF-8"?>`n'
-            . '<NotepadPlus><GUIConfigs>`n'
-            . '<GUIConfig name="RememberLastSession">no</GUIConfig>`n'
-            . '<GUIConfig name="Backup" action="0" useCustumDir="no" dir=""'
-            . ' isSnapshotMode="no" snapshotBackupTiming="7000" />`n'
-            . '<GUIConfig name="NewDocDefaultSettings" format="2" encoding="4"'
-            . ' lang="0" codepage="-1" openAnsiAsUTF8="yes" />`n'
-            . '</GUIConfigs></NotepadPlus>`n'
-        FileAppend profile, profile_path, "UTF-8-RAW"
-    }
-
     CreateDefaultSettings()
     {
-        if FileExist(this.settings_path)
-            return
-        settings := "[Paths]`nScratchDirectory=D:\toolbox\scratch`nNotepadExecutable=`n"
-            . "`n[Window]`nWidthPercent=75`nHeightPercent=60`nAnimationDurationMs=180`nAlwaysOnTop=1`n"
-            . "`n[Saving]`nAutosaveIntervalMs=2000`n"
-            . "`n[Controls]`nEnableF12=0`n"
-        FileAppend settings, this.settings_path, "UTF-16"
+        if !FileExist(this.settings_path) {
+            settings := "[Paths]`nScratchDirectory=D:\toolbox\scratch`nNotepad3Executable=`n"
+                . "`n[Window]`nWidthPercent=75`nHeightPercent=60`nAnimationDurationMs=180`nAlwaysOnTop=1`n"
+                . "`n[Saving]`nAutosaveIntervalMs=2000`n`n[Controls]`nEnableF12=0`n"
+            FileAppend settings, this.settings_path, "UTF-16"
+        }
+        ; Do not reuse NotepadExecutable: an existing value points at Notepad++.
+        if IniRead(this.settings_path, "Paths", "Notepad3Executable", "<missing>") = "<missing>"
+            IniWrite "", this.settings_path, "Paths", "Notepad3Executable"
+        ; Notepad3 owns this UTF-8 INI. Never rewrite its existing preferences.
+        if !FileExist(this.editor_profile)
+            FileAppend "[Notepad3]`n`n[Settings]`nSettingsVersion=5`n", this.editor_profile, "UTF-8-RAW"
     }
 
     ReadNumber(section, key, fallback, minimum, maximum)
@@ -267,7 +247,7 @@ class ScratchpadController
                     this.command_queue := []
                     this.autosave_paused := true
                     this.RevealAfterError(request.source_window)
-                    MsgBox failure.Message, "Scratchpad", "Iconx 4096"
+                    this.ReportError(failure)
                 }
             }
         }
@@ -282,31 +262,44 @@ class ScratchpadController
 
     ExecuteCommand(request)
     {
+        if request.name = "exit" {
+            this.ExitScratchpad()
+            return
+        }
+        if request.name = "reload" {
+            if this.HasWindow() || this.AttachExistingWindow()
+                this.SaveCurrentPage()
+            Reload
+            return
+        }
         if request.name = "hide" {
             if this.HasWindow() && this.IsVisible()
                 this.HideWindow()
             return
         }
-
-        initial_page_was_created := this.EnsureWindow(request.source_window)
-        if request.name = "toggle" && this.IsVisible() {
-            this.HideWindow()
+        if request.name = "save" {
+            if this.HasWindow()
+                this.SaveCurrentPage()
             return
         }
 
+        was_visible := this.IsVisible()
+        page_was_created := this.EnsureWindow(request.source_window)
+        ; A freshly launched editor must open, not immediately toggle closed.
+        if request.name = "toggle" && was_visible {
+            this.HideWindow()
+            return
+        }
         this.ShowWindow(request.source_window)
         switch request.name {
             case "new":
-                ; An empty folder already received its first page during launch.
-                if !initial_page_was_created {
+                if !page_was_created {
                     this.SaveCurrentPage()
                     this.SwitchPage(this.CreatePage(), true)
                 }
             case "previous", "next":
                 this.SaveCurrentPage()
                 pages := this.ListPages()
-                if !pages.Length
-                    throw Error("No supported scratch files remain in the scratch directory.")
                 current_index := 0
                 for index, path in pages {
                     if path = this.current_path {
@@ -315,23 +308,26 @@ class ScratchpadController
                     }
                 }
                 if !current_index
-                    throw Error("The current page is no longer in the scratch folder. Resolve its rename or move in Notepad++ first.")
+                    throw Error("The current file is no longer in the scratch folder. Resolve its move or rename in Notepad3 first.")
                 direction := request.name = "next" ? 1 : -1
                 next_index := Mod(current_index - 1 + direction + pages.Length, pages.Length) + 1
                 this.SwitchPage(pages[next_index])
         }
     }
 
-
     ; =========================================================================
-    ; editor ownership and startup
+    ; editor ownership, startup and reattachment
     ; =========================================================================
 
     HasWindow()
     {
-        return this.window_hwnd
-            && DllCall("IsWindow", "ptr", this.window_hwnd, "int")
-            && DllCall("GetPropW", "ptr", this.window_hwnd, "str", this.window_marker, "ptr")
+        if !this.window_hwnd || !DllCall("IsWindow", "ptr", this.window_hwnd, "int")
+            return false
+        if !DllCall("GetPropW", "ptr", this.window_hwnd, "str", this.window_marker, "ptr")
+            return false
+        try return WinGetPID("ahk_id " this.window_hwnd) = this.editor_pid
+        catch
+            return false
     }
 
     IsVisible()
@@ -341,6 +337,36 @@ class ScratchpadController
             && !DllCall("IsIconic", "ptr", this.window_hwnd, "int")
     }
 
+    MarkWindow(hwnd)
+    {
+        ; Opt out before making it visible or performing slow editor queries.
+        if !DllCall("SetPropW", "ptr", hwnd, "str", this.cascade_ignore_marker, "ptr", 1, "int")
+            throw OSError(A_LastError, "SetPropW", "Could not opt out of Window Cascade.")
+        if !DllCall("SetPropW", "ptr", hwnd, "str", this.window_marker, "ptr", 1, "int")
+            throw OSError(A_LastError, "SetPropW", "Could not mark the scratch editor.")
+    }
+
+    AttachExistingWindow()
+    {
+        for candidate in WinGetList("ahk_class Notepad3") {
+            if !DllCall("GetPropW", "ptr", candidate, "str", this.window_marker, "ptr")
+                continue
+            this.window_hwnd := candidate
+            this.editor_pid := WinGetPID("ahk_id " candidate)
+            this.MarkWindow(candidate)
+            this.ConnectBridge()
+            path := this.bridge.CurrentPath()
+            saved_path := IniRead(this.state_path, "CurrentPage", "Path", "")
+            this.current_path := path
+            ; Keep the old disk stamp on reattach: reload must not bless a conflict.
+            this.disk_stamp := path = saved_path
+                ? IniRead(this.state_path, "CurrentPage", "DiskStamp", "") : ""
+            this.bridge.PrepareDrawer()
+            return true
+        }
+        return false
+    }
+
     EnsureWindow(source_window)
     {
         if this.HasWindow() {
@@ -348,30 +374,13 @@ class ScratchpadController
                 this.ConnectBridge()
             return false
         }
-
         this.window_hwnd := 0
+        this.editor_pid := 0
         this.bridge := 0
-        ; A window property survives script reloads without adopting normal windows.
-        for candidate in WinGetList("ahk_class Notepad++") {
-            if DllCall("GetPropW", "ptr", candidate, "str", this.window_marker, "ptr") {
-                this.window_hwnd := candidate
-                if !DllCall("SetPropW", "ptr", candidate, "str", this.cascade_ignore_marker, "ptr", 1, "int")
-                    throw OSError(A_LastError, "SetPropW")
-                this.ConnectBridge()
-                path := this.bridge.GetCurrentPath()
-                saved_path := IniRead(this.state_path, "CurrentPage", "Path", "")
-                if path = saved_path {
-                    this.current_path := path
-                    this.disk_stamp := IniRead(this.state_path, "CurrentPage", "DiskStamp", "")
-                }
-                return false
-            }
-        }
+        if this.AttachExistingWindow()
+            return false
 
-        notepad_executable := this.FindNotepadExecutable()
-        if notepad_executable = ""
-            throw Error("Notepad++ was not selected. Run the scratchpad command again when its executable is available.")
-
+        executable := this.FindNotepad3Executable()
         initial_path := IniRead(this.state_path, "CurrentPage", "Path", "")
         new_page := false
         if !this.IsScratchPath(initial_path) || !FileExist(initial_path) {
@@ -383,91 +392,103 @@ class ScratchpadController
                 new_page := true
             }
         }
-
-        ; A separate profile prevents session/settings writes to ordinary Notepad++.
-        ; Tray startup avoids showing the editor before the drawer is positioned.
-        command_line := '"' notepad_executable '" -multiInst -nosession -noPlugin'
-            . ' -notabbar -settingsDir="' this.profile_directory '"'
-            . ' -titleAdd="scratchpad" "' initial_path '"'
-        Run command_line, this.scratch_directory, "Hide", &notepad_pid
-        candidate := WinWait("ahk_class Notepad++ ahk_pid " notepad_pid, , 12)
-        if !candidate
-            throw Error("Notepad++ did not create its scratch window. Check for a startup/error dialog, then try again.")
-
-        this.window_hwnd := candidate
-        if !DllCall("SetPropW", "ptr", candidate, "str", this.window_marker, "ptr", 1, "int")
-            throw OSError(A_LastError, "SetPropW")
-        if !DllCall("SetPropW", "ptr", candidate, "str", this.cascade_ignore_marker, "ptr", 1, "int")
-            throw OSError(A_LastError, "SetPropW")
-        this.current_path := ""
-        this.disk_stamp := ""
+        initial_path := ScratchpadFullPath(initial_path)
+        before_load_stamp := ScratchpadFileStamp(initial_path)
+        ; /n requests a new process/window, /f isolates its INI, /l0 prompts on
+        ; external changes. No /i tray mode, copied executable or title parsing.
+        command_line := '"' executable '" /n /f "' this.editor_profile
+            . '" /l0 /t Scratchpad "' initial_path '"'
+        Run command_line, this.scratch_directory, "Hide", &editor_pid
+        this.editor_pid := editor_pid
+        deadline := A_TickCount + 12000
+        loop {
+            candidate := WinExist("ahk_class Notepad3 ahk_pid " editor_pid)
+            if candidate {
+                this.window_hwnd := candidate
+                this.MarkWindow(candidate)
+                WinHide "ahk_id " candidate
+                if DllCall("GetDlgItem", "ptr", candidate, "int", 0xFB03, "ptr")
+                    && DllCall("GetDlgItem", "ptr", candidate, "int", 0xFB05, "ptr")
+                    break
+            }
+            if A_TickCount >= deadline || !ProcessExist(editor_pid)
+                throw Error("Notepad3 did not create a ready editor. Check for a startup dialog, then retry.")
+            Sleep 10
+        }
         this.ConnectBridge()
-        if this.bridge.GetCurrentPath() != initial_path
-            throw Error("Notepad++ did not open the requested scratch page. No existing tabs were closed.")
-        this.bridge.Send(2094, 0, true) ; NPPM_HIDETOOLBAR
-        this.AcceptCurrentPath(initial_path)
+        ; A window/control can exist before its initial document has finished loading.
+        loop {
+            if this.bridge.CurrentPath() = initial_path
+                break
+            if A_TickCount >= deadline
+                throw Error("Notepad3 did not open the requested page. No editor was closed.")
+            Sleep 30
+        }
+        WinHide "ahk_id " this.window_hwnd
+        this.current_path := initial_path
+        this.disk_stamp := before_load_stamp
+        this.bridge.PrepareDrawer()
+        this.last_bounds := this.GetBounds(source_window)
+        this.PersistCurrentState()
         if new_page
             this.ConfigureNewPage()
-        this.last_bounds := this.GetBounds(source_window)
         return new_page
     }
 
     ConnectBridge()
     {
-        this.bridge := 0
-        this.bridge := NotepadBridge(this.window_hwnd)
-        if !this.bridge.Send(2074) ; NPPM_GETNPPVERSION
-            throw Error("The dedicated Notepad++ window is not ready. Try the command again.")
+        if !this.HasWindow()
+            throw Error("The dedicated Notepad3 window has closed. Try the command again.")
+        this.bridge := Notepad3Bridge(this.window_hwnd)
     }
 
-    FindNotepadExecutable()
+    FindNotepad3Executable()
     {
-        configured := IniRead(this.settings_path, "Paths", "NotepadExecutable", "")
+        configured := IniRead(this.settings_path, "Paths", "Notepad3Executable", "")
         if configured != "" {
-            if FileExist(configured)
-                return configured
-            throw Error("NotepadExecutable does not exist:`n" configured
-                . "`n`nCorrect the path in the scratchpad settings.ini, then reload the script.")
+            SplitPath configured, &file_name
+            if !FileExist(configured) || file_name != "Notepad3.exe"
+                throw Error("Notepad3Executable must point to Notepad3.exe:`n" configured
+                    . "`n`nCorrect it in Scratchpad settings, then reload.")
+            return configured
         }
-
         candidates := []
         for root in ["HKCU", "HKLM"] {
-            try candidates.Push(RegRead(root "\Software\Microsoft\Windows\CurrentVersion\App Paths\notepad++.exe"))
+            try candidates.Push(RegRead(root "\Software\Microsoft\Windows\CurrentVersion\App Paths\Notepad3.exe"))
         }
         for variable in ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"] {
             directory := EnvGet(variable)
             if directory != ""
-                candidates.Push(directory "\Notepad++\notepad++.exe")
+                candidates.Push(directory "\Notepad3\Notepad3.exe")
         }
-        for candidate in WinGetList("ahk_exe notepad++.exe") {
+        for candidate in WinGetList("ahk_exe Notepad3.exe") {
             try candidates.Push(WinGetProcessPath("ahk_id " candidate))
         }
         for candidate in candidates {
             if FileExist(candidate)
                 return candidate
         }
-
-        selected := FileSelect(1, , "Locate notepad++.exe (installed or portable)", "Notepad++ (notepad++.exe)")
-        if selected != "" {
-            SplitPath selected, &file_name
-            if file_name != "notepad++.exe"
-                throw Error("Select notepad++.exe, not the installer or a shortcut.")
-            IniWrite selected, this.settings_path, "Paths", "NotepadExecutable"
-        }
+        selected := FileSelect(1, , "Locate Notepad3.exe (installed or portable)", "Notepad3 (Notepad3.exe)")
+        SplitPath selected, &file_name
+        if selected = "" || file_name != "Notepad3.exe"
+            throw Error("Select Notepad3.exe, not its installer or a shortcut.")
+        IniWrite selected, this.settings_path, "Paths", "Notepad3Executable"
         return selected
     }
 
-
     ; =========================================================================
-    ; persistent pages and checked saves
+    ; persistent pages, checked saves and in-place switching
     ; =========================================================================
 
     IsScratchPath(path)
     {
         if path = ""
             return false
-        SplitPath path, , &parent_directory, &extension
-        return RTrim(parent_directory, "\/") = this.scratch_directory
+        try path := ScratchpadFullPath(path)
+        catch
+            return false
+        SplitPath path, , &directory, &extension
+        return RTrim(directory, "\/") = this.scratch_directory
             && InStr(this.allowed_extensions, "|" StrLower(extension) "|")
     }
 
@@ -506,34 +527,28 @@ class ScratchpadController
         }
     }
 
-    EnsureSingleScratchPage()
+    CheckCurrentPage()
     {
-        if !DllCall("IsWindowEnabled", "ptr", this.window_hwnd, "int")
-            throw Error("Finish or cancel the open Notepad++ dialog before using a scratchpad command.")
-        if this.bridge.OpenBufferCount() != 1 {
-            this.bridge.Send(2075, 0, false) ; NPPM_HIDETABBAR
-            throw Error("The scratch window contains extra tabs. Close those tabs manually first; the scratchpad will not close or save unrelated documents.")
-        }
-        path := this.bridge.GetCurrentPath()
+        if !this.HasWindow()
+            throw Error("The scratch editor has closed.")
+        if !this.bridge || this.bridge.tainted
+            this.ConnectBridge()
+        this.bridge.CheckReady()
+        path := this.bridge.CurrentPath()
         if !this.IsScratchPath(path)
-            throw Error("The current tab is not a supported file directly inside:`n"
-                . this.scratch_directory "`n`nReturn to a scratch page before switching or hiding.")
-        if !FileExist(path)
-            throw Error("The open page was renamed, moved or deleted outside Notepad++:`n" path
-                . "`n`nResolve it in Notepad++ first. The scratchpad will not recreate the old name automatically.")
+            throw Error("The editor is not showing a supported file directly inside:`n"
+                . this.scratch_directory "`n`nReturn to a scratch page or use File > Save As. Unrelated files will not be saved or closed automatically.")
+        if !FileExist(path) || InStr(FileExist(path), "D")
+            throw Error("The open page was renamed, moved or deleted outside Notepad3:`n" path
+                . "`n`nUse File > Save As to preserve it, or reopen the renamed page. The old name will not be recreated automatically.")
         if path != this.current_path {
-            if this.current_path != "" && this.page_views.Has(this.current_path)
-                this.page_views[path] := this.page_views[this.current_path]
-            this.AcceptCurrentPath(path)
+            ; Notepad3's path control follows native Open, Rename and Save As.
+            ; Accept the user's explicit document change; subsequent disk changes
+            ; are checked against this new baseline.
+            this.current_path := path
+            this.disk_stamp := ScratchpadFileStamp(path)
         }
         return path
-    }
-
-    AcceptCurrentPath(path)
-    {
-        this.current_path := path
-        this.disk_stamp := ScratchpadFileStamp(path)
-        this.PersistCurrentState()
     }
 
     PersistCurrentState()
@@ -548,59 +563,51 @@ class ScratchpadController
 
     SaveCurrentPage()
     {
-        path := this.EnsureSingleScratchPage()
-        current_disk_stamp := ScratchpadFileStamp(path)
-        dirty := this.bridge.IsDirty()
+        path := this.CheckCurrentPage()
+        current_stamp := ScratchpadFileStamp(path)
+        if this.disk_stamp = "" || current_stamp != this.disk_stamp {
+            ; A native save/reload is harmless only when disk and editor agree.
+            ; Never auto-reload here: the user may have kept a different version.
+            if !this.bridge.MatchesDisk(path)
+                throw Error("The page changed on disk, or its previous save state is unknown.`n`n"
+                    . "Use Notepad3 File > Save As to preserve the editor version under a new scratch name,"
+                    . " or File > Revert to keep the disk version. No automatic overwrite was attempted.")
+            if ScratchpadFileStamp(path) != current_stamp
+                throw Error("The file changed again while being checked. Retry after the other writer has finished.")
+            this.disk_stamp := current_stamp
+        }
+        ; Always ask the native editor to save: encoding-only changes may not set
+        ; Scintilla's text-dirty flag.
+        this.bridge.Save()
 
-        if this.disk_stamp != "" && current_disk_stamp != this.disk_stamp {
-            if dirty
-                throw Error("The file changed on disk while this editor also has unsaved changes.`n`n"
-                    . "Use File > Save As to preserve the editor version under a new scratch name,"
-                    . " or File > Reload from Disk to keep the disk version. No automatic overwrite was attempted.")
-            ; Ctrl+S and Notepad++'s own reload can also change the disk stamp.
-            ; Avoid a redundant reload (and lost undo) when text already matches.
-            if !this.EditorMatchesDisk(path) {
-                this.RememberPageView(path)
-                if !this.bridge.PathMessage(2060, path) ; NPPM_RELOADFILE
-                    throw Error("The externally changed page could not be reloaded.")
-                this.RestorePageView(path)
-            }
-            this.disk_stamp := ScratchpadFileStamp(path)
+        ; Notepad3 may finish its atomic file replacement before the modified flag
+        ; is observed as cleared. Wait for the editor and disk state to settle
+        ; before recording our new conflict-detection baseline.
+        save_deadline := A_TickCount + 2000
+        loop {
+            if this.bridge.CurrentPath() != path || !FileExist(path)
+                throw Error("The save target changed or disappeared. Inspect the editor before retrying.")
+
+            if !this.bridge.IsDirty()
+                break
+
+            if A_TickCount >= save_deadline
+                throw Error("Notepad3 still has unsaved changes after waiting for the save to finish. Saving/hiding/switching has been stopped.")
+
+            Sleep 10
         }
 
-        if this.bridge.IsDirty() {
-            if !this.bridge.Send(2062) || this.bridge.IsDirty() ; NPPM_SAVECURRENTFILE
-                throw Error("Notepad++ could not save the current page. The page will stay open. Check its save dialog, file permissions or disk space.")
-            if !FileExist(path)
-                throw Error("The save could not be verified on disk. The page will stay open.")
-            this.disk_stamp := ScratchpadFileStamp(path)
-        }
+        this.disk_stamp := ScratchpadFileStamp(path)
+        this.PersistCurrentState()
         this.autosave_paused := false
         A_IconTip := "Scratchpad"
-        this.bridge.Send(2075, 0, true) ; Hide the tab bar again after recovery.
-        this.PersistCurrentState()
-    }
-
-    EditorMatchesDisk(path)
-    {
-        ; Notepad++ represents Unicode documents as UTF-8 in Scintilla.
-        buffer_id := this.bridge.Send(2084)
-        encoding := this.bridge.Send(2090, buffer_id) ; NPPM_GETBUFFERENCODING
-        if encoding = 1 || encoding = 4 || encoding = 5
-            disk_text := FileRead(path, "UTF-8")
-        else if encoding = 3
-            disk_text := FileRead(path, "UTF-16")
-        else
-            return false
-        return disk_text == this.bridge.DocumentText()
     }
 
     ConfigureNewPage()
     {
-        ; Only new scratch pages are normalized; existing files keep their format.
-        this.bridge.MenuCommand(45010) ; IDM_FORMAT_CONV2_AS_UTF_8 (without BOM)
-        this.bridge.MenuCommand(45002) ; IDM_FORMAT_TOUNIX
-        this.bridge.Scintilla(2031, 2) ; SCI_SETEOLMODE / SC_EOL_LF
+        ; Existing files retain their encoding and line endings.
+        this.bridge.Command(Notepad3Bridge.encoding_utf8)
+        this.bridge.Command(Notepad3Bridge.line_endings_lf)
         this.SaveCurrentPage()
     }
 
@@ -609,34 +616,17 @@ class ScratchpadController
         if next_path = this.current_path
             return
         this.SaveCurrentPage()
-        old_path := this.current_path
-        old_buffer_id := this.bridge.Send(2084) ; NPPM_GETCURRENTBUFFERID
-        this.RememberPageView(old_path)
-
-        ; Open the destination first. If opening fails, the old page is untouched.
-        if !this.bridge.PathMessage(2101, next_path) ; NPPM_DOOPEN
-            throw Error("Notepad++ could not open:`n" next_path)
-        if this.bridge.GetCurrentPath() != next_path
-            throw Error("Notepad++ did not activate the requested page. No tabs were closed.")
-        new_buffer_id := this.bridge.Send(2084)
-
-        old_position := this.bridge.Send(2081, old_buffer_id, 0) ; NPPM_GETPOSFROMBUFFERID
-        if old_position = 0xFFFFFFFF || old_position < 0
-            throw Error("The previous tab could not be located. No tabs were closed.")
-        old_view := old_position >> 30
-        old_index := old_position & 0x3FFFFFFF
-        this.bridge.Send(2052, old_view, old_index) ; NPPM_ACTIVATEDOC
-        if this.bridge.Send(2084) != old_buffer_id
-            throw Error("The previous tab could not be identified safely. No tabs were closed.")
-        if this.bridge.IsDirty()
-            throw Error("The previous page changed during switching. Both tabs have been kept open.")
-        this.bridge.MenuCommand(41003) ; IDM_FILE_CLOSE -- never Close All.
-
-        if this.bridge.OpenBufferCount() != 1
-            throw Error("The old tab was not closed. Resolve any Notepad++ dialog; both pages have been kept.")
-        if this.bridge.Send(2084) != new_buffer_id
-            throw Error("The new page was not retained as expected. Inspect the open tab before continuing.")
-        this.AcceptCurrentPath(next_path)
+        next_path := ScratchpadFullPath(next_path)
+        if !this.IsScratchPath(next_path) || !FileExist(next_path)
+            throw Error("The next scratch page is no longer available:`n" next_path)
+        this.RememberPageView(this.current_path)
+        before_load_stamp := ScratchpadFileStamp(next_path)
+        this.bridge.OpenPage(next_path, this.controller_window.Hwnd)
+        if this.bridge.CurrentPath() != next_path
+            throw Error("Notepad3 did not load the requested page. Inspect its dialog and retry.")
+        this.current_path := next_path
+        this.disk_stamp := before_load_stamp
+        this.PersistCurrentState()
         if new_page
             this.ConfigureNewPage()
         else
@@ -647,11 +637,10 @@ class ScratchpadController
     RememberPageView(path)
     {
         this.page_views[path] := {
-            caret: this.bridge.Scintilla(2008),     ; SCI_GETCURRENTPOS
-            anchor: this.bridge.Scintilla(2009),    ; SCI_GETANCHOR
+            caret: this.bridge.Scintilla(2008),
+            anchor: this.bridge.Scintilla(2009),
             first_line: this.bridge.Scintilla(2152),
-            horizontal_scroll: this.bridge.Scintilla(2398),
-            language: this.bridge.ReadInteger(2029) ; NPPM_GETCURRENTLANGTYPE
+            horizontal_scroll: this.bridge.Scintilla(2398)
         }
     }
 
@@ -660,29 +649,25 @@ class ScratchpadController
         if !this.page_views.Has(path)
             return
         view := this.page_views[path]
-        length := this.bridge.Scintilla(2006) ; SCI_GETLENGTH
-        this.bridge.Send(2030, 0, view.language) ; NPPM_SETCURRENTLANGTYPE
-        this.bridge.Scintilla(2160, Min(length, view.anchor), Min(length, view.caret)) ; SCI_SETSEL
-        this.bridge.Scintilla(2613, view.first_line) ; SCI_SETFIRSTVISIBLELINE
-        this.bridge.Scintilla(2397, view.horizontal_scroll) ; SCI_SETXOFFSET
+        length := this.bridge.Scintilla(2006)
+        this.bridge.Scintilla(2160, Min(length, view.anchor), Min(length, view.caret))
+        this.bridge.Scintilla(2613, view.first_line)
+        this.bridge.Scintilla(2397, view.horizontal_scroll)
     }
 
     Autosave(*)
     {
         if this.busy || this.autosave_paused || !this.IsVisible()
             return
-        if !DllCall("IsWindowEnabled", "ptr", this.window_hwnd, "int")
+        ; Never interact with an open native menu, file dialog or move/size loop.
+        if !ScratchpadWindowIdle(this.window_hwnd)
             return
         this.busy := true
-        try {
-            if !this.bridge || this.bridge.tainted
-                this.ConnectBridge()
-            this.SaveCurrentPage()
-        }
+        try this.SaveCurrentPage()
         catch as failure {
             this.autosave_paused := true
             A_IconTip := "Scratchpad - autosave paused"
-            TrayTip failure.Message, "Scratchpad - autosave paused", 2
+            this.ReportError(failure, true)
         }
         finally {
             this.busy := false
@@ -690,7 +675,6 @@ class ScratchpadController
                 SetTimer this.process_commands_callback, -1
         }
     }
-
 
     ; =========================================================================
     ; monitor placement, focus and animation
@@ -842,7 +826,7 @@ class ScratchpadController
         }
         WinActivate "ahk_id " this.window_hwnd
         if this.bridge && !this.bridge.tainted {
-            try ControlFocus this.bridge.ScintillaHwnd(), "ahk_id " this.window_hwnd
+            try ControlFocus this.bridge.editor_hwnd, "ahk_id " this.window_hwnd
         }
     }
 
@@ -873,21 +857,36 @@ class ScratchpadController
         if !this.HasWindow()
             return
         try {
-            DllCall("SetWindowRgn", "ptr", this.window_hwnd, "ptr", 0, "int", true)
-            bounds := this.GetBounds(source_window)
-            if WinGetMinMax("ahk_id " this.window_hwnd) != 0
-                WinRestore "ahk_id " this.window_hwnd
-            WinMove bounds.x, bounds.y, bounds.w, bounds.h, "ahk_id " this.window_hwnd
-            WinShow "ahk_id " this.window_hwnd
+            previous_dpi := DllCall("SetThreadDpiAwarenessContext", "ptr", -4, "ptr")
+            try {
+                DllCall("SetWindowRgn", "ptr", this.window_hwnd, "ptr", 0, "int", true)
+                bounds := this.GetBounds(source_window)
+                if WinGetMinMax("ahk_id " this.window_hwnd) != 0
+                    WinRestore "ahk_id " this.window_hwnd
+                WinMove bounds.x, bounds.y, bounds.w, bounds.h, "ahk_id " this.window_hwnd
+                WinShow "ahk_id " this.window_hwnd
+            }
+            finally {
+                if previous_dpi
+                    DllCall("SetThreadDpiAwarenessContext", "ptr", previous_dpi, "ptr")
+            }
             this.FocusEditor()
-            if this.bridge && !this.bridge.tainted && this.bridge.OpenBufferCount() != 1
-                this.bridge.Send(2075, 0, false)
         }
     }
 
+    ReportError(failure, notification := false)
+    {
+        detail := FormatTime(, "yyyy-MM-dd HH:mm:ss") " | " failure.Message
+            . "`n" failure.What " | line " failure.Line "`n" failure.Stack "`n`n"
+        try FileAppend detail, this.error_log, "UTF-8-RAW"
+        if notification
+            TrayTip failure.Message, "Scratchpad - autosave paused", 2
+        else
+            MsgBox failure.Message "`n`nDetails: " this.error_log, "Scratchpad", "Iconx 4096"
+    }
 
     ; =========================================================================
-    ; tray menu and shutdown
+    ; tray, GUI help, explicit exit and reload recovery
     ; =========================================================================
 
     BuildTrayMenu()
@@ -906,8 +905,8 @@ class ScratchpadController
         A_TrayMenu.Add("Enable standalone F12", ObjBindMethod(this, "ToggleF12"))
         A_TrayMenu.Add("Run at startup", ObjBindMethod(this, "ToggleStartup"))
         A_TrayMenu.Add()
-        A_TrayMenu.Add("Reload", (*) => Reload())
-        A_TrayMenu.Add("Exit", ObjBindMethod(this, "ExitScratchpad"))
+        A_TrayMenu.Add("Reload", ObjBindMethod(this, "QueueCommand", "reload"))
+        A_TrayMenu.Add("Exit", ObjBindMethod(this, "QueueCommand", "exit"))
         this.UpdateTrayChecks()
     }
 
@@ -965,23 +964,24 @@ class ScratchpadController
         "`n"
         "INSIDE THE EDITOR`n"
         "Escape                  Hide scratchpad`n"
-        "Ctrl + N                New page`n"
+        "Ctrl + N / Ctrl + S     New page / save page`n"
         "Ctrl + PgUp / PgDn      Previous / next page`n"
         "`n"
         "PAGES`n"
         "New pages are named automatically.`n"
         "Pages persist across Windows restarts.`n"
-        "The last used page reopens on startup.`n"
-        "Rename an open page through Notepad++ File > Rename.`n"
+        "The last used page reopens on the next scratch command.`n"
+        "Use File > Save As to name a page; rename closed files normally.`n"
         "`n"
         "SAVING`n"
-        "Visible pages are autosaved every two seconds.`n"
+        "Autosave runs while visible (two seconds by default).`n"
         "Pages are also saved before hiding or switching.`n"
         "Undo history survives hiding, but not switching pages.`n"
         "`n"
         "WINDOW`n"
         "F12 is optional and disabled by default.`n"
         "Window size and animation can be changed in settings.ini.`n"
+        "Exit saves and closes the scratch editor; Reload keeps it.`n"
         "`n"
         "SCRATCH FOLDER`n"
         )
@@ -1005,62 +1005,41 @@ class ScratchpadController
         }
     }
 
-    ExitScratchpad(*)
+    ExitScratchpad()
     {
-        if this.HasWindow() {
-            try {
-                if !this.bridge || this.bridge.tainted
-                    this.ConnectBridge()
-
-                this.SaveCurrentPage()
-
-                ; Explicit Exit owns the editor too: leave no hidden scratch process.
-                target_hwnd := this.window_hwnd
-                DllCall("SetWindowRgn", "ptr", target_hwnd, "ptr", 0, "int", true)
-                WinSetAlwaysOnTop false, "ahk_id " target_hwnd
-                WinClose "ahk_id " target_hwnd
-
-                try WinWaitClose "ahk_id " target_hwnd, , 5
-
-                if DllCall("IsWindow", "ptr", target_hwnd, "int")
-                    throw Error("Notepad++ did not close. Resolve any editor dialog, then try Exit again.")
-
-                this.window_hwnd := 0
-                this.bridge := 0
-            }
-            catch as failure {
-                MsgBox failure.Message, "Scratchpad", "Iconx 4096"
-                return
-            }
+        ; Also find a retained editor when Exit is used directly after Reload.
+        if this.HasWindow() || this.AttachExistingWindow() {
+            this.SaveCurrentPage()
+            target_hwnd := this.window_hwnd
+            ; A normal close permits Notepad3's own final save checks and prompts.
+            ; No process-wide kill, no global executable/class matching.
+            PostMessage 0x0010, 0, 0, , "ahk_id " target_hwnd ; WM_CLOSE
+            if !WinWaitClose("ahk_id " target_hwnd, , 5)
+                throw Error("Notepad3 has not closed. Resolve its dialog, then choose Exit again.")
+            this.window_hwnd := 0
+            this.editor_pid := 0
+            this.bridge := 0
         }
-
+        this.exit_prepared := true
         ExitApp
     }
 
     OnScriptExit(exit_reason, exit_code)
     {
         SetTimer this.autosave_callback, 0
+        SetTimer this.process_commands_callback, 0
         if this.HasWindow() {
-            try {
-                if !this.bridge || this.bridge.tainted
-                    this.ConnectBridge()
-                this.SaveCurrentPage()
+            if !this.exit_prepared {
+                try this.SaveCurrentPage()
             }
-            ; Finish any partially completed animation, including during reload.
+            ; Reload retains the real editor and its undo history. Unexpected
+            ; ordinary exits reveal it rather than stranding a hidden document.
             try {
                 DllCall("SetWindowRgn", "ptr", this.window_hwnd, "ptr", 0, "int", true)
                 bounds := this.last_bounds ? this.last_bounds : this.GetBounds(this.window_hwnd)
                 WinMove bounds.x, bounds.y, bounds.w, bounds.h, "ahk_id " this.window_hwnd
-            }
-            ; Keep ownership for reattachment, but never leave a hidden orphan
-            ; after an ordinary exit. Shutdown/logoff are managed by Windows.
-            if exit_reason != "Reload" && exit_reason != "Single"
-                && exit_reason != "Shutdown" && exit_reason != "Logoff"
-            {
-                try {
-                    DllCall("SetWindowRgn", "ptr", this.window_hwnd, "ptr", 0, "int", true)
-                    bounds := this.GetBounds(this.window_hwnd)
-                    WinMove bounds.x, bounds.y, bounds.w, bounds.h, "ahk_id " this.window_hwnd
+                if exit_reason != "Reload" && exit_reason != "Single"
+                    && exit_reason != "Shutdown" && exit_reason != "Logoff" {
                     WinSetAlwaysOnTop false, "ahk_id " this.window_hwnd
                     WinShow "ahk_id " this.window_hwnd
                 }
@@ -1077,156 +1056,94 @@ class ScratchpadController
 
 
 ; =============================================================================
-; Notepad++ / Scintilla message bridge
+; Notepad3 / Scintilla bridge
 ; =============================================================================
-; Notepad++ custom messages are above WM_USER. Windows does not marshal their
-; pointers between processes. String/integer output buffers must therefore live
-; in Notepad++'s address space, not in an ordinary local AHK Buffer.
+; Verified against Notepad3 source: src/Notepad3.h (np3params, IDC_*),
+; src/Notepad3.c (MsgCopyData, _SetEnumWindowsItems, MsgCommand), and
+; language/common_res.h (command IDs). Native message handlers may return zero
+; even on success; transport success and the resulting editor state are distinct.
 ;
-; Only read/write data memory is allocated. No code or plugins are injected.
-; The 64-bit requirement keeps pointers valid with both 32-bit and 64-bit editors.
+; WM_GETTEXT and WM_COPYDATA are marshaled by Windows. Scintilla calls below carry
+; integers only. There is no VirtualAllocEx, WriteProcessMemory or pointer injection.
 ; =============================================================================
 
-class NotepadBridge
+class Notepad3Bridge
 {
-    __New(window_hwnd)
+
+    static encoding_utf8 := 40103
+    static line_endings_lf := 40202
+    static view_menubar := 41023
+    static view_toolbar := 41024
+    static minimize_to_tray := 42019
+    static no_escape_action := 42027
+
+    __New(hwnd)
     {
-        this.window_hwnd := window_hwnd
-        this.process_handle := 0
-        this.remote_pointer := 0
-        this.buffer_bytes := 65536
+        this.hwnd := hwnd
         this.tainted := false
-        process_id := WinGetPID("ahk_id " window_hwnd)
-        this.process_handle := DllCall("OpenProcess", "uint", 0x1038, "int", false,
-            "uint", process_id, "ptr") ; QUERY_LIMITED_INFORMATION | VM_OPERATION | VM_READ | VM_WRITE
-        if !this.process_handle
-            throw Error("Cannot communicate with Notepad++. Run it and AutoHotkey at the same privilege level, normally without administrator rights.")
-        this.remote_pointer := DllCall("VirtualAllocEx", "ptr", this.process_handle,
-            "ptr", 0, "uptr", this.buffer_bytes, "uint", 0x3000, "uint", 4, "ptr")
-        if !this.remote_pointer
-            throw OSError(A_LastError, "VirtualAllocEx")
+        this.pid := WinGetPID("ahk_id " hwnd)
+        this.editor_hwnd := DllCall("GetDlgItem", "ptr", hwnd, "int", 0xFB03, "ptr")
+        this.filename_hwnd := DllCall("GetDlgItem", "ptr", hwnd, "int", 0xFB05, "ptr")
+        if !this.editor_hwnd || !this.filename_hwnd
+            throw Error("This window does not expose the expected Notepad3 controls. No document was changed.")
+        if WinGetClass("ahk_id " this.editor_hwnd) != "Scintilla"
+            throw Error("The Notepad3 editor control is not Scintilla. No document was changed.")
     }
 
-    __Delete()
+    CheckReady()
     {
-        ; A timed-out receiver may still touch its buffer. Keep that small
-        ; allocation until the editor exits rather than risk a use-after-free.
-        if this.remote_pointer && this.process_handle && !this.tainted
-            DllCall("VirtualFreeEx", "ptr", this.process_handle, "ptr", this.remote_pointer,
-                "uptr", 0, "uint", 0x8000)
-        if this.process_handle
-            DllCall("CloseHandle", "ptr", this.process_handle)
+        if this.tainted
+            throw Error("The previous Notepad3 request timed out. Resolve its dialog, then retry.")
+        if !DllCall("IsWindow", "ptr", this.hwnd, "int")
+            || WinGetPID("ahk_id " this.hwnd) != this.pid
+            throw Error("The owned Notepad3 window is no longer available.")
+        if !ScratchpadWindowIdle(this.hwnd)
+            throw Error("Finish or cancel the Notepad3 menu/dialog before using a scratch command.")
     }
 
     Send(message, w_param := 0, l_param := 0, target_hwnd := 0)
     {
         if this.tainted
-            throw Error("Notepad++ did not respond. Resolve any editor dialog, then try the scratchpad command again.")
+            throw Error("Notepad3 is still waiting on a previous request. Resolve its dialog and retry.")
         if !target_hwnd
-            target_hwnd := this.window_hwnd
-        result := 0
+            target_hwnd := this.hwnd
+        result := Buffer(A_PtrSize, 0)
+        ; SMTO_BLOCK | SMTO_ABORTIFHUNG | SMTO_ERRORONEXIT. A timeout is NOT success.
         if !DllCall("SendMessageTimeoutW", "ptr", target_hwnd, "uint", message,
             "uptr", w_param, "ptr", l_param, "uint", 0x23, "uint", 3000,
-            "uptr*", &result, "ptr")
-        {
+            "ptr", result, "ptr") {
             this.tainted := true
-            throw Error("Notepad++ did not respond within three seconds. No save or close was assumed successful. Resolve any editor dialog, then try again.")
+            throw Error("Notepad3 did not respond within three seconds (message " Format("0x{:X}", message)
+                . "). Resolve any editor dialog, then retry. No save or close was assumed successful.")
         }
-        return result
+        return NumGet(result, 0, "ptr")
     }
 
-    WriteRemoteText(text := "")
+    CurrentPath()
     {
-        if this.tainted
-            throw Error("The previous editor request is still unresolved. Try the scratchpad command again.")
-        if (StrLen(text) + 1) * 2 > this.buffer_bytes
-            throw Error("The file path is too long for the Notepad++ message buffer.")
-        local_buffer := Buffer(this.buffer_bytes, 0)
-        if text != ""
-            StrPut text, local_buffer, "UTF-16"
-        bytes_written := 0
-        if !DllCall("WriteProcessMemory", "ptr", this.process_handle,
-            "ptr", this.remote_pointer, "ptr", local_buffer, "uptr", local_buffer.Size,
-            "uptr*", &bytes_written, "int") || bytes_written != local_buffer.Size
-            throw OSError(A_LastError, "WriteProcessMemory")
+        path := this.ReadWindowText(this.filename_hwnd, 32767)
+        return path = "" ? "" : ScratchpadFullPath(path)
     }
 
-    ReadRemote(bytes := 0, remote_pointer := 0)
+    ReadWindowText(hwnd, limit := 16777216)
     {
-        if !remote_pointer
-            remote_pointer := this.remote_pointer
-        if !bytes
-            bytes := this.buffer_bytes
-        local_buffer := Buffer(bytes, 0)
-        bytes_read := 0
-        if !DllCall("ReadProcessMemory", "ptr", this.process_handle,
-            "ptr", remote_pointer, "ptr", local_buffer, "uptr", bytes,
-            "uptr*", &bytes_read, "int") || bytes_read != bytes
-            throw OSError(A_LastError, "ReadProcessMemory")
-        return local_buffer
-    }
-
-    GetCurrentPath()
-    {
-        this.WriteRemoteText()
-        if !this.Send(4025, this.buffer_bytes // 2, this.remote_pointer) ; NPPM_GETFULLCURRENTPATH
-            throw Error("Could not read the active Notepad++ file path.")
-        return StrGet(this.ReadRemote(), "UTF-16")
-    }
-
-    PathMessage(message, path)
-    {
-        this.WriteRemoteText(path)
-        return this.Send(message, 0, this.remote_pointer)
-    }
-
-    ReadInteger(message)
-    {
-        this.WriteRemoteText()
-        if !this.Send(message, 0, this.remote_pointer)
-            throw Error("Could not read the requested Notepad++ editor state.")
-        return NumGet(this.ReadRemote(4), 0, "int")
-    }
-
-    OpenBufferCount()
-    {
-        buffer_ids := Map()
-
-        ; Notepad++ keeps a dummy document in the hidden view.
-        ; Count buffers only in views that are actually exposed to the user.
-        for view_info in [[0, 1], [1, 2]] {
-            view_index := view_info[1]
-            count_type := view_info[2]
-
-            if this.Send(2047, 0, view_index) < 0 ; NPPM_GETCURRENTDOCINDEX
-                continue
-
-            file_count := this.Send(2031, 0, count_type) ; NPPM_GETNBOPENFILES
-
-            Loop file_count {
-                buffer_id := this.Send(
-                    2083,           ; NPPM_GETBUFFERIDFROMPOS
-                    A_Index - 1,
-                    view_index
-                )
-
-                if buffer_id
-                    buffer_ids[buffer_id] := true
-            }
-        }
-
-        return buffer_ids.Count
-    }
-
-    ScintillaHwnd()
-    {
-        view_index := this.ReadInteger(2028) ; NPPM_GETCURRENTSCINTILLA
-        return ControlGetHwnd("Scintilla" (view_index + 1), "ahk_id " this.window_hwnd)
+        ; Standard Unicode WM_GETTEXT works on both the hidden filename STATIC
+        ; control and Scintilla; Windows handles the cross-process text buffer.
+        length := this.Send(0x000E, 0, 0, hwnd) ; WM_GETTEXTLENGTH
+        if length < 0 || length > limit
+            throw Error("The editor text is too large to verify automatically. Save it manually in Notepad3.")
+        text_buffer := Buffer((length + 1) * 2, 0)
+        copied := this.Send(0x000D, length + 1, text_buffer.Ptr, hwnd) ; WM_GETTEXT
+        text := StrGet(text_buffer, "UTF-16")
+        if copied != length || StrLen(text) != length
+            || this.Send(0x000E, 0, 0, hwnd) != length
+            throw Error("The editor changed while its text was being read, or contains embedded NUL characters. Retry after editing stops.")
+        return text
     }
 
     Scintilla(message, w_param := 0, l_param := 0)
     {
-        return this.Send(message, w_param, l_param, this.ScintillaHwnd())
+        return this.Send(message, w_param, l_param, this.editor_hwnd)
     }
 
     IsDirty()
@@ -1234,33 +1151,170 @@ class NotepadBridge
         return this.Scintilla(2159) != 0 ; SCI_GETMODIFY
     }
 
-    DocumentText()
+    Command(command_id)
     {
-        scintilla_hwnd := this.ScintillaHwnd()
-        text_bytes := this.Send(2006, 0, 0, scintilla_hwnd) + 1 ; SCI_GETLENGTH + NUL
-        ; Do not grow the path buffer: subsequent tiny API reads would otherwise
-        ; copy a whole large document's allocation on every autosave tick.
-        text_pointer := DllCall("VirtualAllocEx", "ptr", this.process_handle,
-            "ptr", 0, "uptr", text_bytes, "uint", 0x3000, "uint", 4, "ptr")
-        if !text_pointer
-            throw OSError(A_LastError, "VirtualAllocEx")
-        try {
-            this.Send(2182, text_bytes, text_pointer, scintilla_hwnd) ; SCI_GETTEXT
-            return StrGet(this.ReadRemote(text_bytes, text_pointer), "UTF-8")
-        }
-        finally {
-            ; A timed-out editor may still use this allocation; let process exit
-            ; reclaim it instead of freeing memory while the receiver uses it.
-            if !this.tainted
-                DllCall("VirtualFreeEx", "ptr", this.process_handle, "ptr", text_pointer,
-                    "uptr", 0, "uint", 0x8000)
-        }
+        this.CheckReady()
+        this.Send(0x0111, command_id, 0) ; WM_COMMAND, native menu command
+        this.CheckReady()
     }
 
-    MenuCommand(command_id)
+    Save()
     {
-        return this.Send(2072, 0, command_id) ; NPPM_MENUCOMMAND
+        ; File > Save is the third item in Notepad3's File menu.
+        ; Resolve its command ID from the running editor instead of hardcoding it.
+        command_id := this.MenuCommandId(0, 2)
+        this.Command(command_id)
     }
+
+    MenuCommandId(top_level_index, item_index)
+    {
+        this.CheckReady()
+
+        main_menu := DllCall("GetMenu", "ptr", this.hwnd, "ptr")
+        if !main_menu
+            throw Error("Notepad3's menu bar is unavailable.")
+
+        submenu := DllCall(
+            "GetSubMenu",
+            "ptr", main_menu,
+            "int", top_level_index,
+            "ptr"
+        )
+
+        if !submenu
+            throw Error("Notepad3's expected menu is unavailable.")
+
+        command_id := DllCall(
+            "GetMenuItemID",
+            "ptr", submenu,
+            "int", item_index,
+            "uint"
+        )
+
+        if command_id = 0xFFFFFFFF
+            throw Error("Notepad3's Save command could not be resolved.")
+
+        return command_id
+    }
+
+    MenuState(command_id)
+    {
+        menu_handle := DllCall("GetMenu", "ptr", this.hwnd, "ptr")
+        if !menu_handle
+            throw Error("Show Notepad3's menu bar before retrying the scratch command.")
+        this.Send(0x0116, menu_handle, 0) ; WM_INITMENU refreshes dynamic check states.
+        state := DllCall("GetMenuState", "ptr", menu_handle, "uint", command_id, "uint", 0, "uint")
+        if state = 0xFFFFFFFF
+            throw Error("Notepad3's expected menu command is missing: " command_id)
+        return state
+    }
+
+    PrepareDrawer()
+    {
+        this.CheckReady()
+        ; Keep native File/Settings menus available for saving and error recovery.
+        if !DllCall("GetMenu", "ptr", this.hwnd, "ptr")
+            this.Command(Notepad3Bridge.view_menubar)
+        for command_id in [Notepad3Bridge.view_toolbar, Notepad3Bridge.minimize_to_tray] {
+            if this.MenuState(command_id) & 8 ; MF_CHECKED
+                this.Command(command_id)
+        }
+        ; Our Escape handler owns hiding, not Notepad3's optional Escape-to-exit.
+        this.Command(Notepad3Bridge.no_escape_action)
+    }
+
+    OpenPage(path, sender_hwnd)
+    {
+        this.CheckReady()
+        if this.IsDirty()
+            throw Error("The current page became dirty during switching. It has not been replaced.")
+        ; np3params is twelve 32-bit fields, then UTF-16 text at offset 48.
+        ; sizeof(np3params) is 52 (tail padding), regardless of editor bitness.
+        payload := Buffer(52 + StrPut(path, "UTF-16") * 2, 0)
+        NumPut("int", 1, payload, 0)   ; flagFileSpecified
+        NumPut("int", 2, payload, 4)   ; FWM_MSGBOX: prompt, never silently reload
+        NumPut("int", -1, payload, 32) ; CPI_NONE: preserve file encoding detection
+        StrPut path, payload.Ptr + 48, (payload.Size - 48) // 2, "UTF-16"
+        copy_data := Buffer(3 * A_PtrSize, 0)
+        NumPut("uptr", 0xFB10, copy_data, 0) ; DATA_NOTEPAD3_PARAMS
+        NumPut("uint", payload.Size, copy_data, A_PtrSize)
+        NumPut("ptr", payload.Ptr, copy_data, 2 * A_PtrSize)
+        this.Send(0x004A, sender_hwnd, copy_data.Ptr) ; WM_COPYDATA (not PostMessage)
+        ; MsgCopyData returns FALSE even on a successful load. Check the real path.
+        this.CheckReady()
+        if this.CurrentPath() != path
+            throw Error("Notepad3 did not switch to:`n" path)
+    }
+
+    MatchesDisk(path)
+    {
+        if FileGetSize(path) > 32 * 1024 * 1024
+            throw Error("This file is too large for automatic conflict comparison. Preserve both versions before continuing.")
+        bytes := FileRead(path, "RAW")
+        size := bytes.Size
+        if !size
+            disk_text := ""
+        else if size >= 2 && NumGet(bytes, 0, "ushort") = 0xFEFF {
+            if Mod(size - 2, 2)
+                return false
+            disk_text := StrGet(bytes.Ptr + 2, (size - 2) // 2, "UTF-16")
+            if StrLen(disk_text) != (size - 2) // 2
+                return false
+        }
+        else {
+            ; Strict UTF-8 for the normal scratch format; BOM is not document text.
+            offset := size >= 3 && NumGet(bytes, 0, "uchar") = 0xEF
+                && NumGet(bytes, 1, "uchar") = 0xBB && NumGet(bytes, 2, "uchar") = 0xBF ? 3 : 0
+            if size = offset
+                disk_text := ""
+            else {
+                count := DllCall("MultiByteToWideChar", "uint", 65001, "uint", 8,
+                    "ptr", bytes.Ptr + offset, "int", size - offset, "ptr", 0, "int", 0, "int")
+                if !count
+                    throw Error("Automatic conflict comparison supports UTF-8 and UTF-16 LE pages. This file uses another encoding. Preserve the editor text with File > Save As to a new UTF-8 scratch page.")
+                unicode := Buffer((count + 1) * 2, 0)
+                if !DllCall("MultiByteToWideChar", "uint", 65001, "uint", 8,
+                    "ptr", bytes.Ptr + offset, "int", size - offset, "ptr", unicode, "int", count, "int")
+                    throw OSError(A_LastError, "MultiByteToWideChar")
+                disk_text := StrGet(unicode, "UTF-16")
+                if StrLen(disk_text) != count
+                    return false
+            }
+        }
+        return disk_text == this.ReadWindowText(this.editor_hwnd)
+    }
+}
+
+
+; =============================================================================
+; small native helpers
+; =============================================================================
+
+ScratchpadWindowIdle(hwnd)
+{
+    if !DllCall("IsWindowEnabled", "ptr", hwnd, "int")
+        return false
+    thread_id := DllCall("GetWindowThreadProcessId", "ptr", hwnd, "ptr", 0, "uint")
+    info := Buffer(72, 0) ; GUITHREADINFO, 64-bit
+    NumPut("uint", info.Size, info)
+    if !DllCall("GetGUIThreadInfo", "uint", thread_id, "ptr", info, "int")
+        return false
+    if NumGet(info, 4, "uint") & 0x1E ; menus, popup menus, move/size loops
+        return false
+    popup := DllCall("GetLastActivePopup", "ptr", hwnd, "ptr")
+    return !popup || popup = hwnd || !DllCall("IsWindowVisible", "ptr", popup, "int")
+}
+
+ScratchpadFullPath(path)
+{
+    required := DllCall("GetFullPathNameW", "str", path, "uint", 0, "ptr", 0, "ptr", 0, "uint")
+    if !required
+        throw OSError(A_LastError, "GetFullPathNameW", path)
+    path_buffer := Buffer(required * 2, 0)
+    length := DllCall("GetFullPathNameW", "str", path, "uint", required, "ptr", path_buffer, "ptr", 0, "uint")
+    if !length || length >= required
+        throw Error("Could not normalize the file path:`n" path)
+    return StrGet(path_buffer, "UTF-16")
 }
 
 SetScratchpadHelpIcons(help_gui)
