@@ -7,8 +7,11 @@
 ; The $ prefixes keep forwarded FancyZones keystrokes out of our handlers.
 $#Up::MaximizeWindowTarget()
 $#Down::RestoreWindowTarget()
+
+#HotIf !IsScratchpadWindowActive()
 $#Left::CycleWindowSnap("left")
 $#Right::CycleWindowSnap("right")
+#HotIf
 
 $+#Up::StretchWindowVertically()
 $+#Down::ResetWindowStretch()
@@ -22,8 +25,12 @@ $+#Right::ToggleHorizontalStretch("right")
 
 #Insert::PlaceCornerTile("top-left")
 #Delete::PlaceCornerTile("bottom-left")
+
+#HotIf !IsScratchpadWindowActive()
 $#PgUp::PlaceCornerTile("top-right")
 $#PgDn::PlaceCornerTile("bottom-right")
+#HotIf
+
 #Home::PlaceCenterTile("top")
 #End::PlaceCenterTile("bottom")
 
@@ -56,3 +63,15 @@ $!#Down::MoveWindowThroughFancyZones("Down")
 ~LButton::ForgetLastMinimizedWindow()
 ~RButton::ForgetLastMinimizedWindow()
 ~MButton::ForgetLastMinimizedWindow()
+
+IsScratchpadWindowActive()
+{
+    hwnd := WinExist("A")
+    return hwnd
+        && DllCall(
+            "GetPropW",
+            "ptr", hwnd,
+            "str", "nroj.Scratchpad.Notepad3Window",
+            "ptr"
+        )
+}

@@ -13,7 +13,7 @@
 ;
 ; controls
 ; - global toggle defaults to Win + F12 and is configurable from the tray menu.
-; - inside the editor: Escape hides, Ctrl + N creates, Ctrl + Alt + PgUp/PgDn switch.
+; - inside the editor: Escape hides, Ctrl + N creates, Win + arrows/page keys switch.
 ; - Ctrl + S uses the same checked save path as autosave.
 ;
 ; persistence and safety
@@ -64,12 +64,22 @@ $^s::
     scratchpad.QueueCommand("save")
     KeyWait "s"
 }
-$^!PgUp::
+$#Left::
+{
+    scratchpad.QueueCommand("previous")
+    KeyWait "Left"
+}
+$#Right::
+{
+    scratchpad.QueueCommand("next")
+    KeyWait "Right"
+}
+$#PgUp::
 {
     scratchpad.QueueCommand("previous")
     KeyWait "PgUp"
 }
-$^!PgDn::
+$#PgDn::
 {
     scratchpad.QueueCommand("next")
     KeyWait "PgDn"
@@ -1166,7 +1176,8 @@ class ScratchpadController
         "INSIDE THE EDITOR`n"
         "Escape                  Hide scratchpad`n"
         "Ctrl + N / Ctrl + S     New page / save page`n"
-        "Ctrl + Alt + PgUp/PgDn  Previous / next page`n"
+        "Win + Left / PgUp       Previous page`n"
+        "Win + Right / PgDn      Next page`n"
         "`n"
         "PAGES`n"
         "New pages are named automatically.`n"

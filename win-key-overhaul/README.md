@@ -42,6 +42,8 @@ the debug log is `win-key-overhaul-debug.log` in the repository root.
 | `Alt + Win + Arrow` | optional FancyZones zone navigation. |
 | `Alt + Win + PgUp/PgDn` | optional FancyZones previous / next window in the current zone. |
 
+when the marked Scratchpad window is active, Win Key Overhaul yields `Win + Left/Right` and `Win + PgUp/PgDn` so Scratchpad can use them for page navigation. this is optional coordination through a window property; Win Key Overhaul remains standalone.
+
 spatial focus and Steam cycling are direct standalone shortcuts. the original Steam executable exclusion list is retained, including `aseprite.exe`.
 
 ## exact layout geometry
