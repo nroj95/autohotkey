@@ -4,10 +4,7 @@
 ; direct window-management shortcuts
 ; =============================================================================
 
-; Preserve optional Caps+Win+Arrow aliases, including either modifier press order.
-; The $ prefixes also keep forwarded FancyZones keystrokes out of our handlers.
-#HotIf !CapsLockLayerOwnsWinArrow()
-
+; The $ prefixes keep forwarded FancyZones keystrokes out of our handlers.
 $#Up::MaximizeWindowTarget()
 $#Down::RestoreWindowTarget()
 $#Left::CycleWindowSnap("left")
@@ -17,8 +14,6 @@ $+#Up::StretchWindowVertically()
 $+#Down::ResetWindowStretch()
 $+#Left::ToggleHorizontalStretch("left")
 $+#Right::ToggleHorizontalStretch("right")
-
-#HotIf
 
 ^#h::ToggleWindowsKeyOverhaulHelp()
 #Backspace::MinimizeActiveWindow()
@@ -35,7 +30,7 @@ $#PgDn::PlaceCornerTile("bottom-right")
 #Enter::SwapWindow("clockwise")
 +#Enter::SwapWindow("counter-clockwise")
 
-; These controls no longer require CapsLock Layer.
+; Standalone spatial focus and Steam cycling.
 $^#Left::FocusNearestWindow("left")
 $^#Right::FocusNearestWindow("right")
 $^#Up::FocusNearestWindow("up")
@@ -61,46 +56,3 @@ $!#Down::MoveWindowThroughFancyZones("Down")
 ~LButton::ForgetLastMinimizedWindow()
 ~RButton::ForgetLastMinimizedWindow()
 ~MButton::ForgetLastMinimizedWindow()
-
-; =============================================================================
-; backwards-compatible CapsLock Layer command dispatch
-; =============================================================================
-
-CapsLockLayerOwnsWinArrow()
-{
-    return GetKeyState("CapsLock", "P") && IsCapsLockLayerRunning()
-}
-
-IsCapsLockLayerRunning()
-{
-    mutex_handle := DllCall(
-        "OpenMutex", "uint", 0x00100000, "int", false,
-        "str", "Local\WindowCascade.CapsLockLayer", "ptr"
-    )
-    if !mutex_handle
-        return false
-
-    DllCall("CloseHandle", "ptr", mutex_handle)
-    return true
-}
-
-HandleWindowsKeyOverhaulCommandMessage(command_id, parameter, message_id, target_hwnd)
-{
-    global window_hotkeys_command_focus_left, window_hotkeys_command_focus_right
-    global window_hotkeys_command_focus_up, window_hotkeys_command_focus_down
-
-    ; Broadcasts also reach our help GUI. Handle each command only once.
-    if target_hwnd != A_ScriptHwnd || !IsCapsLockLayerRunning()
-        return
-
-    switch command_id {
-        case window_hotkeys_command_focus_left:
-            FocusNearestWindow("left")
-        case window_hotkeys_command_focus_right:
-            FocusNearestWindow("right")
-        case window_hotkeys_command_focus_up:
-            FocusNearestWindow("up")
-        case window_hotkeys_command_focus_down:
-            FocusNearestWindow("down")
-    }
-}

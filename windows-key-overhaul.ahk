@@ -9,40 +9,23 @@
 ; - Use quarter/half widths: 2:6 = 25%, 4:4 = 50%.
 ; - Cycle edge, near-center, and centered layouts; place top/bottom tiles.
 ; - Stretch to neighboring visible window edges, or the monitor work-area edge.
-; - Swap clockwise/counter-clockwise and navigate focus independently of CapsLock.
-; - Preserve borderless fullscreen, Steam cycling, and optional legacy commands.
+; - Swap clockwise/counter-clockwise and navigate focus directly.
+; - Preserve borderless fullscreen and Steam cycling as standalone features.
 ; - Offer Windows Snap setup and ScreenGrid; retain optional FancyZones support.
 ; =============================================================================
 
 A_IconTip := "Windows Key Overhaul"
-
-; Reuse the existing icon until an explicitly renamed icon is available.
-if FileExist(A_ScriptDir "\icons\windows-key-overhaul.ico")
-    TraySetIcon(A_ScriptDir "\icons\windows-key-overhaul.ico")
-else
-    try TraySetIcon(A_ScriptDir "\icons\window-hotkeys.ico")
+try TraySetIcon(A_ScriptDir "\icons\windows-key-overhaul.ico")
 
 #Include "%A_ScriptDir%\windows-key-overhaul\settings.ahk"
 
 ; =============================================================================
-; initialization and backwards-compatible messages
+; initialization
 ; =============================================================================
 
 EnsureLegacyScriptIsStopped()
 InitializeDebugLogging()
 OnExit HandleWindowsKeyOverhaulExit
-
-; These are public message names, not script filenames. Keep them unchanged so
-; existing CapsLock Layer installations can still send their optional commands.
-window_hotkeys_command_message := DllCall(
-    "RegisterWindowMessage", "str", "WindowHotkeys.Command", "uint"
-)
-OnMessage(window_hotkeys_command_message, HandleWindowsKeyOverhaulCommandMessage)
-
-steam_game_cycle_message := DllCall(
-    "RegisterWindowMessage", "str", "WindowHotkeys.CycleSteamGames", "uint"
-)
-OnMessage(steam_game_cycle_message, HandleSteamGameCycleMessage)
 
 ; =============================================================================
 ; tray menu and deferred startup guidance

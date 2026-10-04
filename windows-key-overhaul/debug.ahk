@@ -2,7 +2,7 @@
 ; Included into the same script; functions share the existing global state.
 
 ; =============================================================================
-; logging and log reset
+; logging
 ; =============================================================================
 
 InitializeDebugLogging()
@@ -12,51 +12,8 @@ InitializeDebugLogging()
     if !debug_enabled
         return
 
-    reset_message := DllCall(
-        "RegisterWindowMessage",
-        "str", "WindowDebug.ResetLogs",
-        "uint"
-    )
-
-    if reset_message {
-        OnMessage(
-            reset_message,
-            HandleDebugResetLogsMessage
-        )
-    }
-
     OnError(LogWindowsKeyOverhaulUnhandledError)
-
     DebugLogSession("started")
-}
-
-HandleDebugResetLogsMessage(command_id, parameter, message_id, target_hwnd)
-{
-    if target_hwnd != A_ScriptHwnd
-        return
-    ResetDebugLog()
-}
-
-ResetDebugLog()
-{
-    global debug_enabled, debug_log_path
-
-    if !debug_enabled
-        return
-
-    try {
-        if FileExist(debug_log_path)
-            FileDelete(debug_log_path)
-    }
-    catch Error as err {
-        DebugLog(
-            "Debug log reset failed."
-            . " | message=" err.Message
-        )
-        return
-    }
-
-    DebugLogSession("reset")
 }
 
 DebugLogSession(reason)

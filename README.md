@@ -15,7 +15,7 @@ turns CapsLock into an extra left-hand modifier layer.
 - tap CapsLock to arm the layer for one keypress
 - the one-shot layer expires after 1.4 seconds
 - double-tap Left Shift to toggle normal CapsLock
-- owns the companion-command namespace used by Window Cascade and Windows Key Overhaul
+- owns the companion-command namespace used by Window Cascade
 
 open the tray menu and choose **How to use** for the CapsLock Layer help page.
 
@@ -103,7 +103,7 @@ features include:
 
 `Ctrl + Win + H` toggles the Windows Key Overhaul help page.
 
-Windows Key Overhaul runs independently of Window Cascade and does not require `capslock-layer.ahk`. CapsLock Layer can still provide the legacy companion aliases for spatial focus and Steam cycling.
+Windows Key Overhaul is fully standalone and does not depend on the other root-level AutoHotkey scripts in this repository.
 
 ## requirements
 

@@ -2,24 +2,10 @@
 ; Included into the same script; functions share the existing global state.
 
 ; =============================================================================
-; Steam command and cycle state
+; Steam cycle state
 ; =============================================================================
 
-HandleSteamGameCycleMessage(command_id, parameter, message_id, target_hwnd)
-{
-    if target_hwnd != A_ScriptHwnd
-        return
-
-    DebugLog(
-        "Steam cycle command received."
-        . " | ahk-active=" DebugDescribeWindow(WinExist("A"))
-        . " | foreground="
-        . DebugDescribeWindow(
-            DllCall("GetForegroundWindow", "ptr")
-        )
-    )
-
-    CycleSteamGames()
+CycleSteamGames()
 
     DebugSteamGameState("Steam cycle command complete")
 }

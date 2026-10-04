@@ -44,17 +44,6 @@ screengrid_releases_url := "https://github.com/TtesseractT/ScreenGrid/releases/l
 fancyzones_integration_state := false
 fancyzones_check_in_progress := false
 
-; CapsLock Layer is optional. Its registered commands are accepted only while
-; the companion script is currently running.
-
-window_hotkeys_command_message := 0
-
-; Keep these command IDs in sync with capslock-layer.ahk.
-window_hotkeys_command_focus_left := 1
-window_hotkeys_command_focus_right := 2
-window_hotkeys_command_focus_up := 3
-window_hotkeys_command_focus_down := 4
-
 
 ; =============================================================================
 ; debug settings

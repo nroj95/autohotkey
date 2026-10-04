@@ -1,16 +1,16 @@
 # Windows Key Overhaul
 
-launch `../windows-key-overhaul.ahk`. the files in this directory are modules of that one AutoHotkey v2 process, not separate window managers. Window Cascade and CapsLock Layer remain independent scripts.
+launch `../windows-key-overhaul.ahk`. the files in this directory are modules of that one AutoHotkey v2 process, not separate window managers. the launcher is fully standalone and does not depend on any other root-level AutoHotkey script.
 
 ## migration
 
 exit the old `window-hotkeys.ahk` instance before starting the renamed launcher. extract the package into the repository root so `windows-key-overhaul.ahk` and the `windows-key-overhaul` directory sit beside each other. do not copy the new modules into the old `window-hotkeys` directory.
 
-keep the existing `icons/window-hotkeys.ico`: the new launcher uses it as a fallback. a future `icons/windows-key-overhaul.ico` takes precedence. the package does not contain an icon.
+the tray icon is `icons/windows-key-overhaul.ico`.
 
 startup offers to replace this installation's old `Window Hotkeys.lnk` with `Windows Key Overhaul.lnk`. it creates the new shortcut before removing the old one, and requires confirmation. a same-named shortcut pointing to another installation is left alone. declining migration leaves the old startup entry in place; disable that entry before retiring the old script.
 
-the new debug log is `windows-key-overhaul-debug.log` in the repository root; add it to your existing ignore rules as appropriate. keep the legacy registered-message strings listed below unchanged unless the companion integrations are updated with them.
+the debug log is `windows-key-overhaul-debug.log` in the repository root; add it to your existing ignore rules as appropriate.
 
 ## shortcuts
 
@@ -36,7 +36,7 @@ the new debug log is `windows-key-overhaul-debug.log` in the repository root; ad
 | `Alt + Win + Arrow` | optional FancyZones zone navigation. |
 | `Alt + Win + PgUp/PgDn` | optional FancyZones previous / next window in the current zone. |
 
-focus and Steam cycling no longer require CapsLock Layer. the original Steam executable exclusion list is retained, including `aseprite.exe`.
+spatial focus and Steam cycling are direct standalone shortcuts. the original Steam executable exclusion list is retained, including `aseprite.exe`.
 
 ## exact layout geometry
 
@@ -89,41 +89,27 @@ FancyZones owns the two page-key shortcuts itself. the script forwards the arrow
 
 use **Check FancyZones compatibility** from the tray after changing relevant PowerToys settings. rejecting setup keeps existing PowerToys settings intact; the advertised shortcuts require the matching setup. the internal PowerShell helper runs with a process-only execution-policy override; no persistent execution policy is changed.
 
-## integration contracts
-
-these existing registered-message strings are intentionally unchanged:
-
-````text
-WindowHotkeys.Command
-WindowHotkeys.CycleSteamGames
-WindowDebug.ResetLogs
-````
-
-focus command IDs remain `1 = left`, `2 = right`, `3 = up`, `4 = down`. the optional CapsLock Layer presence mutex remains `Local\WindowCascade.CapsLockLayer`. the focus handler only accepts companion commands while that mutex exists, and message handlers execute through the script's hidden main window to avoid duplicate handling by help GUIs.
-
-legacy `Caps + Win + Arrow` and `Caps + G` aliases remain available through existing companion messages; they are not the primary help bindings. bare Win-arrow ownership is still yielded while the running CapsLock Layer physically owns CapsLock.
-
 ## module map
 
 | module | responsibility |
 | --- | --- |
 | `settings.ahk` | defaults, state, paths, exclusions, and debug settings. |
-| `controls.ahk` | hotkeys, click-to-abandon target, and legacy focus-command dispatch. |
+| `controls.ahk` | standalone hotkeys, click-to-abandon target, and optional FancyZones bindings. |
 | `window-state.ahk` | group toggles, target selection, maximize/minimize/restore, and normal snapshots. |
 | `layout-geometry.ahk` | pure ratio, rounding, cycle-index, and collision calculations. |
 | `layouts.ahk` | stretch, side/corner/center actions, alternation, matching, and placement tracking. |
 | `swapping.ahk` | shared clockwise ordering, both swap directions, and rectangle transactions. |
 | `focus.ahk` | spatial focus and the original accent-colored highlight/session behavior. |
-| `steam.ahk` | game discovery, cycling, minimize/resume, and return-window behavior. |
+| `steam.ahk` | game discovery, direct cycling, minimize/resume, and return-window behavior. |
 | `borderless.ahk` | fullscreen entry/restoration, Steam suspension, and exit cleanup. |
 | `fancyzones.ahk` | compatibility detection, prompts, forwarding, and helper invocation. |
 | `fancyzones-settings.ps1` | narrowly scoped JSON reading/update with an exact backup. |
 | `windows.ahk` | shared filters, geometry, native placement, activation, and visible-frame movement. |
 | `interface.ahk` | help and startup-shortcut creation/toggling. |
 | `startup.ahk` | old-instance guard, startup migration, Snap prompt, and ScreenGrid recommendation. |
-| `debug.ahk` | logging, registered reset command, and diagnostics. |
+| `debug.ahk` | logging, error handling, and diagnostics. |
 
-all includes are explicit in the root launcher. do not mix these modules with Window Cascade's similarly named files.
+all includes are explicit in the root launcher. the modules communicate only within this one script process.
 
 ## validation
 
@@ -135,7 +121,7 @@ from the repository root:
 
 the repository validator automatically validates every root-level AutoHotkey script and its include tree with AutoHotkey `/Validate`.
 
-manual Windows behavior should still be checked after major changes, especially both full side cycles and arrow switching; top/bottom center alternation across multiple windows; `Win + Down` from tiled/maximized/borderless/minimized states; both swap directions; collision stretch and independent edge resets; Steam cycling with one and multiple games; spatial focus with CapsLock Layer both absent and running; startup migration/declines; and FancyZones launched before and after this script. include mixed-DPI monitors and size-constrained apps when applicable.
+manual Windows behavior should still be checked after major changes, especially both full side cycles and arrow switching; top/bottom center alternation across multiple windows; `Win + Down` from tiled/maximized/borderless/minimized states; both swap directions; collision stretch and independent edge resets; Steam cycling with one and multiple games; spatial focus navigation and highlight expiry; startup migration/declines; and FancyZones launched before and after this script. include mixed-DPI monitors and size-constrained apps when applicable.
 
 ## implementation references
 
