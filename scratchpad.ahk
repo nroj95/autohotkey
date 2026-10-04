@@ -938,18 +938,66 @@ class ScratchpadController
 
     ShowHelp(*)
     {
-        MsgBox "Caps + B: toggle`nCaps + N: new page`nCaps + J / L: previous / next page"
-            . "`nTap Caps, then the same key also works."
-            . "`n`nInside the editor: Escape hides; Ctrl + N creates; Ctrl + PgUp/PgDn switches."
-            . "`n`nNew pages are named automatically. Pages persist across Windows restarts."
-            . "`nThe last used page reopens; no new page is created just because Windows restarted."
-            . "`n`nAutosave runs while the window is visible and before switching/hiding."
-            . "`nUndo history is kept while hiding, but not after switching to another page."
-            . "`nRename an open page through Notepad++ File > Rename."
-            . "`n`nF12 is optional and disabled by default."
-            . "`nEdit settings.ini and reload to change window size or animation."
-            . "`n`nScratch folder:`n" this.scratch_directory,
-            "Scratchpad", "Iconi 4096"
+        static help_gui := 0
+        static help_icons := []
+
+        if help_gui {
+            CloseHelp()
+            return
+        }
+
+        help_gui := Gui("+AlwaysOnTop", "Scratchpad")
+        help_icons := SetScratchpadHelpIcons(help_gui)
+        help_gui.SetFont("s10", "Cascadia Mono")
+
+        help_text :=
+        (
+        "SHORTCUTS`n"
+        "Caps + B                Toggle scratchpad`n"
+        "Caps + N                New page`n"
+        "Caps + J / L            Previous / next page`n"
+        "Tap Caps, then key      One-shot command`n"
+        "`n"
+        "INSIDE THE EDITOR`n"
+        "Escape                  Hide scratchpad`n"
+        "Ctrl + N                New page`n"
+        "Ctrl + PgUp / PgDn      Previous / next page`n"
+        "`n"
+        "PAGES`n"
+        "New pages are named automatically.`n"
+        "Pages persist across Windows restarts.`n"
+        "The last used page reopens on startup.`n"
+        "Rename an open page through Notepad++ File > Rename.`n"
+        "`n"
+        "SAVING`n"
+        "Visible pages are autosaved every two seconds.`n"
+        "Pages are also saved before hiding or switching.`n"
+        "Undo history survives hiding, but not switching pages.`n"
+        "`n"
+        "WINDOW`n"
+        "F12 is optional and disabled by default.`n"
+        "Window size and animation can be changed in settings.ini.`n"
+        "`n"
+        "SCRATCH FOLDER`n"
+        )
+
+        help_text .= this.scratch_directory
+
+        help_gui.AddText("w610", help_text)
+
+        help_gui.OnEvent("Close", CloseHelp)
+        help_gui.OnEvent("Escape", CloseHelp)
+        help_gui.Show()
+
+        CloseHelp(*) {
+            try help_gui.Destroy()
+            help_gui := 0
+
+            for icon_handle in help_icons
+                DllCall("DestroyIcon", "ptr", icon_handle, "int")
+
+            help_icons := []
+        }
     }
 
     OnScriptExit(exit_reason, exit_code)
@@ -1147,6 +1195,54 @@ class NotepadBridge
         return this.Send(2072, 0, command_id) ; NPPM_MENUCOMMAND
     }
 }
+
+SetScratchpadHelpIcons(help_gui)
+{
+    icon_handles := []
+    icon_path := A_ScriptDir "\icons\scratchpad.ico"
+
+    if !FileExist(icon_path)
+        return icon_handles
+
+    try {
+        for icon_index, size in [16, 32] {
+            image_type := 0
+            icon_handle := LoadPicture(
+                icon_path,
+                "Icon1 w" size " h" size,
+                &image_type
+            )
+
+            if !icon_handle
+                continue
+
+            if image_type != 1 {
+                DllCall(
+                    image_type = 2 ? "DestroyCursor" : "DeleteObject",
+                    "ptr",
+                    icon_handle,
+                    "int"
+                )
+                continue
+            }
+
+            icon_handles.Push(icon_handle)
+
+            SendMessage(
+                0x0080,
+                icon_index - 1,
+                icon_handle,
+                ,
+                help_gui.Hwnd
+            )
+        }
+    }
+    catch {
+    }
+
+    return icon_handles
+}
+
 
 ScratchpadFileStamp(path)
 {
