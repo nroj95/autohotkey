@@ -161,8 +161,10 @@ GetPlacementReadinessReason(hwnd)
 
         if candidate_title = ""
             retry_reason := "empty title"
-        else if candidate_min_max != 0
-            retry_reason := "minimized or maximized"
+        else if candidate_min_max = -1
+            retry_reason := "minimized"
+        else if candidate_min_max = 1
+            retry_reason := "maximized"
     }
     catch {
         retry_reason := "window state unavailable"
@@ -205,6 +207,20 @@ PlaceNewWindow(
         )
 
         retry_reason := GetPlacementReadinessReason(hwnd)
+
+        ; Apps such as Explorer can remember that their previous window was
+        ; maximized. Normalize that startup state before cascade placement.
+        if retry_reason = "maximized" {
+            try {
+                WinRestore("ahk_id " hwnd)
+                DebugLog(
+                    "Restoring maximized new window before cascade placement."
+                    . " | target=" DebugDescribeWindow(hwnd)
+                )
+            }
+            catch {
+            }
+        }
 
         if retry_reason != ""
             && retry_count < placement_ready_retry_limit
