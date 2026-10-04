@@ -19,7 +19,7 @@ the new debug log is `windows-key-overhaul-debug.log` in the repository root; ad
 | `Ctrl + Win + H` | toggle the help window; `Escape` closes it. |
 | `Win + Up` | maximize; another press enters borderless fullscreen; another returns to maximized. |
 | `Win + Down` | restore an ordinary window, including the rectangle saved before script-managed layout/stretch where available. |
-| `Win + Backspace` | minimize the active window. |
+| `Win + Backspace` | minimize the active window and focus another eligible window when available; when focus is on the shell/desktop, restore the last window minimized with this shortcut. |
 | `Shift + Win + Home` | isolate the active window, or restore this command's minimized group. |
 | `Win + M` | minimize eligible windows, or restore this command's minimized group. |
 | `Shift + Win + Up` | stretch to full height, retaining the existing one-pixel vertical overscan. |

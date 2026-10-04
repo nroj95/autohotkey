@@ -133,6 +133,64 @@ FocusNearestWindow(direction)
 }
 
 ; =============================================================================
+; focus after minimize
+; =============================================================================
+
+FocusAfterMinimize(minimized_hwnd)
+{
+    ; Prefer the foreground window Windows naturally selects after minimization.
+    ; Wait briefly because shell focus transitions are not always immediate.
+    Loop 8 {
+        Sleep 25
+
+        foreground_hwnd := DllCall(
+            "GetForegroundWindow",
+            "ptr"
+        )
+
+        if foreground_hwnd != minimized_hwnd
+            && IsWindowToggleCandidate(foreground_hwnd)
+        {
+            BeginSpatialFocus(foreground_hwnd)
+            return
+        }
+    }
+
+    ; If Windows left focus on the shell, activate the topmost eligible window
+    ; on the current desktop. Cloaked/minimized/shell windows are filtered out.
+    for hwnd in WinGetList() {
+        if hwnd = minimized_hwnd
+            continue
+
+        if !IsWindowToggleCandidate(hwnd)
+            continue
+
+        if ActivateWindowReliably(hwnd) {
+            BeginSpatialFocus(hwnd)
+            return
+        }
+    }
+
+    ; With no other eligible window, leave focus to the Windows shell/desktop.
+    EndFocusNavigationSession()
+}
+
+BeginSpatialFocus(hwnd)
+{
+    global focus_navigation_active, focus_navigation_hwnd
+
+    if !hwnd || !WinExist("ahk_id " hwnd) {
+        EndFocusNavigationSession()
+        return false
+    }
+
+    focus_navigation_active := true
+    focus_navigation_hwnd := hwnd
+    HighlightFocusedWindow(hwnd)
+    return true
+}
+
+; =============================================================================
 ; focus highlight and session lifetime
 ; =============================================================================
 

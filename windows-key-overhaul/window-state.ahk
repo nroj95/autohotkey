@@ -167,29 +167,64 @@ MaximizeWindowTarget()
 
 MinimizeActiveWindow()
 {
+    Critical "On"
+
     global last_minimized_hwnd
     global borderless_windows
 
     hwnd := WinExist("A")
 
-    if !hwnd
+    ; When focus has fallen back to the shell/desktop, use Win+Backspace as a
+    ; toggle for the most recent window minimized with this shortcut. Never
+    ; minimize Explorer, the taskbar, StartAllBack, or another shell surface.
+    if !hwnd || !IsWindowToggleCandidate(hwnd) {
+        if last_minimized_hwnd
+            && WinExist("ahk_id " last_minimized_hwnd)
+        {
+            restore_hwnd := last_minimized_hwnd
+            last_minimized_hwnd := 0
+
+            try {
+                if WinGetMinMax(restore_hwnd) = -1
+                    WinRestore(restore_hwnd)
+
+                EndFocusNavigationSession()
+                WinActivate(restore_hwnd)
+            }
+            catch Error as err {
+                DebugError("Restore last minimized window", err)
+            }
+        } else {
+            last_minimized_hwnd := 0
+            EndFocusNavigationSession()
+        }
+
         return
+    }
 
     try {
         if borderless_windows.Has(hwnd)
             RestoreBorderlessWindow(hwnd, false, true)
 
-        WinMinimize("ahk_id " hwnd)
+        WinMinimize(hwnd)
         last_minimized_hwnd := hwnd
+
+        ; Move focus forward without clearing the just-minimized restore target.
+        FocusAfterMinimize(hwnd)
+    }
+    catch Error as err {
+        DebugError("Minimize active window", err)
     }
 }
 
 RestoreWindowTarget()
 {
     Critical "On"
+
     global borderless_windows
 
     hwnd := GetWindowControlTarget()
+
     if !hwnd
         return
 
@@ -199,6 +234,7 @@ RestoreWindowTarget()
 
         if !RestoreNormalWindowPlacement(hwnd) {
             WinRestore(hwnd)
+
             ; A minimized maximized window may first restore maximized.
             if WinGetMinMax(hwnd) = 1
                 WinRestore(hwnd)
@@ -221,16 +257,19 @@ RestoreWindowTarget()
 RememberNormalWindowPlacement(hwnd)
 {
     global normal_window_placements, borderless_windows
+
     process_id := WinGetPID(hwnd)
     work_area := GetLayoutWorkArea(hwnd)
 
     if normal_window_placements.Has(hwnd) {
         saved := normal_window_placements[hwnd]
+
         if saved["pid"] = process_id
             && RectanglesMatch(saved["work_area"], work_area, 0)
         {
             return
         }
+
         normal_window_placements.Delete(hwnd)
     }
 
@@ -240,17 +279,21 @@ RememberNormalWindowPlacement(hwnd)
         : CaptureWindowPlacement(hwnd)
 
     normal_window_placements[hwnd] := Map(
-        "pid", process_id, "work_area", work_area, "placement", placement
+        "pid", process_id,
+        "work_area", work_area,
+        "placement", placement
     )
 }
 
 RestoreNormalWindowPlacement(hwnd)
 {
     global normal_window_placements
+
     if !normal_window_placements.Has(hwnd)
         return false
 
     saved := normal_window_placements[hwnd]
+
     if saved["pid"] != WinGetPID(hwnd)
         || !RectanglesMatch(saved["work_area"], GetLayoutWorkArea(hwnd), 0)
     {

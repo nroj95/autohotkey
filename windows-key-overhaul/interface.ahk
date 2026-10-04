@@ -23,7 +23,7 @@ ToggleWindowsKeyOverhaulHelp(*)
     "WINDOW STATE`n"
     "Win + Up             Maximize / borderless fullscreen`n"
     "Win + Down           Restore to normal window`n"
-    "Win + Backspace      Minimize`n"
+    "Win + Backspace      Minimize / restore last window`n"
     "Shift + Win + Home   Isolate active window / restore others`n"
     "Win + M              Minimize all / restore all`n"
     "`n"
