@@ -148,13 +148,13 @@ PromptToDisableNativeWindowsSnap()
 
     response := MsgBox(
         "Native Windows Snap is currently enabled.`n`n"
-        . "Disabling it is recommended so Windows' own snapping does not "
-        . "compete with these shortcuts or a drag-snapping tool.`n`n"
-        . "Disable Windows Snap for your account now? This is a persistent "
-        . "Windows preference; you can re-enable it in Settings > System > "
-        . "Multitasking. Choosing No makes no change.`n`n"
-        . "ScreenGrid is an optional companion for customizable Shift + drag layouts.",
-        "Win Key Overhaul", "YesNo Default2 Icon?"
+        . "Disabling it is recommended so Windows' built-in snapping does not "
+        . "compete with Win Key Overhaul or other window-layout tools.`n`n"
+        . "Disable Windows Snap for your account now?`n`n"
+        . "Choosing No leaves Windows Snap enabled. You can change this later in "
+        . "Settings > System > Multitasking.",
+        "Win Key Overhaul",
+        "YesNo Default2 Icon?"
     )
     if response != "Yes"
         return
