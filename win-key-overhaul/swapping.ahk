@@ -1,4 +1,4 @@
-; Internal Windows Key Overhaul module. Launch ..\windows-key-overhaul.ahk instead.
+; Internal Win Key Overhaul module. Launch ..\win-key-overhaul.ahk instead.
 ; Included into the same script; functions share the existing global state.
 
 ; =============================================================================
@@ -209,10 +209,10 @@ IsWindowSwapCandidate(hwnd, monitor_handle)
     if DllCall("GetWindow", "ptr", hwnd, "uint", 4, "ptr") ; GW_OWNER
         return false
 
-    if IsWindowsKeyOverhaulShellClass(class_name)
+    if IsWinKeyOverhaulShellClass(class_name)
         return false
 
-    if IsWindowsKeyOverhaulCloaked(hwnd)
+    if IsWinKeyOverhaulCloaked(hwnd)
         return false
 
     candidate_monitor := DllCall(

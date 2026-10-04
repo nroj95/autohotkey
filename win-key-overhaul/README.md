@@ -1,16 +1,22 @@
-# Windows Key Overhaul
+# Win Key Overhaul
 
-launch `../windows-key-overhaul.ahk`. the files in this directory are modules of that one AutoHotkey v2 process, not separate window managers. the launcher is fully standalone and does not depend on any other root-level AutoHotkey script.
+launch `../win-key-overhaul.ahk`. the files in this directory are modules of that one AutoHotkey v2 process, not separate window managers. the launcher is fully standalone and does not depend on any other root-level AutoHotkey script.
 
 ## migration
 
-exit the old `window-hotkeys.ahk` instance before starting the renamed launcher. extract the package into the repository root so `windows-key-overhaul.ahk` and the `windows-key-overhaul` directory sit beside each other. do not copy the new modules into the old `window-hotkeys` directory.
+rename the launcher, module directory, and tray icon together:
 
-the tray icon is `icons/windows-key-overhaul.ico`.
+````text
+windows-key-overhaul.ahk       -> win-key-overhaul.ahk
+windows-key-overhaul\          -> win-key-overhaul\
+icons\windows-key-overhaul.ico -> icons\win-key-overhaul.ico
+````
 
-startup offers to replace this installation's old `Window Hotkeys.lnk` with `Windows Key Overhaul.lnk`. it creates the new shortcut before removing the old one, and requires confirmation. a same-named shortcut pointing to another installation is left alone. declining migration leaves the old startup entry in place; disable that entry before retiring the old script.
+the canonical startup shortcut is `Win Key Overhaul.lnk`. startup can migrate this installation's previous `Windows Key Overhaul.lnk` or older `Window Hotkeys.lnk` after confirmation.
 
-the debug log is `windows-key-overhaul-debug.log` in the repository root; add it to your existing ignore rules as appropriate.
+the preference file now lives at `%APPDATA%\WinKeyOverhaul\preferences.ini`. when the new file does not exist, startup copies the previous `%APPDATA%\WindowsKeyOverhaul\preferences.ini` once so the ScreenGrid recommendation state is preserved.
+
+the debug log is `win-key-overhaul-debug.log` in the repository root.
 
 ## shortcuts
 
@@ -74,7 +80,7 @@ each edge has an independent restore position. repeating its shortcut restores t
 
 startup queries native Windows Snap with `SPI_GETWINARRANGING`. when enabled, a confirmation offers to disable it with `SPI_SETWINARRANGING`, persisting and broadcasting the change. declining changes nothing. the tray's **Windows Snap settings** command opens the Windows Multitasking page.
 
-ScreenGrid is recommended once per user profile unless already running. accepting opens its official GitHub releases page; it does not download or install anything. the recommendation flag is stored in `%APPDATA%\WindowsKeyOverhaul\preferences.ini`. the GitHub link remains in the tray. use one drag-snapping tool at a time to avoid competing overlays.
+ScreenGrid is recommended once per user profile unless already running. accepting opens its official GitHub releases page; it does not download or install anything. the recommendation flag is stored in `%APPDATA%\WinKeyOverhaul\preferences.ini`. the GitHub link remains in the tray. use one drag-snapping tool at a time to avoid competing overlays.
 
 ### FancyZones
 

@@ -1,4 +1,4 @@
-; Internal Windows Key Overhaul module. Launch ..\windows-key-overhaul.ahk instead.
+; Internal Win Key Overhaul module. Launch ..\win-key-overhaul.ahk instead.
 ; Included into the same script; functions share the existing global state.
 
 ; =============================================================================

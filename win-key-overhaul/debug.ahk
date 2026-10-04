@@ -1,4 +1,4 @@
-; Internal Windows Key Overhaul module. Launch ..\windows-key-overhaul.ahk instead.
+; Internal Win Key Overhaul module. Launch ..\win-key-overhaul.ahk instead.
 ; Included into the same script; functions share the existing global state.
 
 ; =============================================================================
@@ -12,7 +12,7 @@ InitializeDebugLogging()
     if !debug_enabled
         return
 
-    OnError(LogWindowsKeyOverhaulUnhandledError)
+    OnError(LogWinKeyOverhaulUnhandledError)
     DebugLogSession("started")
 }
 
@@ -78,7 +78,7 @@ DebugError(context, err)
         )
 }
 
-LogWindowsKeyOverhaulUnhandledError(err, mode)
+LogWinKeyOverhaulUnhandledError(err, mode)
 {
     DebugError(
         "Unhandled error, mode=" mode,
@@ -155,7 +155,7 @@ DebugDescribeWindow(hwnd)
     cloaked := false
 
     try cloaked :=
-        IsWindowsKeyOverhaulCloaked(hwnd)
+        IsWinKeyOverhaulCloaked(hwnd)
 
     return (
         "hwnd=" hwnd

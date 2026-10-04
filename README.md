@@ -81,7 +81,7 @@ focus-tab colors can be configured from the tray separately for the active and i
 
 Window Cascade runs as its own process but requires `capslock-layer.ahk` for its keyboard command bindings.
 
-### `windows-key-overhaul.ahk`
+### `win-key-overhaul.ahk`
 
 replaces selected native Win-key shortcuts with predictable custom window management.
 
@@ -101,9 +101,9 @@ features include:
 - optional FancyZones compatibility
 - optional ScreenGrid recommendation
 
-`Ctrl + Win + H` toggles the Windows Key Overhaul help page.
+`Ctrl + Win + H` toggles the Win Key Overhaul help page.
 
-Windows Key Overhaul is fully standalone and does not depend on the other root-level AutoHotkey scripts in this repository.
+Win Key Overhaul is fully standalone and does not depend on the other root-level AutoHotkey scripts in this repository.
 
 ## requirements
 
@@ -112,9 +112,9 @@ Windows Key Overhaul is fully standalone and does not depend on the other root-l
 
 ## usage
 
-run root-level `.ahk` launchers rather than module files inside `window-cascade/` or `windows-key-overhaul/`.
+run root-level `.ahk` launchers rather than module files inside `window-cascade/` or `win-key-overhaul/`.
 
-start `capslock-layer.ahk` before `window-cascade.ahk`. Windows Key Overhaul and the other utilities can run independently unless their own documentation says otherwise.
+start `capslock-layer.ahk` before `window-cascade.ahk`. Win Key Overhaul and the other utilities can run independently unless their own documentation says otherwise.
 
 each main script provides a tray menu with its own controls and a **Run at startup** option where applicable.
 

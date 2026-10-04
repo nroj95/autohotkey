@@ -1,4 +1,4 @@
-; Internal Windows Key Overhaul module. Launch ..\windows-key-overhaul.ahk instead.
+; Internal Win Key Overhaul module. Launch ..\win-key-overhaul.ahk instead.
 ; Included into the same script; functions share the existing global state.
 
 ; =============================================================================
@@ -51,16 +51,16 @@ IsWindowToggleCandidate(hwnd)
     if DllCall("GetWindow", "ptr", hwnd, "uint", 4, "ptr") ; GW_OWNER
         return false
 
-    if IsWindowsKeyOverhaulShellClass(class_name)
+    if IsWinKeyOverhaulShellClass(class_name)
         return false
 
-    if IsWindowsKeyOverhaulCloaked(hwnd)
+    if IsWinKeyOverhaulCloaked(hwnd)
         return false
 
     return true
 }
 
-IsWindowsKeyOverhaulCloaked(hwnd)
+IsWinKeyOverhaulCloaked(hwnd)
 {
     cloaked := 0
 
@@ -76,7 +76,7 @@ IsWindowsKeyOverhaulCloaked(hwnd)
     return result = 0 && cloaked != 0
 }
 
-IsWindowsKeyOverhaulShellClass(class_name)
+IsWinKeyOverhaulShellClass(class_name)
 {
     return (
         class_name = "Shell_TrayWnd"

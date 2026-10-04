@@ -1,10 +1,10 @@
-; Internal Windows Key Overhaul module. Launch ..\windows-key-overhaul.ahk.
+; Internal Win Key Overhaul module. Launch ..\win-key-overhaul.ahk.
 
 ; =============================================================================
 ; help
 ; =============================================================================
 
-ToggleWindowsKeyOverhaulHelp(*)
+ToggleWinKeyOverhaulHelp(*)
 {
     static help_gui := 0
 
@@ -14,7 +14,7 @@ ToggleWindowsKeyOverhaulHelp(*)
         return
     }
 
-    help_gui := Gui("+AlwaysOnTop", "Windows Key Overhaul")
+    help_gui := Gui("+AlwaysOnTop", "Win Key Overhaul")
 
     help_text :=
     (
@@ -117,7 +117,7 @@ ToggleStartup(*)
         DebugError("Update startup shortcut", err)
         MsgBox(
             "Could not update the startup shortcut.`n`n" err.Message,
-            "Windows Key Overhaul",
+            "Win Key Overhaul",
             "Icon!"
         )
     }

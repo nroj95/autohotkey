@@ -1,4 +1,4 @@
-; Internal Windows Key Overhaul module. Launch ..\windows-key-overhaul.ahk.
+; Internal Win Key Overhaul module. Launch ..\win-key-overhaul.ahk.
 
 ; =============================================================================
 ; startup detection and explicit compatibility setup
@@ -32,7 +32,7 @@ CheckFancyZonesIntegration(*)
         return
 
     if !IsFancyZonesRunning() {
-        MsgBox("FancyZones is not running. No settings were changed.", "Windows Key Overhaul", "Iconi")
+        MsgBox("FancyZones is not running. No settings were changed.", "Win Key Overhaul", "Iconi")
         return
     }
 
@@ -45,7 +45,7 @@ CheckFancyZonesIntegration(*)
                 "The FancyZones settings could not be read.`n`n"
                 . "Configure Override Windows Snap, Relative position, and "
                 . "Alt + Win + PgUp/PgDn manually in PowerToys.",
-                "Windows Key Overhaul", "Icon!"
+                "Win Key Overhaul", "Icon!"
             )
             return
         }
@@ -62,7 +62,7 @@ CheckFancyZonesIntegration(*)
             . "Layouts and unrelated settings stay unchanged.`n`n"
             . "Close PowerToys Settings before choosing Yes. An exact backup "
             . "will be saved beside settings.json. No leaves everything unchanged.",
-            "Windows Key Overhaul", "YesNo Default2 Icon?"
+            "Win Key Overhaul", "YesNo Default2 Icon?"
         )
         if response != "Yes"
             return
@@ -74,7 +74,7 @@ CheckFancyZonesIntegration(*)
             MsgBox(
                 "FancyZones setup could not be completed. Check the debug log "
                 . "or configure the shortcuts manually in PowerToys.",
-                "Windows Key Overhaul", "Icon!"
+                "Win Key Overhaul", "Icon!"
             )
         }
     }
@@ -152,12 +152,12 @@ ReadFancyZonesIntegrationState(mode := "Read")
 {
     local_app_data := EnvGet("LOCALAPPDATA")
     settings_path := local_app_data "\Microsoft\PowerToys\FancyZones\settings.json"
-    helper_path := A_ScriptDir "\windows-key-overhaul\fancyzones-settings.ps1"
+    helper_path := A_ScriptDir "\win-key-overhaul\fancyzones-settings.ps1"
     powershell_path := A_WinDir "\System32\WindowsPowerShell\v1.0\powershell.exe"
     if !FileExist(settings_path) || !FileExist(helper_path) || !FileExist(powershell_path)
         return false
 
-    result_path := A_Temp "\windows-key-overhaul-fancyzones-"
+    result_path := A_Temp "\win-key-overhaul-fancyzones-"
         . DllCall("GetCurrentProcessId", "uint") "-" A_TickCount ".txt"
 
     ; Bypass applies only to this helper process; no stored execution policy is

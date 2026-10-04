@@ -1,4 +1,4 @@
-; Internal Windows Key Overhaul module. Pure geometry; no desktop side effects.
+; Internal Win Key Overhaul module. Pure geometry; no desktop side effects.
 
 ; =============================================================================
 ; ratio layouts

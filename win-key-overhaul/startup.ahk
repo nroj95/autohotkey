@@ -1,25 +1,32 @@
-; Internal Windows Key Overhaul module. Launch ..\windows-key-overhaul.ahk.
+; Internal Win Key Overhaul module. Launch ..\win-key-overhaul.ahk.
 
 ; =============================================================================
 ; safe transition from the old script name
 ; =============================================================================
 
-EnsureLegacyScriptIsStopped()
+EnsurePreviousLaunchersAreStopped()
 {
     previous_setting := DetectHiddenWindows(true)
+
     try {
         for hwnd in WinGetList("ahk_class AutoHotkey") {
             if hwnd = A_ScriptHwnd
                 continue
+
             title := StrLower(WinGetTitle(hwnd))
-            if !InStr(title, "\window-hotkeys.ahk - autohotkey v")
+
+            if !InStr(title, "\windows-key-overhaul.ahk - autohotkey v")
+                && !InStr(title, "\window-hotkeys.ahk - autohotkey v")
+            {
                 continue
+            }
+
             MsgBox(
-                "Window Hotkeys is still running.`n`n"
-                . "Exit the old script from its tray menu, then launch "
-                . "windows-key-overhaul.ahk again. Running both would register "
-                . "conflicting shortcuts. The old process has not been closed.",
-                "Windows Key Overhaul", "Icon!"
+                "A previous Win-key window manager is still running.`n`n"
+                . "Exit it from its tray menu, then launch win-key-overhaul.ahk "
+                . "again. Running both would register conflicting shortcuts.",
+                "Win Key Overhaul",
+                "Icon!"
             )
             ExitApp()
         }
@@ -31,42 +38,87 @@ EnsureLegacyScriptIsStopped()
 
 InitializeDesktopIntegration(*)
 {
-    try MigrateLegacyStartupShortcut()
+    try MigratePreviousStartupShortcuts()
+    try MigratePreviousPreferences()
     try PromptToDisableNativeWindowsSnap()
     try RecommendScreenGrid()
     CheckFancyZonesStartup()
     SetTimer(CheckFancyZonesStartup, 5000)
 }
 
-MigrateLegacyStartupShortcut()
+MigratePreviousStartupShortcuts()
 {
-    global legacy_startup_shortcut_path
-    if !FileExist(legacy_startup_shortcut_path)
-        return
+    global previous_startup_shortcut_paths
 
-    FileGetShortcut(legacy_startup_shortcut_path, &target, , &arguments)
-    legacy_script := StrLower(A_ScriptDir "\window-hotkeys.ahk")
-    legacy_executable := StrLower(A_ScriptDir "\window-hotkeys.exe")
-    if StrLower(target) != legacy_script && StrLower(target) != legacy_executable
-        && StrLower(Trim(arguments, ' "`t')) != legacy_script
-    {
-        ; A same-named shortcut may belong to another installation. Leave it alone.
-        return
+    shortcuts_to_replace := []
+
+    for shortcut_path in previous_startup_shortcut_paths {
+        if !FileExist(shortcut_path)
+            continue
+
+        try FileGetShortcut(shortcut_path, &target, , &arguments)
+        catch
+            continue
+
+        if IsPreviousWinKeyOverhaulShortcut(target, arguments)
+            shortcuts_to_replace.Push(shortcut_path)
     }
 
+    if !shortcuts_to_replace.Length
+        return
+
     response := MsgBox(
-        "Replace this installation's old Window Hotkeys startup shortcut "
-        . "with Windows Key Overhaul?`n`n"
-        . "Only the shortcut is replaced; the old script files remain unchanged.",
-        "Windows Key Overhaul", "YesNo Default2 Icon?"
+        "Replace this installation's previous startup shortcut with "
+        . "Win Key Overhaul?`n`n"
+        . "The new shortcut is created before the previous one is removed.",
+        "Win Key Overhaul",
+        "YesNo Default2 Icon?"
     )
+
     if response != "Yes"
         return
 
-    ; Create the replacement first so a failure cannot silently disable startup.
     CreateStartupShortcut()
-    FileDelete(legacy_startup_shortcut_path)
+
+    for shortcut_path in shortcuts_to_replace
+        try FileDelete(shortcut_path)
+
     UpdateStartupMenu()
+}
+
+IsPreviousWinKeyOverhaulShortcut(target, arguments)
+{
+    target := StrLower(target)
+    arguments := StrLower(Trim(arguments, ' "`t'))
+
+    previous_launchers := [
+        StrLower(A_ScriptDir "\windows-key-overhaul.ahk"),
+        StrLower(A_ScriptDir "\windows-key-overhaul.exe"),
+        StrLower(A_ScriptDir "\window-hotkeys.ahk"),
+        StrLower(A_ScriptDir "\window-hotkeys.exe")
+    ]
+
+    for launcher_path in previous_launchers {
+        if target = launcher_path || arguments = launcher_path
+            return true
+    }
+
+    return false
+}
+
+MigratePreviousPreferences()
+{
+    global user_preferences_directory, user_preferences_path
+    global previous_user_preferences_path
+
+    if FileExist(user_preferences_path)
+        return
+
+    if !FileExist(previous_user_preferences_path)
+        return
+
+    DirCreate(user_preferences_directory)
+    FileCopy(previous_user_preferences_path, user_preferences_path, false)
 }
 
 ; =============================================================================
@@ -102,7 +154,7 @@ PromptToDisableNativeWindowsSnap()
         . "Windows preference; you can re-enable it in Settings > System > "
         . "Multitasking. Choosing No makes no change.`n`n"
         . "ScreenGrid is an optional companion for customizable Shift + drag layouts.",
-        "Windows Key Overhaul", "YesNo Default2 Icon?"
+        "Win Key Overhaul", "YesNo Default2 Icon?"
     )
     if response != "Yes"
         return
@@ -117,7 +169,7 @@ PromptToDisableNativeWindowsSnap()
         MsgBox(
             "Windows Snap could not be disabled automatically.`n`n"
             . "Use the tray menu's Windows Snap settings command and turn off Snap windows.",
-            "Windows Key Overhaul", "Icon!"
+            "Win Key Overhaul", "Icon!"
         )
     }
 }
@@ -141,11 +193,11 @@ RecommendScreenGrid()
         response := MsgBox(
             "ScreenGrid is recommended as a companion to these keyboard shortcuts.`n`n"
             . "It adds customizable Shift + drag window layouts. It is optional; "
-            . "Windows Key Overhaul runs without it.`n`n"
+            . "Win Key Overhaul runs without it.`n`n"
             . "Open ScreenGrid's official GitHub releases page? Nothing will be "
             . "downloaded or installed automatically.`n`n"
             . "This recommendation is shown once. The GitHub link remains in the tray menu.",
-            "Windows Key Overhaul", "YesNo Default2 Icon?"
+            "Win Key Overhaul", "YesNo Default2 Icon?"
         )
         if response = "Yes"
             OpenScreenGridReleases()

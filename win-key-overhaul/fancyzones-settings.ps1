@@ -1,7 +1,7 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-    Reads or applies the narrowly scoped Windows Key Overhaul / FancyZones setup.
+    Reads or applies the narrowly scoped Win Key Overhaul / FancyZones setup.
 .DESCRIPTION
     Internal helper invoked by fancyzones.ahk. Apply changes only the three
     navigation toggles and two zone-window shortcuts. An atomic replacement keeps
@@ -71,10 +71,10 @@ try {
 
         $updatedText = $settings | ConvertTo-Json -Depth 100
         $uniqueSuffix = [guid]::NewGuid().ToString('N').Substring(0, 8)
-        $backupPath = '{0}.windows-key-overhaul-{1}-{2}.bak' -f (
+        $backupPath = '{0}.win-key-overhaul-{1}-{2}.bak' -f (
             $SettingsPath, (Get-Date -Format 'yyyyMMdd-HHmmss'), $uniqueSuffix
         )
-        $temporaryPath = "$SettingsPath.windows-key-overhaul-$uniqueSuffix.tmp"
+        $temporaryPath = "$SettingsPath.win-key-overhaul-$uniqueSuffix.tmp"
         [System.IO.File]::WriteAllText($temporaryPath, $updatedText, $utf8)
 
         # PowerToys may be writing its own settings. Do not knowingly replace a

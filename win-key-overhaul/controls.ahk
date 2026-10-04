@@ -1,4 +1,4 @@
-; Internal Windows Key Overhaul module. Launch ..\windows-key-overhaul.ahk.
+; Internal Win Key Overhaul module. Launch ..\win-key-overhaul.ahk.
 
 ; =============================================================================
 ; direct window-management shortcuts
@@ -15,7 +15,7 @@ $+#Down::ResetWindowStretch()
 $+#Left::ToggleHorizontalStretch("left")
 $+#Right::ToggleHorizontalStretch("right")
 
-^#h::ToggleWindowsKeyOverhaulHelp()
+^#h::ToggleWinKeyOverhaulHelp()
 #Backspace::MinimizeActiveWindow()
 +#Home::ToggleOtherWindows()
 #m::ToggleAllWindows()

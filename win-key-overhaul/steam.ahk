@@ -1,14 +1,9 @@
-; Internal Windows Key Overhaul module. Launch ..\windows-key-overhaul.ahk instead.
+; Internal Win Key Overhaul module. Launch ..\win-key-overhaul.ahk instead.
 ; Included into the same script; functions share the existing global state.
 
 ; =============================================================================
 ; Steam cycle state
 ; =============================================================================
-
-CycleSteamGames()
-
-    DebugSteamGameState("Steam cycle command complete")
-}
 
 CycleSteamGames()
 {
@@ -121,7 +116,7 @@ CycleSteamGames()
     }
 
     ; This is the important path when another application was clicked before
-    ; Shift+Win+G. Record exactly what Windows Key Overhaul believes that application is.
+    ; Shift+Win+G. Record exactly what Win Key Overhaul believes that application is.
     if IsSteamReturnWindow(active_hwnd, 0) {
         steam_return_hwnd := active_hwnd
 
@@ -286,7 +281,7 @@ IsSteamGameWindow(hwnd)
     if DllCall("GetWindow", "ptr", hwnd, "uint", 4, "ptr")
         return false
 
-    if IsWindowsKeyOverhaulShellClass(class_name)
+    if IsWinKeyOverhaulShellClass(class_name)
         return false
 
     if width < 1 || height < 1

@@ -1,4 +1,4 @@
-; Internal Windows Key Overhaul module; initialized once by the root launcher.
+; Internal Win Key Overhaul module; initialized once by the root launcher.
 ; Keep assignments at top level to preserve the existing global scope.
 
 ; =============================================================================
@@ -36,10 +36,14 @@ focus_highlight_overlap := 2
 focus_navigation_active := false
 focus_navigation_hwnd := 0
 
-startup_shortcut_path := A_Startup "\Windows Key Overhaul.lnk"
-legacy_startup_shortcut_path := A_Startup "\Window Hotkeys.lnk"
-user_preferences_directory := A_AppData "\WindowsKeyOverhaul"
+startup_shortcut_path := A_Startup "\Win Key Overhaul.lnk"
+previous_startup_shortcut_paths := [
+    A_Startup "\Windows Key Overhaul.lnk",
+    A_Startup "\Window Hotkeys.lnk"
+]
+user_preferences_directory := A_AppData "\WinKeyOverhaul"
 user_preferences_path := user_preferences_directory "\preferences.ini"
+previous_user_preferences_path := A_AppData "\WindowsKeyOverhaul\preferences.ini"
 screengrid_releases_url := "https://github.com/TtesseractT/ScreenGrid/releases/latest"
 fancyzones_integration_state := false
 fancyzones_check_in_progress := false
@@ -50,4 +54,4 @@ fancyzones_check_in_progress := false
 ; =============================================================================
 
 debug_enabled := true
-debug_log_path := A_ScriptDir "\windows-key-overhaul-debug.log"
+debug_log_path := A_ScriptDir "\win-key-overhaul-debug.log"
