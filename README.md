@@ -37,7 +37,7 @@ Scratchpad is standalone. run `scratchpad.ahk` directly or enable **Run at start
 | Escape, inside the editor | hide the scratchpad |
 | Ctrl+N, inside the editor | create a new scratch page |
 | Ctrl+S, inside the editor | save the current page |
-| Win+Left / Win+Right or Win+PgUp / Win+PgDn, inside the editor | previous / next page |
+| Win+Left / Win+PgDn or Win+Right / Win+PgUp, inside the editor | previous / next page |
 
 the global toggle is configurable from the Scratchpad tray menu. presets include `Win+F12`, `F12`, several F12 modifier combinations, `Win+F10` and `Ctrl+Alt+Space`; **Custom...** accepts another keyboard combination, and **Disabled** turns the global toggle off. non-F-key custom shortcuts require at least one modifier.
 

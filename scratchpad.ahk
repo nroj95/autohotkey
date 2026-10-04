@@ -76,12 +76,12 @@ $#Right::
 }
 $#PgUp::
 {
-    scratchpad.QueueCommand("previous")
+    scratchpad.QueueCommand("next")
     KeyWait "PgUp"
 }
 $#PgDn::
 {
-    scratchpad.QueueCommand("next")
+    scratchpad.QueueCommand("previous")
     KeyWait "PgDn"
 }
 #HotIf
@@ -1176,8 +1176,8 @@ class ScratchpadController
         "INSIDE THE EDITOR`n"
         "Escape                  Hide scratchpad`n"
         "Ctrl + N / Ctrl + S     New page / save page`n"
-        "Win + Left / PgUp       Previous page`n"
-        "Win + Right / PgDn      Next page`n"
+        "Win + Left / PgDn       Previous page`n"
+        "Win + Right / PgUp      Next page`n"
         "`n"
         "PAGES`n"
         "New pages are named automatically.`n"
