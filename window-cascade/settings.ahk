@@ -106,7 +106,6 @@ caps_layer_startup_wait_ms := 5000
 caps_layer_reload_grace_ms := 3000
 caps_layer_check_ms := 1000
 
-placement_enabled := true
 
 settings_directory := EnvGet("LOCALAPPDATA") "\Window Cascade"
 settings_path := settings_directory "\settings.ini"
@@ -176,11 +175,12 @@ cascade_compaction_pending := Map()
 cascade_compaction_timer_pending := false
 cascade_restore_batches := Map()
 cascade_restore_request_depth := 0
-cascade_minimize_request_depth := 0
 cascade_close_batches := Map()
-layer_minimized_windows_by_monitor := Map()
-monitor_minimized_windows_by_monitor := Map()
-all_cascades_minimized := false
+; Disable state is independent of whether any saved windows still exist.
+; A closed final window must not silently re-enable automatic placement.
+cascade_disabled := false
+cascade_toggle_in_progress := false
+cascade_disabled_windows := []
 
 focus_corner_overlays := Map()
 focus_corner_targets := Map()
@@ -231,4 +231,3 @@ cascade_command_gather_to_monitor := 13
 cascade_command_show_help := 14
 cascade_command_move_monitor_left := 15
 cascade_command_move_monitor_right := 16
-cascade_command_toggle_cascading := 17

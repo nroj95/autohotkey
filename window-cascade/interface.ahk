@@ -17,7 +17,7 @@ BuildTrayMenu()
 
     A_TrayMenu.Add("How to use", ToggleWindowCascadeHelp)
     A_TrayMenu.Add()
-    A_TrayMenu.Add("Pause cascading", ToggleCascading)
+    A_TrayMenu.Add("Disable cascade", ToggleCascadeDisabled)
     A_TrayMenu.Add("Show focus tabs", ToggleFocusCornerVisibility)
 
     focus_tab_active_slot_color_menu := Menu()
@@ -55,6 +55,9 @@ BuildTrayMenu()
     A_TrayMenu.Add("Run at startup", ToggleStartup)
     A_TrayMenu.Add()
     A_TrayMenu.AddStandard()
+    ; Native Pause/Suspend would bypass the restore set and the Caps + M wake path.
+    A_TrayMenu.Delete("&Pause Script")
+    A_TrayMenu.Delete("&Suspend Hotkeys")
 
     UpdateTrayMenu()
 }
@@ -137,28 +140,6 @@ SetRotateKey(new_rotate_key, *)
     UpdateTrayMenu()
 }
 
-ToggleCascading(*)
-{
-    global placement_enabled
-
-    placement_enabled := !placement_enabled
-    UpdateTrayMenu()
-
-    ; Restart the clear timer so rapid toggles leave the latest state visible.
-    SetTimer ClearCascadeStatusTip, 0
-    ToolTip (
-        placement_enabled
-        ? "cascading resumed"
-        : "cascading paused"
-    ), , , 3
-    SetTimer ClearCascadeStatusTip, -1400
-}
-
-ClearCascadeStatusTip()
-{
-    ToolTip , , , 3
-}
-
 ToggleStartup(*)
 {
     global startup_shortcut_path
@@ -195,7 +176,7 @@ ToggleStartup(*)
 
 UpdateTrayMenu()
 {
-    global placement_enabled, startup_shortcut_path
+    global cascade_disabled, startup_shortcut_path
     global focus_corner_visible
     global rotate_key, rotate_key_menu
     global focus_tab_color_presets
@@ -204,10 +185,18 @@ UpdateTrayMenu()
     global focus_tab_active_slot_color_menu
     global focus_tab_inactive_slot_color_menu
 
-    if placement_enabled
-        A_TrayMenu.Uncheck("Pause cascading")
+    if cascade_disabled
+        A_TrayMenu.Check("Disable cascade")
     else
-        A_TrayMenu.Check("Pause cascading")
+        A_TrayMenu.Uncheck("Disable cascade")
+
+    A_IconTip := cascade_disabled ? "Window Cascade (disabled)" : "Window Cascade"
+    for item in ["Show focus tabs", "Focus tab colors", "Rotate layers key", "Check compatibility"] {
+        if cascade_disabled
+            A_TrayMenu.Disable(item)
+        else
+            A_TrayMenu.Enable(item)
+    }
 
     if focus_corner_visible
         A_TrayMenu.Check("Show focus tabs")
@@ -251,20 +240,20 @@ UpdateTrayMenu()
 ToggleWindowCascadeHelp(*)
 {
     static help_gui := 0
+    static help_icons := []
 
     if help_gui {
-        try help_gui.Destroy()
-        help_gui := 0
+        CloseHelp()
         return
     }
 
     help_gui := Gui("+AlwaysOnTop", "Window Cascade")
+    help_icons := SetWindowCascadeHelpIcons(help_gui)
     help_gui.SetFont("s10", "Cascadia Mono")
 
     help_text :=
     (
     "Caps + H             Toggle this help`n"
-    "Caps + P             Pause / resume automatic cascading`n"
     "`n"
     "CAPSLOCK LAYER REQUIRED`n"
     "Keep capslock-layer.ahk running with Window Cascade.`n"
@@ -280,19 +269,18 @@ ToggleWindowCascadeHelp(*)
     "Caps + Insert                 Adopt / re-slot active window`n"
     "Caps + Space / Tab            Next layer`n"
     "Caps + Alt + Space / Tab      Previous layer`n"
-    "Caps + M                      Minimize / restore all layers on monitor`n"
-    "Caps + F4                     Close current layer`n"
+    "Caps + M                      Minimize all / disable; restore all / resume`n"
+    "Caps + F4                     Close all layers on this monitor`n"
     "Caps + Delete                 Close active window`n"
     "Caps + Home                   Bring this monitor's cascade to front`n"
-    "Caps + Alt + M                Minimize / restore cascades on all monitors`n"
-    "Caps + Alt + F4               Close all layers on monitor`n"
     "Caps + Alt + F7               Gather other monitors' cascades here`n"
     "Caps + Alt + Left / Right     Move to adjacent monitor + smart sort`n"
     "`n"
     "NOTES`n"
     "Alt commands require held Caps.`n"
     "Space / Tab for layer rotation is selected from the tray menu.`n"
-    "Window-management commands are disabled during native drags/resizes or while maximized/fullscreen.`n"
+    "When disabled, only Caps + M resumes; other cascade commands and focus tabs are inactive.`n"
+    "Other window commands are blocked during native drags/resizes or while maximized/fullscreen.`n"
     "If CapsLock Layer stops, Window Cascade exits after a short reload grace period.`n"
     "`n"
     "FOCUS TABS`n"
@@ -309,7 +297,7 @@ ToggleWindowCascadeHelp(*)
     "Dropped windows keep their slot; a cascade smaller than one full layer may compact inward.`n"
     "`n"
     "TRAY`n"
-    "Pause cascading      Pause automatic placement`n"
+    "Disable cascade      Same all-monitor disable / resume toggle as Caps + M`n"
     "Show focus tabs      Show / hide the faint focus tabs`n"
     "Focus tab colors     Choose colors for the active and inactive slots`n"
     "Check compatibility  Check conflicting settings"
@@ -324,9 +312,42 @@ ToggleWindowCascadeHelp(*)
     CloseHelp(*) {
         try help_gui.Destroy()
         help_gui := 0
+        ; Destroy the GUI before releasing the HICONs it was displaying.
+        for icon_handle in help_icons
+            DllCall("DestroyIcon", "ptr", icon_handle, "int")
+        help_icons := []
     }
 }
 
+
+SetWindowCascadeHelpIcons(help_gui)
+{
+    icon_handles := []
+    icon_path := A_ScriptDir "\icons\window-cascade.ico"
+
+    if !FileExist(icon_path)
+        return icon_handles
+
+    try {
+        for icon_index, size in [16, 32] {
+            image_type := 0
+            icon_handle := LoadPicture(icon_path, "Icon1 w" size " h" size, &image_type)
+            if !icon_handle
+                continue
+            if image_type != 1 {
+                DllCall(image_type = 2 ? "DestroyCursor" : "DeleteObject", "ptr", icon_handle, "int")
+                continue
+            }
+            icon_handles.Push(icon_handle)
+            ; WM_SETICON: ICON_SMALL = 0 (caption), ICON_BIG = 1 (Alt+Tab/taskbar).
+            SendMessage(0x0080, icon_index - 1, icon_handle, , help_gui.Hwnd)
+        }
+    }
+    catch Error as err {
+        DebugError("Set help window icon", err)
+    }
+    return icon_handles
+}
 
 ; =============================================================================
 ; compatibility checks
@@ -334,6 +355,9 @@ ToggleWindowCascadeHelp(*)
 
 CheckCompatibilitySettings(*)
 {
+    if !IsCascadeEnabled()
+        return
+
     try {
         warnings := []
 

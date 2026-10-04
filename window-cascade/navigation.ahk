@@ -7,6 +7,9 @@
 
 FocusCascadeLayerWindow(direction)
 {
+    if !IsCascadeEnabled()
+        return
+
     monitor_index := GetCommandMonitor()
 
     if !monitor_index
@@ -53,6 +56,9 @@ FocusCascadeLayerWindow(direction)
 
 SwapActiveCascadeWindow(direction)
 {
+    if !IsCascadeEnabled()
+        return
+
     active_hwnd := WinExist("A")
 
     if !active_hwnd || IsShellSurfaceWindow(active_hwnd)
@@ -153,6 +159,9 @@ SwapActiveCascadeWindow(direction)
 
 MoveCascadeWindowToSlot(hwnd, target_x, target_y)
 {
+    if !IsCascadeEnabled()
+        return false
+
     global placement_reservations
 
     ; A minimize can complete after planning but before this individual move.
@@ -194,7 +203,7 @@ MoveCascadeWindowToSlot(hwnd, target_x, target_y)
         current_height + inset_top + inset_bottom
     ]
 
-    if IsCascadeWindowBeingDragged(hwnd)
+    if !IsCascadeEnabled() || IsCascadeWindowBeingDragged(hwnd)
         return false
     placement_reservations[hwnd] := Map(
         "monitor", GetMonitorForWindow(hwnd), "x", target_x, "y", target_y
@@ -334,6 +343,9 @@ RotateCascadeStackWindows(ordered_windows, direction)
 
 RotateCascadeLayers(direction := 1)
 {
+    if !IsCascadeEnabled()
+        return
+
     monitor_index := GetCommandMonitor()
 
     if !monitor_index
@@ -514,6 +526,9 @@ BringCommandMonitorCascadeForward()
 
 BringCascadeForward(monitor_index)
 {
+    if !IsCascadeEnabled()
+        return
+
     windows := GetLiveCascadeHistory(monitor_index)
 
     if windows.Length = 0
@@ -610,6 +625,9 @@ BringCascadeForward(monitor_index)
 
 CaptureCascadeLaunchIntent(hwnd)
 {
+    if !IsCascadeEnabled()
+        return
+
     global cascade_launch_hint, current_foreground_hwnd, previous_foreground_hwnd
 
     CancelNewWindowFocus()
@@ -650,6 +668,9 @@ CaptureNewWindowFocusContext(hwnd)
 
 StartNewWindowFocus(hwnd, context)
 {
+    if !IsCascadeEnabled()
+        return
+
     global cascade_launch_hint, new_window_focus_request, new_window_focus_poll_ms
     global new_window_focus_timeout_ms
 
@@ -700,6 +721,9 @@ CancelNewWindowFocus(expected_request := 0)
 
 ObserveNewWindowForeground(hwnd)
 {
+    if !IsCascadeEnabled()
+        return
+
     global new_window_focus_request, cascade_launch_hint, pending_windows
 
     ; SHOW and FOREGROUND are separate WinEvents and their order is not stable.
@@ -767,6 +791,10 @@ SyncNewWindowForegroundVisual(request)
 
 RecoverNewWindowDuringShellSettle(request, foreground)
 {
+    global new_window_focus_request
+    if !IsCascadeEnabled() || new_window_focus_request != request
+        return false
+
     global new_window_shell_settle_ms
 
     if !request.shell_settle
@@ -802,6 +830,9 @@ RecoverNewWindowDuringShellSettle(request, foreground)
     ; including back to the original source, cancels recovery before this path.
     if !IsShellSurfaceWindow(foreground)
         return true
+
+    if !IsCascadeEnabled() || new_window_focus_request != request
+        return false
 
     request.launch_settle_attempts += 1
     method := "SetForegroundWindow"
@@ -842,6 +873,9 @@ RecoverNewWindowDuringShellSettle(request, foreground)
 
 WatchNewWindowFocus()
 {
+    if !IsCascadeEnabled()
+        return
+
     global new_window_focus_request, new_window_focus_timeout_ms
     global pending_windows
 
@@ -874,6 +908,8 @@ WatchNewWindowFocus()
             }
         }
 
+        if !IsCascadeEnabled() || new_window_focus_request != request
+            return
         if RecoverNewWindowDuringShellSettle(request, foreground)
             return
 

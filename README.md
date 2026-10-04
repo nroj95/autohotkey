@@ -64,9 +64,8 @@ it includes controls for:
 - adopting and re-slotting existing windows, including drag-and-drop
 - rotating stacked windows and cycling slot layers
 - moving managed windows across monitors
-- minimizing and restoring one or all cascades
-- closing the current layer or all layers on a monitor
-- pausing automatic placement
+- minimizing/restoring all cascades across monitors and disabling/resuming cascade activity with `Caps + M`
+- closing all layers on the current monitor with `Caps + F4`
 - checking for conflicting Windows or PowerToys settings
 
 focus tabs show at most one clickable marker per slot. clicking an inactive slot focuses its exposed window; clicking the active slot cycles to the next layer in that stack. holding, dragging, or releasing a focus tab adds no extra action.
@@ -77,7 +76,7 @@ new-window placement includes guarded foreground recovery for taskbar launches w
 
 focus-tab colors can be configured from the tray separately for the active and inactive slots.
 
-`Caps + H` toggles the Window Cascade help page.
+`Caps + H` toggles the Window Cascade help page, which uses the custom cascade icon. while the cascade is disabled, `Caps + M` remains available to resume; windows opened during the disabled period stay unmanaged.
 
 Window Cascade runs as its own process but requires `capslock-layer.ahk` for its keyboard command bindings.
 

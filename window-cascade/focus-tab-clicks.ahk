@@ -20,6 +20,9 @@ HasFocusTabClick()
 
 CanStartFocusTabClick()
 {
+    if !IsCascadeEnabled()
+        return false
+
     global focus_tab_pending_press
     global focus_corner_targets, focus_corner_overlays
 
@@ -53,6 +56,9 @@ CanStartFocusTabClick()
 
 BeginFocusTabClick(*)
 {
+    if !IsCascadeEnabled()
+        return
+
     global focus_tab_pending_press, focus_tab_click, focus_tab_click_generation
     global focus_tab_release_poll_ms
 
@@ -85,6 +91,9 @@ BeginFocusTabClick(*)
 
 ActivateFocusTabClick(press)
 {
+    if !IsCascadeEnabled()
+        return
+
     global focus_corner_overlays
 
     target_hwnd := press.target_hwnd

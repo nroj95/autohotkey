@@ -537,9 +537,8 @@ GetNextCascadePosition(
 
 IsCascadeCompactionDeferred(monitor_index)
 {
-    global cascade_minimize_request_depth
     ; Never mutate the layout halfway through a drag or window-state batch.
-    return cascade_minimize_request_depth > 0 || HasCascadeWindowDrag() || IsCascadeCloseBatchActive(monitor_index)
+    return !IsCascadeEnabled() || HasCascadeWindowDrag() || IsCascadeCloseBatchActive(monitor_index)
         || IsCascadeRestoreInProgress(monitor_index)
 }
 
@@ -574,6 +573,9 @@ RequeueCascadeCompaction(monitor_index, preferred_hwnd)
 
 ScheduleCascadeCompactionFlush(recover := false)
 {
+    if !IsCascadeEnabled()
+        return
+
     global cascade_compaction_timer_pending
 
     ; Further events must not keep postponing an already scheduled flush.
@@ -641,8 +643,7 @@ CompactCascadeLayout(monitor_index, preferred_hwnd := 0)
         return
     }
 
-    ; A saved minimize set does not mean the entire monitor is hidden:
-    ; windows opened afterward remain visible and must still be compactable.
+    ; Resume compacts existing membership only; disabled-time windows stay unmanaged.
     windows := GetLiveCascadeHistory(monitor_index)
     managed_window_count := windows.Length
     membership_generation := cascade_membership_generation

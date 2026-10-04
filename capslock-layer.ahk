@@ -16,8 +16,7 @@ caps_layer_presence_mutex := DllCall(
     "ptr"
 )
 
-; Window Cascade uses this handle as its dependency signal. Window Hotkeys
-; uses it only to detect optional CapsLock Layer integration.
+; Window Cascade uses this handle as its dependency signal.
 if !caps_layer_presence_mutex
     throw OSError(A_LastError, "CreateMutex", "Could not announce CapsLock Layer.")
 
@@ -55,25 +54,6 @@ cascade_command_gather_to_monitor := 13
 cascade_command_show_help := 14
 cascade_command_move_monitor_left := 15
 cascade_command_move_monitor_right := 16
-cascade_command_toggle_cascading := 17
-
-window_hotkeys_command_message := DllCall(
-    "RegisterWindowMessage",
-    "str", "WindowHotkeys.Command",
-    "uint"
-)
-
-; Keep these command IDs in sync with window-hotkeys\settings.ahk.
-window_hotkeys_command_focus_left := 1
-window_hotkeys_command_focus_right := 2
-window_hotkeys_command_focus_up := 3
-window_hotkeys_command_focus_down := 4
-
-window_hotkeys_cycle_steam_message := DllCall(
-    "RegisterWindowMessage",
-    "str", "WindowHotkeys.CycleSteamGames",
-    "uint"
-)
 
 debug_reset_logs_message := DllCall(
     "RegisterWindowMessage",
@@ -111,7 +91,7 @@ SetCapsLockState "Off"
 ; - expose f13-f24 as universal extra keys for apps and app-specific macros.
 ; - provide Windows Terminal copy and clear macros.
 ; - provide numpad 0-9 through caps lock on keyboards without a numpad.
-; - provide Window Cascade and Window Hotkeys companion controls.
+; - provide Window Cascade commands independently of the extra-key mappings.
 ; - provide a tray-menu toggle for launching the script with Windows.
 ; =============================================================================
 
@@ -200,38 +180,21 @@ CapsLock & 7::HoldVirtualKey("Numpad7", "7")
 CapsLock & 8::HoldVirtualKey("Numpad8", "8")
 CapsLock & 9::HoldVirtualKey("Numpad9", "9")
 
-; Companion window controls.
-; Win routes arrows to Window Hotkeys. Otherwise Caps remains Cascade-local,
-; while Alt keeps its wider Window Cascade scope.
+; Window Cascade controls. Alt reverses layer rotation or moves across monitors.
 CapsLock & Up::
 {
-    if WindowHotkeysModifierHeld() {
-        PostWindowHotkeysCommand(window_hotkeys_command_focus_up)
-        KeyWait "Up"
-        return
-    }
-
     PostPlainWindowCascadeCommand(cascade_command_swap_window_up)
 }
 
 CapsLock & Down::
 {
-    if WindowHotkeysModifierHeld() {
-        PostWindowHotkeysCommand(window_hotkeys_command_focus_down)
-        KeyWait "Down"
-        return
-    }
-
     PostPlainWindowCascadeCommand(cascade_command_swap_window_down)
 }
 
 CapsLock & Left::
 {
-    if WindowHotkeysModifierHeld() {
-        PostWindowHotkeysCommand(window_hotkeys_command_focus_left)
-        KeyWait "Left"
+    if GetKeyState("Ctrl", "P") || GetKeyState("LWin", "P") || GetKeyState("RWin", "P")
         return
-    }
 
     if GetKeyState("Alt", "P") {
         PostWindowCascadeCommand(
@@ -248,11 +211,8 @@ CapsLock & Left::
 
 CapsLock & Right::
 {
-    if WindowHotkeysModifierHeld() {
-        PostWindowHotkeysCommand(window_hotkeys_command_focus_right)
-        KeyWait "Right"
+    if GetKeyState("Ctrl", "P") || GetKeyState("LWin", "P") || GetKeyState("RWin", "P")
         return
-    }
 
     if GetKeyState("Alt", "P") {
         PostWindowCascadeCommand(
@@ -282,15 +242,13 @@ CapsLock & Home::PostPlainWindowCascadeCommandOnce(
     cascade_command_bring_forward,
     "Home"
 )
-CapsLock & m::PostWindowCascadeCommandOnce(
+CapsLock & m::PostPlainWindowCascadeCommandOnce(
     cascade_command_toggle_minimize,
-    "m",
-    GetKeyState("Alt", "P")
+    "m"
 )
-CapsLock & F4::PostWindowCascadeCommandOnce(
+CapsLock & F4::PostPlainWindowCascadeCommandOnce(
     cascade_command_close_scope,
-    "F4",
-    GetKeyState("Alt", "P")
+    "F4"
 )
 CapsLock & F7::PostAltOnlyWindowCascadeCommandOnce(
     cascade_command_gather_to_monitor,
@@ -301,21 +259,7 @@ CapsLock & Delete::PostPlainWindowCascadeCommandOnce(
     "Delete"
 )
 
-CapsLock & h::
-{
-    if !WindowHotkeysModifierHeld()
-        PostPlainWindowCascadeCommand(cascade_command_show_help)
-
-    KeyWait "h"
-}
-
-CapsLock & p::PostPlainWindowCascadeCommandOnce(
-    cascade_command_toggle_cascading,
-    "p"
-)
-
-; Window Hotkeys.
-CapsLock & g::PostRegisteredCommand(window_hotkeys_cycle_steam_message)
+CapsLock & h::PostPlainWindowCascadeCommandOnce(cascade_command_show_help, "h")
 
 ; Diagnostics.
 CapsLock & F5::PostRegisteredCommand(debug_reset_logs_message)
@@ -369,7 +313,7 @@ k::UseArmedNoOpKey("k")
 9::UseArmedVirtualKey("Numpad9", "9")
 
 ; Optional Window Cascade controls.
-; One-shot Caps exposes only unmodified slot/layer-local commands.
+; One-shot Caps exposes the same plain commands, including global disable/resume.
 Up::UseArmedWindowCascadeCommand(cascade_command_swap_window_up, "Up")
 Down::UseArmedWindowCascadeCommand(cascade_command_swap_window_down, "Down")
 Left::UseArmedWindowCascadeCommand(cascade_command_rotate_slot_previous, "Left")
@@ -390,10 +334,6 @@ m::UseArmedWindowCascadeCommand(cascade_command_toggle_minimize, "m")
 F4::UseArmedWindowCascadeCommand(cascade_command_close_scope, "F4")
 Delete::UseArmedWindowCascadeCommand(cascade_command_close_active, "Delete")
 h::UseArmedWindowCascadeCommand(cascade_command_show_help, "h")
-p::UseArmedWindowCascadeCommand(cascade_command_toggle_cascading, "p")
-
-; Window Hotkeys.
-g::UseArmedRegisteredCommand(window_hotkeys_cycle_steam_message, "g")
 
 ; Diagnostics.
 F5::UseArmedRegisteredCommand(debug_reset_logs_message, "F5")
@@ -712,8 +652,13 @@ WindowCascadeRotateKeyIs(expected_key)
 
 PostPlainWindowCascadeCommand(command_id)
 {
+    ; Removed Alt variants must not silently invoke the stronger plain command.
     if !GetKeyState("Shift", "P") && !GetKeyState("Alt", "P")
+        && !GetKeyState("Ctrl", "P") && !GetKeyState("LWin", "P")
+        && !GetKeyState("RWin", "P")
+    {
         PostWindowCascadeCommand(command_id)
+    }
 }
 
 PostPlainWindowCascadeCommandOnce(command_id, physical_key)
@@ -750,45 +695,12 @@ PostWindowCascadeCommand(command_id, parameter := 0)
     )
 }
 
-PostWindowCascadeCommandOnce(command_id, physical_key, parameter := 0)
-{
-    PostWindowCascadeCommand(command_id, parameter)
-    KeyWait physical_key
-}
-
 PostAltOnlyWindowCascadeCommandOnce(command_id, physical_key)
 {
     if GetKeyState("Alt", "P")
         PostWindowCascadeCommand(command_id)
 
     KeyWait physical_key
-}
-
-
-; =============================================================================
-; Window Hotkeys integration
-; =============================================================================
-
-WindowHotkeysModifierHeld()
-{
-    return (
-        GetKeyState("LWin", "P")
-        || GetKeyState("RWin", "P")
-    )
-}
-
-PostWindowHotkeysCommand(command_id)
-{
-    global window_hotkeys_command_message
-
-    DllCall(
-        "PostMessage",
-        "ptr", 0xFFFF, ; HWND_BROADCAST
-        "uint", window_hotkeys_command_message,
-        "uptr", command_id,
-        "ptr", 0,
-        "int"
-    )
 }
 
 
@@ -915,8 +827,8 @@ ShowCapsLockLayerHelp(*)
     "Caps + K                 Clear full buffer`n"
     "`n"
     "WINDOW MANAGEMENT`n"
-    "Window Cascade and Window Hotkeys extend the Caps layer with window controls.`n"
-    "See their own help pages for their shortcuts.`n"
+    "Window Cascade extends the Caps layer with window controls.`n"
+    "See its help page for shortcuts. Caps + M disables / resumes the cascade.`n"
     "`n"
     "CAPS LOCK`n"
     "Double-tap Left Shift   Toggle actual Caps Lock"

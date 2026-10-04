@@ -13,6 +13,9 @@
 
 CaptureCascadeMousePress(*)
 {
+    if !IsCascadeEnabled()
+        return
+
     global cascade_mouse_press
 
     ; Finish the previous released drag before snapshotting a rapid new press.
@@ -59,6 +62,9 @@ GetCascadeMousePressSnapshot(hwnd)
 
 CaptureCascadeMouseRelease(*)
 {
+    if !IsCascadeEnabled()
+        return
+
     global cascade_mouse_press, cascade_window_drag
 
     if IsObject(cascade_mouse_press)
@@ -87,6 +93,9 @@ IsCascadeWindowBeingDragged(hwnd)
 
 BeginCascadeWindowDrag(hwnd, event_time)
 {
+    if !IsCascadeEnabled()
+        return
+
     global cascade_mouse_press, cascade_window_drag, cascade_drag_generation
     global known_windows, handled_windows, pending_windows, placement_reservations
 
@@ -231,6 +240,9 @@ StopCascadeWindowDrag(expected_drag := 0)
 
 CompleteCascadeWindowDrop(drag)
 {
+    if !IsCascadeEnabled()
+        return
+
     global cascade_slot_tolerance
 
     hwnd := drag.hwnd
@@ -268,7 +280,6 @@ CompleteCascadeWindowDrop(drag)
     if slot_index && HasCascadeDropDestination(monitor_index, drag) {
         if PlaceCascadeWindowOnMonitor(hwnd, monitor_index, geometry.slots[slot_index]) {
             RemoveWindowFromMinimizeState(hwnd)
-            NormalizeAllCascadesMinimizedState()
             if drag.source_monitor
                 QueueCascadeCompaction(drag.source_monitor)
             ; Keep this explicit destination while background windows fill gaps.
@@ -310,7 +321,6 @@ ReleaseCascadeWindow(hwnd)
     CancelPlacementStabilization(hwnd)
     RemoveCascadeWindowFromHistory(hwnd)
     RemoveWindowFromMinimizeState(hwnd)
-    NormalizeAllCascadesMinimizedState()
     if pending_windows.Has(hwnd)
         pending_windows.Delete(hwnd)
     if placement_reservations.Has(hwnd)

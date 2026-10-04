@@ -7,6 +7,9 @@
 
 PlaceCascadeWindowOnMonitor(hwnd, target_monitor, requested_position := 0)
 {
+    if !IsCascadeEnabled()
+        return false
+
     global handled_windows, known_windows, pending_windows, placement_reservations
     global window_width_ratio, window_height_ratio
     global edge_margin, minimum_width, minimum_height
@@ -86,6 +89,8 @@ PlaceCascadeWindowOnMonitor(hwnd, target_monitor, requested_position := 0)
         placement_reservations[hwnd] := Map(
             "monitor", target_monitor, "x", target_x, "y", target_y
         )
+        if !IsCascadeEnabled()
+            return false
         WinMove(
             raw_target[1],
             raw_target[2],
@@ -492,6 +497,9 @@ SchedulePlacementStabilization(
     target_height
 )
 {
+    if !IsCascadeEnabled()
+        return
+
     global placement_stabilize_delays_ms
     global placement_stabilization_generations
     global placement_stabilization_generation_counter
@@ -523,7 +531,7 @@ IsCurrentPlacementStabilization(hwnd, stabilization_generation)
 {
     global placement_stabilization_generations
 
-    return placement_stabilization_generations.Has(hwnd)
+    return IsCascadeEnabled() && placement_stabilization_generations.Has(hwnd)
         && placement_stabilization_generations[hwnd]
             = stabilization_generation
 }
@@ -823,5 +831,6 @@ StabilizePlacedWindow(
 IsCurrentNewWindowPlacement(hwnd, request)
 {
     global pending_windows
-    return IsObject(request) && pending_windows.Has(hwnd) && pending_windows[hwnd] = request
+    return IsCascadeEnabled() && IsObject(request)
+        && pending_windows.Has(hwnd) && pending_windows[hwnd] = request
 }

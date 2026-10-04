@@ -28,7 +28,7 @@
 ; - inspect actual window positions whenever a new window opens.
 ; - fill the least-used canonical slot so gaps are repaired before a new layer grows.
 ; - treat stack depth as layers: one window per slot at each depth.
-; - keep focus/swap/close controls local while minimize scopes can span one or all monitors.
+; - keep focus/swap/close controls local; Caps + M disables/restores every monitor.
 ; - compact holes forward across slots and layers after managed windows disappear.
 ; - rotate one slot across layers or rotate every slot to expose the next layer.
 ; - focus and swap current-layer windows by physical top-to-bottom order.
@@ -48,7 +48,8 @@ Persistent
 SetWinDelay 0
 
 A_IconTip := "Window Cascade"
-try TraySetIcon(A_ScriptDir "\icons\window-cascade.ico")
+; Keep the custom icon while our own disabled state suspends mouse hotkeys.
+try TraySetIcon(A_ScriptDir "\icons\window-cascade.ico", , true)
 
 ; Use virtual-screen coordinates so multi-monitor mouse positions match MonitorGet().
 CoordMode "Mouse", "Screen"
@@ -83,16 +84,14 @@ SeedStartupWindows()
 
 StartWindowHooks()
 
-SetTimer(WatchForMissedWindows, missed_window_poll_ms)
 SetTimer(WatchCapsLockLayer, caps_layer_check_ms)
 
-; Window events normally keep focus tabs aligned. Keep a slow timer only as
-; insurance for an event that Windows may occasionally fail to deliver.
-; Focus-tab presses and releases are paired by the mouse hook in controls.ahk.
-SetTimer(UpdateFocusCornerOverlays, focus_corner_fallback_ms)
-
-; FancyZones can directly compete with new-window placement.
-SetTimer(CheckCompatibilitySettings, -500)
+; The hooks retain lightweight lifetime bookkeeping while disabled. Work timers
+; are shared with the resume path and start only while the cascade is enabled.
+if IsCascadeEnabled() {
+    StartCascadeActivity()
+    SetTimer(CheckCompatibilitySettings, -500)
+}
 
 
 ; =============================================================================
@@ -108,6 +107,7 @@ SetTimer(CheckCompatibilitySettings, -500)
 #Include "%A_ScriptDir%\window-cascade\navigation.ahk"
 #Include "%A_ScriptDir%\window-cascade\placement.ahk"
 #Include "%A_ScriptDir%\window-cascade\commands.ahk"
+#Include "%A_ScriptDir%\window-cascade\suspension.ahk"
 #Include "%A_ScriptDir%\window-cascade\focus-corners.ahk"
 #Include "%A_ScriptDir%\window-cascade\focus-tab-clicks.ahk"
 #Include "%A_ScriptDir%\window-cascade\windows.ahk"
@@ -127,11 +127,11 @@ HandleScriptExit(exit_reason, exit_code)
     try StopFocusTabClick()
     try StopWindowHooks()
 
-    ; A dependency failure is different from an ordinary script reload. Recover
-    ; script-minimized windows before their in-memory restore sets disappear.
-    if exit_reason = "Exit" && caps_layer_dependency_lost {
-        RestoreCascadeWindowsAfterDependencyLoss()
+    ; Never strand script-hidden windows when their in-memory restore set is lost.
+    ; This is a plain restore, not a final cascade layout or focus operation.
+    RestoreDisabledCascadeWindowsOnExit()
 
+    if exit_reason = "Exit" && caps_layer_dependency_lost {
         for hwnd, overlay in focus_corner_overlays
             try overlay.gui.Hide()
 

@@ -7,6 +7,9 @@
 
 QueueFocusCornerUpdate()
 {
+    if !IsCascadeEnabled()
+        return
+
     global focus_corner_update_pending
     global focus_corner_update_ms
 
@@ -31,6 +34,9 @@ RunQueuedFocusCornerUpdate()
 
 UpdateFocusCornerOverlays()
 {
+    if !IsCascadeEnabled()
+        return
+
     global focus_corner_overlays, focus_tab_click_generation, cascade_slot_tolerance
     global cascade_drag_generation, cascade_membership_generation
     static update_generation := 0
@@ -115,7 +121,7 @@ UpdateFocusCornerOverlays()
     Critical "On"
     try {
         ; A newer refresh or tab press may have changed the stack during queries.
-        if generation != update_generation
+        if !IsCascadeEnabled() || generation != update_generation
             return
         if active_hwnd != DllCall("GetForegroundWindow", "ptr")
             || click_generation != focus_tab_click_generation
@@ -250,6 +256,9 @@ ShowFocusCornerOverlay(
     active_slot := false
 )
 {
+    if !IsCascadeEnabled()
+        return
+
     global focus_corner_overlays
     global focus_corner_size
     global focus_corner_thickness

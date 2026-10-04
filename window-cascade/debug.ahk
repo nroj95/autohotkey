@@ -30,8 +30,10 @@ InitializeDebugLogging()
     DebugLogSession("started")
 }
 
-HandleDebugResetLogsMessage(*)
+HandleDebugResetLogsMessage(command_id, parameter, message_id, target_hwnd)
 {
+    if target_hwnd != A_ScriptHwnd || !IsCascadeEnabled()
+        return
     ResetDebugLog()
 }
 

@@ -106,35 +106,6 @@ WatchCapsLockLayer()
     ExitApp 1
 }
 
-RestoreCascadeWindowsAfterDependencyLoss()
-{
-    global layer_minimized_windows_by_monitor
-    global monitor_minimized_windows_by_monitor
-
-    seen := Map()
-
-    ; Only restore windows minimized by this script, not independently minimized
-    ; applications. Do not resize or reposition windows already on screen.
-    for window_lists in [layer_minimized_windows_by_monitor, monitor_minimized_windows_by_monitor] {
-        for monitor_index, windows in window_lists {
-            for hwnd in windows {
-                if seen.Has(hwnd)
-                    continue
-
-                seen[hwnd] := true
-                try {
-                    if WinGetMinMax("ahk_id " hwnd) = -1
-                        WinRestore("ahk_id " hwnd)
-                }
-                catch Error as err {
-                    DebugError("Dependency-loss window restore", err)
-                }
-            }
-        }
-    }
-}
-
-
 ; =============================================================================
 ; command availability
 ; =============================================================================
@@ -224,7 +195,7 @@ HandleCascadeCommandMessage(command_id, parameter, message_id, target_hwnd)
     global cascade_command_close_active, cascade_command_close_scope
     global cascade_command_gather_to_monitor, cascade_command_show_help
     global cascade_command_move_monitor_left, cascade_command_move_monitor_right
-    global cascade_command_toggle_cascading
+    global cascade_disabled, cascade_toggle_in_progress
 
     ; HWND_BROADCAST also reaches script-owned GUIs. Run each command only
     ; once through AutoHotkey's hidden main window.
@@ -233,15 +204,19 @@ HandleCascadeCommandMessage(command_id, parameter, message_id, target_hwnd)
 
     if !IsCapsLockLayerRunning()
         return
-    CancelNewWindowFocus()
+    if cascade_toggle_in_progress
+        return
 
-    ; Script-level pause stays available even when window-management commands
-    ; are blocked by a maximized or fullscreen active window.
-    if command_id = cascade_command_toggle_cascading {
-        CancelPendingAdoptionUndo()
-        ToggleCascading()
+    ; Caps + M must be able to wake the cascade from any foreground window.
+    ; It is the only keyboard command accepted while the cascade is disabled.
+    if command_id = cascade_command_toggle_minimize {
+        ToggleCascadeDisabled()
         return
     }
+    if cascade_disabled
+        return
+
+    CancelNewWindowFocus()
 
     if ActiveWindowBlocksCascadeCommands()
         return
@@ -277,12 +252,6 @@ HandleCascadeCommandMessage(command_id, parameter, message_id, target_hwnd)
             direction := (parameter = -1 || parameter = 0xFFFFFFFF) ? -1 : 1
             RotateCascadeLayers(direction)
 
-        case cascade_command_toggle_minimize:
-            if parameter
-                ToggleAllCascadesMinimize()
-            else
-                ToggleCommandMonitorCascadeMinimize()
-
         case cascade_command_bring_forward:
             BringCommandMonitorCascadeForward()
 
@@ -292,10 +261,7 @@ HandleCascadeCommandMessage(command_id, parameter, message_id, target_hwnd)
             try WinClose("A")
 
         case cascade_command_close_scope:
-            if parameter
-                CloseCommandMonitorCascade()
-            else
-                CloseCurrentCascadeLayer()
+            CloseCommandMonitorCascade()
 
         case cascade_command_gather_to_monitor:
             GatherCascadesToCommandMonitor()
@@ -314,6 +280,9 @@ HandleCascadeCommandMessage(command_id, parameter, message_id, target_hwnd)
 
 CancelCascadePendingMouseActions(*)
 {
+    if !IsCascadeEnabled()
+        return
+
     CancelPendingAdoptionUndo()
     CancelNewWindowFocus()
 }

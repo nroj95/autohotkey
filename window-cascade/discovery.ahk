@@ -7,6 +7,9 @@
 
 CaptureDesktopMonitorHint()
 {
+    if !IsCascadeEnabled()
+        return
+
     global desktop_monitor_hint, desktop_monitor_hint_tick
 
     MouseGetPos(&mouse_x, &mouse_y, &hover_hwnd)
@@ -56,6 +59,9 @@ SeedStartupWindows()
 
 QueueWindowPlacement(hwnd, source_hwnd)
 {
+    if !IsCascadeEnabled()
+        return
+
     global pending_windows, known_windows, placement_delay_ms
 
     ; Once any discovery path adopts an HWND, the polling fallback no longer
@@ -103,11 +109,13 @@ QueueWindowPlacement(hwnd, source_hwnd)
 
 WatchForMissedWindows()
 {
+    if !IsCascadeEnabled()
+        return
+
     global known_windows
     global debug_enabled, debug_verbose_enabled
     global pending_windows, handled_windows
     global current_foreground_hwnd, previous_foreground_hwnd
-    global placement_enabled
 
     for hwnd in WinGetList() {
         if known_windows.Has(hwnd)
@@ -123,9 +131,6 @@ WatchForMissedWindows()
                 . " | " DebugDescribeWindow(hwnd)
             )
         }
-
-        if !placement_enabled
-            continue
 
         if pending_windows.Has(hwnd) || handled_windows.Has(hwnd)
             continue
@@ -153,10 +158,12 @@ WatchForMissedWindows()
 
 TryQueueForegroundFallback(hwnd)
 {
+    if !IsCascadeEnabled()
+        return
+
     global startup_windows
     global pending_windows, handled_windows
     global previous_foreground_hwnd
-    global placement_enabled
 
     if !hwnd
         return
@@ -164,9 +171,6 @@ TryQueueForegroundFallback(hwnd)
     ; Never adopt a window merely because it was already open when this script
     ; started.
     if startup_windows.Has(hwnd)
-        return
-
-    if !placement_enabled
         return
 
     if pending_windows.Has(hwnd) || handled_windows.Has(hwnd)
@@ -350,9 +354,13 @@ HandleWinEvent(
     global current_foreground_hwnd, previous_foreground_hwnd
     global pending_windows, handled_windows
     global startup_windows
-    global placement_enabled
     global desktop_monitor_hint, desktop_monitor_hint_tick
     global debug_enabled, debug_verbose_enabled
+
+    if !IsCascadeEnabled() {
+        HandleDisabledCascadeWinEvent(event, hwnd, object_id, child_id)
+        return
+    }
 
     try {
         EVENT_SYSTEM_FOREGROUND := 0x0003
@@ -485,10 +493,6 @@ HandleWinEvent(
             return
 
 
-        if !placement_enabled {
-            return
-        }
-
         if pending_windows.Has(hwnd) {
             return
         }
@@ -569,7 +573,6 @@ ForgetWindow(hwnd)
         previous_foreground_hwnd := 0
 
     RemoveWindowFromMinimizeState(hwnd)
-    NormalizeAllCascadesMinimizedState()
 
     RemoveCascadeWindowFromHistory(hwnd)
     ForgetCascadeMinimizedObservation(hwnd)
