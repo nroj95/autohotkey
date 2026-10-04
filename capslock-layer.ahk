@@ -793,14 +793,15 @@ ActiveWindowBlocksLayerTip()
 ShowCapsLockLayerHelp(*)
 {
     static help_gui := 0
+    static help_icons := []
 
     if help_gui {
-        try help_gui.Destroy()
-        help_gui := 0
+        CloseHelp()
         return
     }
 
     help_gui := Gui("+AlwaysOnTop", "CapsLock Layer")
+    help_icons := SetCapsLockLayerHelpIcons(help_gui)
     help_gui.SetFont("s10", "Cascadia Mono")
 
     help_text :=
@@ -836,7 +837,59 @@ ShowCapsLockLayerHelp(*)
     CloseHelp(*) {
         try help_gui.Destroy()
         help_gui := 0
+
+        for icon_handle in help_icons
+            DllCall("DestroyIcon", "ptr", icon_handle, "int")
+
+        help_icons := []
     }
+}
+
+SetCapsLockLayerHelpIcons(help_gui)
+{
+    icon_handles := []
+    icon_path := A_ScriptDir "\icons\capslock-layer.ico"
+
+    if !FileExist(icon_path)
+        return icon_handles
+
+    try {
+        for icon_index, size in [16, 32] {
+            image_type := 0
+            icon_handle := LoadPicture(
+                icon_path,
+                "Icon1 w" size " h" size,
+                &image_type
+            )
+
+            if !icon_handle
+                continue
+
+            if image_type != 1 {
+                DllCall(
+                    image_type = 2 ? "DestroyCursor" : "DeleteObject",
+                    "ptr",
+                    icon_handle,
+                    "int"
+                )
+                continue
+            }
+
+            icon_handles.Push(icon_handle)
+
+            SendMessage(
+                0x0080,
+                icon_index - 1,
+                icon_handle,
+                ,
+                help_gui.Hwnd
+            )
+        }
+    }
+    catch {
+    }
+
+    return icon_handles
 }
 
 
