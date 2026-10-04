@@ -197,8 +197,11 @@ ShowRecommendedSetup(*)
     else
         snap_status := "Unknown"
 
-    screengrid_status := IsScreenGridRunning() ? "Running" : "Not running"
-    fancyzones_status := IsFancyZonesRunning() ? "Running" : "Not running"
+    screengrid_running := IsScreenGridRunning()
+    fancyzones_running := IsFancyZonesRunning()
+
+    screengrid_status := screengrid_running ? "Running" : "Not running"
+    fancyzones_status := fancyzones_running ? "Running" : "Not running"
 
     setup_gui := Gui("+AlwaysOnTop", "Recommended setup")
     setup_gui.MarginX := 20
@@ -222,15 +225,18 @@ ShowRecommendedSetup(*)
 
     setup_gui.AddText("xm y+8 w120", "Windows Snap")
     setup_gui.AddText("x+10 yp w120", "Off")
-    setup_gui.AddText("x+10 yp w120", snap_status)
+    snap_current := setup_gui.AddText("x+10 yp w120", snap_status)
+    snap_current.SetFont(snap_state = 0 ? "c008000" : "cC00000")
 
     setup_gui.AddText("xm y+8 w120", "ScreenGrid")
-    setup_gui.AddText("x+10 yp w120", "Running")
-    setup_gui.AddText("x+10 yp w120", screengrid_status)
+    setup_gui.AddText("x+10 yp w120", "On")
+    screengrid_current := setup_gui.AddText("x+10 yp w120", screengrid_status)
+    screengrid_current.SetFont(screengrid_running ? "c008000" : "cC00000")
 
     setup_gui.AddText("xm y+8 w120", "FancyZones")
     setup_gui.AddText("x+10 yp w120", "Off")
-    setup_gui.AddText("x+10 yp w120", fancyzones_status)
+    fancyzones_current := setup_gui.AddText("x+10 yp w120", fancyzones_status)
+    fancyzones_current.SetFont(fancyzones_running ? "cC00000" : "c008000")
 
     snap_button := setup_gui.AddButton(
         "xm y+20 w185",
@@ -251,7 +257,7 @@ ShowRecommendedSetup(*)
     fancyzones_button.OnEvent("Click", CheckFancyZonesFromSetup)
 
     close_button := setup_gui.AddButton(
-        "xm y+18 w380 Default",
+        "xm y+18 w380",
         "Close"
     )
     close_button.OnEvent("Click", CloseSetup)

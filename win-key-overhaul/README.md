@@ -78,7 +78,7 @@ each edge has an independent restore position. repeating its shortcut restores t
 
 ## startup and optional tools
 
-the tray's **Recommended setup** command opens a small GUI showing the preferred stack and the detected current state: Windows Snap off, ScreenGrid running for drag snapping, and FancyZones off. it also provides direct access to Windows Snap settings, ScreenGrid's GitHub releases, and the optional FancyZones compatibility check.
+the tray's **Recommended setup** command opens a small GUI showing the preferred stack and the detected current state: Windows Snap off, ScreenGrid on for drag snapping, and FancyZones off. it also provides direct access to Windows Snap settings, ScreenGrid's GitHub releases, and the optional FancyZones compatibility check.
 
 startup queries native Windows Snap with `SPI_GETWINARRANGING`. when enabled, a confirmation offers to disable it with `SPI_SETWINARRANGING`, persisting and broadcasting the change. declining changes nothing. **Windows Snap settings** in the **Recommended setup** GUI opens the Windows Multitasking page.
 
