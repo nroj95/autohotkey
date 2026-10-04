@@ -387,7 +387,7 @@ class ScratchpadController
         ; A separate profile prevents session/settings writes to ordinary Notepad++.
         ; Tray startup avoids showing the editor before the drawer is positioned.
         command_line := '"' notepad_executable '" -multiInst -nosession -noPlugin'
-            . ' -notabbar -systemtray -settingsDir="' this.profile_directory '"'
+            . ' -notabbar -settingsDir="' this.profile_directory '"'
             . ' -titleAdd="scratchpad" "' initial_path '"'
         Run command_line, this.scratch_directory, "Hide", &notepad_pid
         candidate := WinWait("ahk_class Notepad++ ahk_pid " notepad_pid, , 12)
@@ -907,7 +907,7 @@ class ScratchpadController
         A_TrayMenu.Add("Run at startup", ObjBindMethod(this, "ToggleStartup"))
         A_TrayMenu.Add()
         A_TrayMenu.Add("Reload", (*) => Reload())
-        A_TrayMenu.Add("Exit (keep editor open)", (*) => ExitApp())
+        A_TrayMenu.Add("Exit", ObjBindMethod(this, "ExitScratchpad"))
         this.UpdateTrayChecks()
     }
 
@@ -1003,6 +1003,38 @@ class ScratchpadController
 
             help_icons := []
         }
+    }
+
+    ExitScratchpad(*)
+    {
+        if this.HasWindow() {
+            try {
+                if !this.bridge || this.bridge.tainted
+                    this.ConnectBridge()
+
+                this.SaveCurrentPage()
+
+                ; Explicit Exit owns the editor too: leave no hidden scratch process.
+                target_hwnd := this.window_hwnd
+                DllCall("SetWindowRgn", "ptr", target_hwnd, "ptr", 0, "int", true)
+                WinSetAlwaysOnTop false, "ahk_id " target_hwnd
+                WinClose "ahk_id " target_hwnd
+
+                try WinWaitClose "ahk_id " target_hwnd, , 5
+
+                if DllCall("IsWindow", "ptr", target_hwnd, "int")
+                    throw Error("Notepad++ did not close. Resolve any editor dialog, then try Exit again.")
+
+                this.window_hwnd := 0
+                this.bridge := 0
+            }
+            catch as failure {
+                MsgBox failure.Message, "Scratchpad", "Iconx 4096"
+                return
+            }
+        }
+
+        ExitApp
     }
 
     OnScriptExit(exit_reason, exit_code)
