@@ -179,6 +179,101 @@ OpenWindowsSnapSettings(*)
     Run("ms-settings:multitasking")
 }
 
+ShowRecommendedSetup(*)
+{
+    static setup_gui := 0
+
+    if setup_gui {
+        try setup_gui.Destroy()
+        setup_gui := 0
+        return
+    }
+
+    snap_state := GetNativeWindowsSnapState()
+    if snap_state = 0
+        snap_status := "Off"
+    else if snap_state = 1
+        snap_status := "On"
+    else
+        snap_status := "Unknown"
+
+    screengrid_status := IsScreenGridRunning() ? "Running" : "Not running"
+    fancyzones_status := IsFancyZonesRunning() ? "Running" : "Not running"
+
+    setup_gui := Gui("+AlwaysOnTop", "Recommended setup")
+    setup_gui.MarginX := 20
+    setup_gui.MarginY := 18
+
+    setup_gui.SetFont("s11 Bold")
+    setup_gui.AddText("xm", "Recommended setup")
+
+    setup_gui.SetFont("s9 Norm")
+    setup_gui.AddText(
+        "xm y+8 w380",
+        "Use one drag-snapping tool at a time."
+    )
+
+    setup_gui.SetFont("s9 Bold")
+    setup_gui.AddText("xm y+18 w120", "Tool")
+    setup_gui.AddText("x+10 yp w120", "Recommended")
+    setup_gui.AddText("x+10 yp w120", "Current")
+
+    setup_gui.SetFont("s9 Norm")
+
+    setup_gui.AddText("xm y+8 w120", "Windows Snap")
+    setup_gui.AddText("x+10 yp w120", "Off")
+    setup_gui.AddText("x+10 yp w120", snap_status)
+
+    setup_gui.AddText("xm y+8 w120", "ScreenGrid")
+    setup_gui.AddText("x+10 yp w120", "Running")
+    setup_gui.AddText("x+10 yp w120", screengrid_status)
+
+    setup_gui.AddText("xm y+8 w120", "FancyZones")
+    setup_gui.AddText("x+10 yp w120", "Off")
+    setup_gui.AddText("x+10 yp w120", fancyzones_status)
+
+    snap_button := setup_gui.AddButton(
+        "xm y+20 w185",
+        "Windows Snap settings"
+    )
+    snap_button.OnEvent("Click", OpenWindowsSnapSettings)
+
+    screengrid_button := setup_gui.AddButton(
+        "x+10 yp w185",
+        "ScreenGrid on GitHub"
+    )
+    screengrid_button.OnEvent("Click", OpenScreenGridReleases)
+
+    fancyzones_button := setup_gui.AddButton(
+        "xm y+10 w380",
+        "Check FancyZones compatibility"
+    )
+    fancyzones_button.OnEvent("Click", CheckFancyZonesFromSetup)
+
+    close_button := setup_gui.AddButton(
+        "xm y+18 w380 Default",
+        "Close"
+    )
+    close_button.OnEvent("Click", CloseSetup)
+
+    setup_gui.OnEvent("Close", CloseSetup)
+    setup_gui.OnEvent("Escape", CloseSetup)
+    setup_gui.Show()
+
+    CheckFancyZonesFromSetup(*)
+    {
+        ; Keep compatibility prompts modal to and above this AlwaysOnTop GUI.
+        setup_gui.Opt("+OwnDialogs")
+        CheckFancyZonesIntegration()
+    }
+
+    CloseSetup(*)
+    {
+        setup_gui.Destroy()
+        setup_gui := 0
+    }
+}
+
 ; =============================================================================
 ; optional ScreenGrid recommendation
 ; =============================================================================
