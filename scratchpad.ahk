@@ -510,7 +510,7 @@ class ScratchpadController
     {
         if !DllCall("IsWindowEnabled", "ptr", this.window_hwnd, "int")
             throw Error("Finish or cancel the open Notepad++ dialog before using a scratchpad command.")
-        if this.bridge.Send(2031, 0, 0) != 1 { ; NPPM_GETNBOPENFILES / ALL_OPEN_FILES
+        if this.bridge.OpenBufferCount() != 1 {
             this.bridge.Send(2075, 0, false) ; NPPM_HIDETABBAR
             throw Error("The scratch window contains extra tabs. Close those tabs manually first; the scratchpad will not close or save unrelated documents.")
         }
@@ -632,7 +632,7 @@ class ScratchpadController
             throw Error("The previous page changed during switching. Both tabs have been kept open.")
         this.bridge.MenuCommand(41003) ; IDM_FILE_CLOSE -- never Close All.
 
-        if this.bridge.Send(2031, 0, 0) != 1
+        if this.bridge.OpenBufferCount() != 1
             throw Error("The old tab was not closed. Resolve any Notepad++ dialog; both pages have been kept.")
         if this.bridge.Send(2084) != new_buffer_id
             throw Error("The new page was not retained as expected. Inspect the open tab before continuing.")
@@ -880,7 +880,7 @@ class ScratchpadController
             WinMove bounds.x, bounds.y, bounds.w, bounds.h, "ahk_id " this.window_hwnd
             WinShow "ahk_id " this.window_hwnd
             this.FocusEditor()
-            if this.bridge && !this.bridge.tainted && this.bridge.Send(2031, 0, 0) != 1
+            if this.bridge && !this.bridge.tainted && this.bridge.OpenBufferCount() != 1
                 this.bridge.Send(2075, 0, false)
         }
     }
@@ -1154,6 +1154,36 @@ class NotepadBridge
         if !this.Send(message, 0, this.remote_pointer)
             throw Error("Could not read the requested Notepad++ editor state.")
         return NumGet(this.ReadRemote(4), 0, "int")
+    }
+
+    OpenBufferCount()
+    {
+        buffer_ids := Map()
+
+        ; Notepad++ keeps a dummy document in the hidden view.
+        ; Count buffers only in views that are actually exposed to the user.
+        for view_info in [[0, 1], [1, 2]] {
+            view_index := view_info[1]
+            count_type := view_info[2]
+
+            if this.Send(2047, 0, view_index) < 0 ; NPPM_GETCURRENTDOCINDEX
+                continue
+
+            file_count := this.Send(2031, 0, count_type) ; NPPM_GETNBOPENFILES
+
+            Loop file_count {
+                buffer_id := this.Send(
+                    2083,           ; NPPM_GETBUFFERIDFROMPOS
+                    A_Index - 1,
+                    view_index
+                )
+
+                if buffer_id
+                    buffer_ids[buffer_id] := true
+            }
+        }
+
+        return buffer_ids.Count
     }
 
     ScintillaHwnd()
