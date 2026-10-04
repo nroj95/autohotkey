@@ -132,6 +132,7 @@ class ScratchpadController
         this.previous_window := 0
         this.last_bounds := 0
         this.window_marker := "nroj.Scratchpad.NotepadWindow"
+        this.cascade_ignore_marker := "nroj.WindowCascade.Ignore"
         this.controller_title := "nroj.Scratchpad.Controller"
         this.data_directory := EnvGet("LOCALAPPDATA") "\Scratchpad"
         this.settings_path := this.data_directory "\settings.ini"
@@ -354,6 +355,8 @@ class ScratchpadController
         for candidate in WinGetList("ahk_class Notepad++") {
             if DllCall("GetPropW", "ptr", candidate, "str", this.window_marker, "ptr") {
                 this.window_hwnd := candidate
+                if !DllCall("SetPropW", "ptr", candidate, "str", this.cascade_ignore_marker, "ptr", 1, "int")
+                    throw OSError(A_LastError, "SetPropW")
                 this.ConnectBridge()
                 path := this.bridge.GetCurrentPath()
                 saved_path := IniRead(this.state_path, "CurrentPage", "Path", "")
@@ -393,6 +396,8 @@ class ScratchpadController
 
         this.window_hwnd := candidate
         if !DllCall("SetPropW", "ptr", candidate, "str", this.window_marker, "ptr", 1, "int")
+            throw OSError(A_LastError, "SetPropW")
+        if !DllCall("SetPropW", "ptr", candidate, "str", this.cascade_ignore_marker, "ptr", 1, "int")
             throw OSError(A_LastError, "SetPropW")
         this.current_path := ""
         this.disk_stamp := ""

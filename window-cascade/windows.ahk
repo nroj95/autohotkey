@@ -5,12 +5,26 @@
 ; window filtering
 ; =============================================================================
 
+IsIgnoredByWindowCascade(hwnd)
+{
+    if !hwnd
+        return false
+
+    if !DllCall("IsWindow", "ptr", hwnd, "int")
+        return false
+
+    return !!DllCall("GetPropW", "ptr", hwnd, "str", "nroj.WindowCascade.Ignore", "ptr")
+}
+
 IsPlausibleTopLevelWindow(hwnd)
 {
     if !hwnd
         return false
 
     if !DllCall("IsWindow", "ptr", hwnd, "int")
+        return false
+
+    if IsIgnoredByWindowCascade(hwnd)
         return false
 
     ; Reject child controls before doing any higher-level AutoHotkey queries.
@@ -65,6 +79,10 @@ IsCascadeWindow(hwnd)
     }
 
     if !DllCall("IsWindowVisible", "ptr", hwnd, "int") {
+        return false
+    }
+
+    if IsIgnoredByWindowCascade(hwnd) {
         return false
     }
 
