@@ -15,7 +15,7 @@ turns CapsLock into an extra left-hand modifier layer.
 - tap CapsLock to arm the layer for one keypress
 - the one-shot layer expires after 1.4 seconds
 - double-tap Left Shift to toggle normal CapsLock
-- owns the companion-command namespace used by Window Cascade and Window Hotkeys
+- owns the companion-command namespace used by Window Cascade and Windows Key Overhaul
 
 open the tray menu and choose **How to use** for the CapsLock Layer help page.
 
@@ -81,24 +81,29 @@ focus-tab colors can be configured from the tray separately for the active and i
 
 Window Cascade runs as its own process but requires `capslock-layer.ahk` for its keyboard command bindings.
 
-### `window-hotkeys.ahk`
+### `windows-key-overhaul.ahk`
 
-custom Win-key window management intended to be more predictable than the default Windows Snap behavior.
+replaces selected native Win-key shortcuts with predictable custom window management.
 
 features include:
 
-- maximize, minimize, and restore behavior
-- half, third, and quarter-screen layouts
-- horizontal and vertical window stretching
+- quarter- and half-width side and corner layout cycles
+- centered and offset top/bottom layouts
+- restore-to-normal and minimize shortcuts
+- collision-aware horizontal stretching
+- full-height vertical stretching
 - borderless fullscreen
-- spatial window movement and focus
+- clockwise and counter-clockwise window swapping
+- spatial focus navigation
 - Windows accent-color focus indicators
-- minimize/restore-all behavior
+- isolate and minimize/restore-all behavior
 - cycling running Steam games
+- optional FancyZones compatibility
+- optional ScreenGrid recommendation
 
-`Ctrl + Win + H` toggles the Window Hotkeys help page.
+`Ctrl + Win + H` toggles the Windows Key Overhaul help page.
 
-Window Hotkeys runs independently of Window Cascade and does not require `capslock-layer.ahk`. when CapsLock Layer is running, it adds companion controls for spatial focus and Steam cycling.
+Windows Key Overhaul runs independently of Window Cascade and does not require `capslock-layer.ahk`. CapsLock Layer can still provide the legacy companion aliases for spatial focus and Steam cycling.
 
 ## requirements
 
@@ -107,9 +112,9 @@ Window Hotkeys runs independently of Window Cascade and does not require `capslo
 
 ## usage
 
-run root-level `.ahk` launchers rather than module files inside `window-cascade/` or `window-hotkeys/`.
+run root-level `.ahk` launchers rather than module files inside `window-cascade/` or `windows-key-overhaul/`.
 
-start `capslock-layer.ahk` before `window-cascade.ahk`. Window Hotkeys and the other utilities can run independently unless their own documentation says otherwise.
+start `capslock-layer.ahk` before `window-cascade.ahk`. Windows Key Overhaul and the other utilities can run independently unless their own documentation says otherwise.
 
 each main script provides a tray menu with its own controls and a **Run at startup** option where applicable.
 

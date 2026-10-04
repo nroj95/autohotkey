@@ -1,12 +1,15 @@
-; Internal Window Hotkeys module. Launch ..\window-hotkeys.ahk instead.
+; Internal Windows Key Overhaul module. Launch ..\windows-key-overhaul.ahk instead.
 ; Included into the same script; functions share the existing global state.
 
 ; =============================================================================
-; clockwise window swapping
+; clockwise / counter-clockwise window swapping
 ; =============================================================================
 
-SwapWindowClockwise()
+SwapWindow(direction := "clockwise")
 {
+    Critical "On"
+    if direction != "clockwise" && direction != "counter-clockwise"
+        return
     hwnd := GetWindowControlTarget()
 
     if !hwnd
@@ -59,15 +62,18 @@ SwapWindowClockwise()
         if !active_index
             return
 
-        next_index := (
-            active_index = windows.Length
-            ? 1
-            : active_index + 1
+        next_index := GetNextCycleIndex(
+            active_index, windows.Length, direction = "counter-clockwise"
         )
 
         target_hwnd := windows[next_index]["hwnd"]
 
+        RememberNormalWindowPlacement(target_hwnd)
         SwapWindowRectangles(hwnd, target_hwnd)
+        ForgetHorizontalStretch(target_hwnd)
+        ForgetVerticalStretch(target_hwnd)
+        ForgetWindowLayoutCycle(hwnd)
+        ForgetWindowLayoutCycle(target_hwnd)
 
         WinActivate(window)
     }
@@ -82,7 +88,7 @@ GetClockwiseWindowOrder(
     items := []
 
     for hwnd in WinGetList() {
-        if !IsClockwiseSwapCandidate(hwnd, monitor_handle)
+        if !IsWindowSwapCandidate(hwnd, monitor_handle)
             continue
 
         try {
@@ -114,7 +120,9 @@ GetClockwiseWindowOrder(
         insert_index := items.Length + 1
 
         Loop items.Length {
-            if angle < items[A_Index]["angle"] {
+            if angle < items[A_Index]["angle"]
+                || (angle = items[A_Index]["angle"] && hwnd < items[A_Index]["hwnd"])
+            {
                 insert_index := A_Index
                 break
             }
@@ -144,7 +152,7 @@ GetClockwiseAngleFromTop(delta_x, delta_y)
     return angle
 }
 
-IsClockwiseSwapCandidate(hwnd, monitor_handle)
+IsWindowSwapCandidate(hwnd, monitor_handle)
 {
     global borderless_windows
 
@@ -201,10 +209,10 @@ IsClockwiseSwapCandidate(hwnd, monitor_handle)
     if DllCall("GetWindow", "ptr", hwnd, "uint", 4, "ptr") ; GW_OWNER
         return false
 
-    if IsWindowHotkeysShellClass(class_name)
+    if IsWindowsKeyOverhaulShellClass(class_name)
         return false
 
-    if IsWindowHotkeysCloaked(hwnd)
+    if IsWindowsKeyOverhaulCloaked(hwnd)
         return false
 
     candidate_monitor := DllCall(

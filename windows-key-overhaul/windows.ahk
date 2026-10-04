@@ -1,4 +1,4 @@
-; Internal Window Hotkeys module. Launch ..\window-hotkeys.ahk instead.
+; Internal Windows Key Overhaul module. Launch ..\windows-key-overhaul.ahk instead.
 ; Included into the same script; functions share the existing global state.
 
 ; =============================================================================
@@ -51,16 +51,16 @@ IsWindowToggleCandidate(hwnd)
     if DllCall("GetWindow", "ptr", hwnd, "uint", 4, "ptr") ; GW_OWNER
         return false
 
-    if IsWindowHotkeysShellClass(class_name)
+    if IsWindowsKeyOverhaulShellClass(class_name)
         return false
 
-    if IsWindowHotkeysCloaked(hwnd)
+    if IsWindowsKeyOverhaulCloaked(hwnd)
         return false
 
     return true
 }
 
-IsWindowHotkeysCloaked(hwnd)
+IsWindowsKeyOverhaulCloaked(hwnd)
 {
     cloaked := 0
 
@@ -76,7 +76,7 @@ IsWindowHotkeysCloaked(hwnd)
     return result = 0 && cloaked != 0
 }
 
-IsWindowHotkeysShellClass(class_name)
+IsWindowsKeyOverhaulShellClass(class_name)
 {
     return (
         class_name = "Shell_TrayWnd"
@@ -320,4 +320,44 @@ FindWindowIndex(windows, target_hwnd)
     }
 
     return 0
+}
+
+; =============================================================================
+; visible-frame placement
+; =============================================================================
+
+MoveWindowToVisibleRectangle(hwnd, target)
+{
+    if target[3] <= 0 || target[4] <= 0
+        return false
+
+    try {
+        WinGetPos(&raw_x, &raw_y, &raw_width, &raw_height, hwnd)
+        if !GetVisibleWindowBounds(hwnd, &visible_x, &visible_y, &visible_width, &visible_height) {
+            visible_x := raw_x
+            visible_y := raw_y
+            visible_width := raw_width
+            visible_height := raw_height
+        }
+
+        ; DWM's visible frame excludes the invisible resize borders. Compensate
+        ; for all four so tiled windows visually meet the requested boundaries.
+        inset_left := visible_x - raw_x
+        inset_top := visible_y - raw_y
+        inset_right := raw_x + raw_width - visible_x - visible_width
+        inset_bottom := raw_y + raw_height - visible_y - visible_height
+        WinMove(
+            target[1] - inset_left,
+            target[2] - inset_top,
+            target[3] + inset_left + inset_right,
+            target[4] + inset_top + inset_bottom,
+            hwnd
+        )
+        Sleep 10
+        return true
+    }
+    catch Error as err {
+        DebugError("Move visible window rectangle", err)
+        return false
+    }
 }

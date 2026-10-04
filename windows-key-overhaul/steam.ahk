@@ -1,12 +1,15 @@
-; Internal Window Hotkeys module. Launch ..\window-hotkeys.ahk instead.
+; Internal Windows Key Overhaul module. Launch ..\windows-key-overhaul.ahk instead.
 ; Included into the same script; functions share the existing global state.
 
 ; =============================================================================
 ; Steam command and cycle state
 ; =============================================================================
 
-HandleSteamGameCycleMessage(*)
+HandleSteamGameCycleMessage(command_id, parameter, message_id, target_hwnd)
 {
+    if target_hwnd != A_ScriptHwnd
+        return
+
     DebugLog(
         "Steam cycle command received."
         . " | ahk-active=" DebugDescribeWindow(WinExist("A"))
@@ -23,6 +26,9 @@ HandleSteamGameCycleMessage(*)
 
 CycleSteamGames()
 {
+    Critical "On"
+    ForgetLastMinimizedWindow()
+
     global steam_game_cycle, last_steam_game_hwnd
     global steam_return_hwnd
 
@@ -129,7 +135,7 @@ CycleSteamGames()
     }
 
     ; This is the important path when another application was clicked before
-    ; Caps+G. Record exactly what Window Hotkeys believes that application is.
+    ; Shift+Win+G. Record exactly what Windows Key Overhaul believes that application is.
     if IsSteamReturnWindow(active_hwnd, 0) {
         steam_return_hwnd := active_hwnd
 
@@ -294,7 +300,7 @@ IsSteamGameWindow(hwnd)
     if DllCall("GetWindow", "ptr", hwnd, "uint", 4, "ptr")
         return false
 
-    if IsWindowHotkeysShellClass(class_name)
+    if IsWindowsKeyOverhaulShellClass(class_name)
         return false
 
     if width < 1 || height < 1

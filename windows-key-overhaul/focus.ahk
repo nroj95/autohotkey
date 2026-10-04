@@ -1,4 +1,4 @@
-; Internal Window Hotkeys module. Launch ..\window-hotkeys.ahk instead.
+; Internal Windows Key Overhaul module. Launch ..\windows-key-overhaul.ahk instead.
 ; Included into the same script; functions share the existing global state.
 
 ; =============================================================================

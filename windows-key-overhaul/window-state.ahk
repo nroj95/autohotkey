@@ -1,4 +1,4 @@
-; Internal Window Hotkeys module. Launch ..\window-hotkeys.ahk instead.
+; Internal Windows Key Overhaul module. Launch ..\windows-key-overhaul.ahk instead.
 ; Included into the same script; functions share the existing global state.
 
 ; =============================================================================
@@ -7,11 +7,11 @@
 
 ToggleOtherWindows()
 {
-    global home_minimized_windows, home_active_hwnd
+    global isolation_minimized_windows, isolation_active_hwnd
 
     ToggleMinimizedWindowGroup(
-        &home_minimized_windows,
-        &home_active_hwnd,
+        &isolation_minimized_windows,
+        &isolation_active_hwnd,
         true
     )
 }
@@ -38,7 +38,7 @@ ToggleMinimizedWindowGroup(
         minimized_windows := []
         saved_active_hwnd := 0
 
-        ; Preserve the existing order: Win+Home restores front-to-back;
+        ; Preserve the existing order: Shift+Win+Home restores front-to-back;
         ; Win+M restores back-to-front before returning focus.
         Loop windows_to_restore.Length {
             index := (
@@ -186,32 +186,81 @@ MinimizeActiveWindow()
 
 RestoreWindowTarget()
 {
+    Critical "On"
     global borderless_windows
 
     hwnd := GetWindowControlTarget()
-
     if !hwnd
         return
 
-    ForgetHorizontalStretch(hwnd)
-    ForgetVerticalStretch(hwnd)
-
-    window := "ahk_id " hwnd
-
     try {
-        if borderless_windows.Has(hwnd) {
+        if borderless_windows.Has(hwnd)
             RestoreBorderlessWindow(hwnd, false, true)
-            WinActivate(window)
-            return
+
+        if !RestoreNormalWindowPlacement(hwnd) {
+            WinRestore(hwnd)
+            ; A minimized maximized window may first restore maximized.
+            if WinGetMinMax(hwnd) = 1
+                WinRestore(hwnd)
         }
 
-        WinRestore(window)
-
-        ; A window minimized while maximized can return to maximized first.
-        ; Win+Backspace always means ordinary windowed state.
-        if WinGetMinMax(window) = 1
-            WinRestore(window)
-
-        WinActivate(window)
+        ForgetHorizontalStretch(hwnd)
+        ForgetVerticalStretch(hwnd)
+        ForgetWindowLayoutCycle(hwnd)
+        WinActivate(hwnd)
     }
+    catch Error as err {
+        DebugError("Restore normal window", err)
+    }
+}
+
+; =============================================================================
+; normal rectangle before script-managed placement or stretch
+; =============================================================================
+
+RememberNormalWindowPlacement(hwnd)
+{
+    global normal_window_placements, borderless_windows
+    process_id := WinGetPID(hwnd)
+    work_area := GetLayoutWorkArea(hwnd)
+
+    if normal_window_placements.Has(hwnd) {
+        saved := normal_window_placements[hwnd]
+        if saved["pid"] = process_id
+            && RectanglesMatch(saved["work_area"], work_area, 0)
+        {
+            return
+        }
+        normal_window_placements.Delete(hwnd)
+    }
+
+    ; A borderless window's live rectangle is fullscreen, not its normal one.
+    placement := borderless_windows.Has(hwnd)
+        ? borderless_windows[hwnd]["placement"]
+        : CaptureWindowPlacement(hwnd)
+
+    normal_window_placements[hwnd] := Map(
+        "pid", process_id, "work_area", work_area, "placement", placement
+    )
+}
+
+RestoreNormalWindowPlacement(hwnd)
+{
+    global normal_window_placements
+    if !normal_window_placements.Has(hwnd)
+        return false
+
+    saved := normal_window_placements[hwnd]
+    if saved["pid"] != WinGetPID(hwnd)
+        || !RectanglesMatch(saved["work_area"], GetLayoutWorkArea(hwnd), 0)
+    {
+        ; Do not pull a manually moved window back to an old monitor or restore
+        ; stale coordinates after a work-area/resolution change.
+        normal_window_placements.Delete(hwnd)
+        return false
+    }
+
+    ApplyWindowPlacement(hwnd, saved["placement"], 1) ; SW_SHOWNORMAL
+    normal_window_placements.Delete(hwnd)
+    return true
 }

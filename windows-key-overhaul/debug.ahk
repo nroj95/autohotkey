@@ -1,4 +1,4 @@
-; Internal Window Hotkeys module. Launch ..\window-hotkeys.ahk instead.
+; Internal Windows Key Overhaul module. Launch ..\windows-key-overhaul.ahk instead.
 ; Included into the same script; functions share the existing global state.
 
 ; =============================================================================
@@ -25,13 +25,15 @@ InitializeDebugLogging()
         )
     }
 
-    OnError(LogWindowHotkeysUnhandledError)
+    OnError(LogWindowsKeyOverhaulUnhandledError)
 
     DebugLogSession("started")
 }
 
-HandleDebugResetLogsMessage(*)
+HandleDebugResetLogsMessage(command_id, parameter, message_id, target_hwnd)
 {
+    if target_hwnd != A_ScriptHwnd
+        return
     ResetDebugLog()
 }
 
@@ -119,7 +121,7 @@ DebugError(context, err)
         )
 }
 
-LogWindowHotkeysUnhandledError(err, mode)
+LogWindowsKeyOverhaulUnhandledError(err, mode)
 {
     DebugError(
         "Unhandled error, mode=" mode,
@@ -196,7 +198,7 @@ DebugDescribeWindow(hwnd)
     cloaked := false
 
     try cloaked :=
-        IsWindowHotkeysCloaked(hwnd)
+        IsWindowsKeyOverhaulCloaked(hwnd)
 
     return (
         "hwnd=" hwnd

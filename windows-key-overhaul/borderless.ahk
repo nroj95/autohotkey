@@ -1,4 +1,4 @@
-; Internal Window Hotkeys module. Launch ..\window-hotkeys.ahk instead.
+; Internal Windows Key Overhaul module. Launch ..\windows-key-overhaul.ahk instead.
 ; Included into the same script; functions share the existing global state.
 
 ; =============================================================================
@@ -329,7 +329,7 @@ PruneSuspendedBorderlessSteamWindows()
                 remove_entry := true
             }
 
-            ; If something other than Caps+G already restored the window,
+            ; If something other than Shift+Win+G already restored the window,
             ; borderless suspension no longer owns its next restore.
             if !remove_entry
                 && !DllCall(

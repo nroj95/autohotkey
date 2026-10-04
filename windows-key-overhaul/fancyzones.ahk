@@ -1,0 +1,204 @@
+; Internal Windows Key Overhaul module. Launch ..\windows-key-overhaul.ahk.
+
+; =============================================================================
+; startup detection and explicit compatibility setup
+; =============================================================================
+
+CheckFancyZonesStartup(*)
+{
+    static previous_process_id := 0
+    process_id := ProcessExist("PowerToys.FancyZones.exe")
+    if process_id = previous_process_id
+        return
+    previous_process_id := process_id
+    if !process_id
+        return
+
+    CheckFancyZonesIntegration()
+    ; FancyZones may install its hook just after its process first appears.
+    SetTimer(ReassertFancyZonesKeyboardHook, -1000)
+}
+
+ReassertFancyZonesKeyboardHook(*)
+{
+    if IsFancyZonesRunning()
+        InstallKeybdHook(true, true)
+}
+
+CheckFancyZonesIntegration(*)
+{
+    global fancyzones_integration_state, fancyzones_check_in_progress
+    if fancyzones_check_in_progress
+        return
+
+    if !IsFancyZonesRunning() {
+        MsgBox("FancyZones is not running. No settings were changed.", "Windows Key Overhaul", "Iconi")
+        return
+    }
+
+    fancyzones_check_in_progress := true
+    try {
+        state := ReadFancyZonesIntegrationState()
+        fancyzones_integration_state := state
+        if !state {
+            MsgBox(
+                "The FancyZones settings could not be read.`n`n"
+                . "Configure Override Windows Snap, Relative position, and "
+                . "Alt + Win + PgUp/PgDn manually in PowerToys.",
+                "Windows Key Overhaul", "Icon!"
+            )
+            return
+        }
+        if FancyZonesArrowsReady(state) && FancyZonesSwitchingReady(state)
+            return
+
+        response := MsgBox(
+            "Set up the optional FancyZones shortcuts?`n`n"
+            . "Alt + Win + Arrow: move between zones`n"
+            . "Alt + Win + PgUp: previous window in the current zone`n"
+            . "Alt + Win + PgDn: next window in the current zone`n`n"
+            . "This enables Override Windows Snap, Relative position, and "
+            . "zone-window switching, and replaces the two switching shortcuts. "
+            . "Layouts and unrelated settings stay unchanged.`n`n"
+            . "Close PowerToys Settings before choosing Yes. An exact backup "
+            . "will be saved beside settings.json. No leaves everything unchanged.",
+            "Windows Key Overhaul", "YesNo Default2 Icon?"
+        )
+        if response != "Yes"
+            return
+
+        state := ReadFancyZonesIntegrationState("Apply")
+        if state && FancyZonesArrowsReady(state) && FancyZonesSwitchingReady(state) {
+            fancyzones_integration_state := state
+        } else {
+            MsgBox(
+                "FancyZones setup could not be completed. Check the debug log "
+                . "or configure the shortcuts manually in PowerToys.",
+                "Windows Key Overhaul", "Icon!"
+            )
+        }
+    }
+    finally {
+        fancyzones_check_in_progress := false
+        ; Keep bare Win+Arrow in this script even when FancyZones starts later.
+        ReassertFancyZonesKeyboardHook()
+    }
+}
+
+IsFancyZonesRunning()
+{
+    return !!ProcessExist("PowerToys.FancyZones.exe")
+}
+
+FancyZonesArrowsReady(state)
+{
+    return state && state.override_snap_enabled && state.relative_position_enabled
+}
+
+FancyZonesSwitchingReady(state)
+{
+    return state && state.window_switching_enabled
+        && IsDesiredFancyZonesHotkey(state.previous_hotkey, 33)
+        && IsDesiredFancyZonesHotkey(state.next_hotkey, 34)
+}
+
+IsDesiredFancyZonesHotkey(hotkey, code)
+{
+    return hotkey.win && hotkey.alt && !hotkey.ctrl && !hotkey.shift && hotkey.code = code
+}
+
+; =============================================================================
+; forwarding without triggering our own Win+Arrow bindings
+; =============================================================================
+
+MoveWindowThroughFancyZones(direction)
+{
+    global fancyzones_integration_state
+    if !FancyZonesArrowsReady(fancyzones_integration_state)
+        return
+
+    hwnd := GetWindowControlTarget()
+    if !hwnd
+        return
+
+    try {
+        PrepareWindowForPlacement(hwnd)
+        ForgetWindowLayoutCycle(hwnd)
+
+        ; FancyZones interprets Alt+Win+Arrow as zone extension. Temporarily
+        ; release Alt to send plain Win+Arrow instead. Blind mode prevents an
+        ; immediate automatic Alt restore before FancyZones processes its queue.
+        SendEvent("{Blind}{vkE8}{LAlt up}{RAlt up}#{" direction "}")
+        KeyWait(direction)
+        Sleep 40
+    }
+    catch Error as err {
+        DebugError("Forward FancyZones navigation", err)
+    }
+    finally {
+        ; Restore only modifiers the user still physically holds, including RAlt.
+        for key in ["LAlt", "RAlt"] {
+            if GetKeyState(key, "P")
+                SendEvent("{Blind}{" key " down}")
+        }
+    }
+}
+
+; =============================================================================
+; settings bridge
+; =============================================================================
+
+ReadFancyZonesIntegrationState(mode := "Read")
+{
+    local_app_data := EnvGet("LOCALAPPDATA")
+    settings_path := local_app_data "\Microsoft\PowerToys\FancyZones\settings.json"
+    helper_path := A_ScriptDir "\windows-key-overhaul\fancyzones-settings.ps1"
+    powershell_path := A_WinDir "\System32\WindowsPowerShell\v1.0\powershell.exe"
+    if !FileExist(settings_path) || !FileExist(helper_path) || !FileExist(powershell_path)
+        return false
+
+    result_path := A_Temp "\windows-key-overhaul-fancyzones-"
+        . DllCall("GetCurrentProcessId", "uint") "-" A_TickCount ".txt"
+
+    ; Bypass applies only to this helper process; no stored execution policy is
+    ; changed. The helper is a local part of this package, never downloaded code.
+    command := '"' powershell_path '" -NoLogo -NoProfile -NonInteractive'
+        . ' -WindowStyle Hidden -ExecutionPolicy Bypass -File "' helper_path '"'
+        . ' -Mode ' mode ' -SettingsPath "' settings_path '" -ResultPath "' result_path '"'
+
+    try {
+        exit_code := RunWait(command, , "Hide")
+        result := FileExist(result_path) ? Trim(FileRead(result_path, "UTF-8")) : ""
+        if exit_code != 0 {
+            DebugLog("FancyZones helper failed. " result)
+            return false
+        }
+        lines := StrSplit(result, "`n", "`r")
+        fields := StrSplit(lines[1], ",")
+        if fields.Length != 13
+            return false
+        if mode = "Apply" && lines.Length >= 2
+            DebugLog("FancyZones settings backup: " lines[2])
+
+        return {
+            override_snap_enabled: fields[1] = "1",
+            relative_position_enabled: fields[2] = "1",
+            window_switching_enabled: fields[3] = "1",
+            previous_hotkey: {
+                win: fields[4] = "1", ctrl: fields[5] = "1",
+                alt: fields[6] = "1", shift: fields[7] = "1", code: fields[8] + 0
+            },
+            next_hotkey: {
+                win: fields[9] = "1", ctrl: fields[10] = "1",
+                alt: fields[11] = "1", shift: fields[12] = "1", code: fields[13] + 0
+            }
+        }
+    }
+    catch Error as err {
+        DebugError("Read FancyZones setup", err)
+        return false
+    }
+    finally {
+        try FileDelete(result_path)
+    }
+}

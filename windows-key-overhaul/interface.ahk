@@ -1,0 +1,134 @@
+; Internal Windows Key Overhaul module. Launch ..\windows-key-overhaul.ahk.
+
+; =============================================================================
+; help
+; =============================================================================
+
+ToggleWindowsKeyOverhaulHelp(*)
+{
+    static help_gui := 0
+
+    if help_gui {
+        try help_gui.Destroy()
+        help_gui := 0
+        return
+    }
+
+    help_gui := Gui("+AlwaysOnTop", "Windows Key Overhaul")
+
+    help_text :=
+    (
+    "Ctrl + Win + H       Toggle this help`n"
+    "`n"
+    "WINDOW STATE`n"
+    "Win + Up             Maximize / borderless fullscreen`n"
+    "Win + Down           Restore to normal window`n"
+    "Win + Backspace      Minimize`n"
+    "Shift + Win + Home   Isolate active window / restore others`n"
+    "Win + M              Minimize all / restore all`n"
+    "`n"
+    "WINDOW STRETCH`n"
+    "Shift + Win + Up     Stretch to full height`n"
+    "Shift + Win + Down   Reset all stretch`n"
+    "Shift + Win + Left   Toggle stretch left until collision`n"
+    "Shift + Win + Right  Toggle stretch right until collision`n"
+    "`n"
+    "SIDE LAYOUTS`n"
+    "Win + Left           Cycle left layouts`n"
+    "Win + Right          Cycle right layouts`n"
+    "`n"
+    "TILES`n"
+    "Win + Insert         Top-left 25% <-> 50%`n"
+    "Win + Delete         Bottom-left 25% <-> 50%`n"
+    "Win + Home           Top-center 50% <-> alternating 25%`n"
+    "Win + End            Bottom-center 50% <-> alternating 25%`n"
+    "Win + PgUp           Top-right 25% <-> 50%`n"
+    "Win + PgDn           Bottom-right 25% <-> 50%`n"
+    "`n"
+    "WINDOW ARRANGEMENT`n"
+    "Win + Enter          Swap clockwise`n"
+    "Shift + Win + Enter  Swap counter-clockwise`n"
+    "Ctrl + Win + Arrow   Start / move spatial focus`n"
+    "Shift + Win + G      Cycle running Steam games"
+    )
+
+    if IsFancyZonesRunning() {
+        help_text .= (
+            "`n"
+            "`n"
+            "FANCYZONES`n"
+            "Alt + Win + Arrow    Move between zones`n"
+            "Alt + Win + PgUp     Previous window in current zone`n"
+            "Alt + Win + PgDn     Next window in current zone"
+        )
+    }
+
+    help_gui.SetFont("s10", "Cascadia Mono")
+    help_gui.AddText("w650", help_text)
+
+    help_gui.OnEvent("Close", CloseHelp)
+    help_gui.OnEvent("Escape", CloseHelp)
+    help_gui.Show()
+
+    CloseHelp(*)
+    {
+        help_gui.Destroy()
+        help_gui := 0
+    }
+}
+
+; =============================================================================
+; startup shortcut
+; =============================================================================
+
+CreateStartupShortcut()
+{
+    global startup_shortcut_path
+
+    if A_IsCompiled {
+        FileCreateShortcut(
+            A_ScriptFullPath,
+            startup_shortcut_path,
+            A_ScriptDir
+        )
+    } else {
+        FileCreateShortcut(
+            A_AhkPath,
+            startup_shortcut_path,
+            A_ScriptDir,
+            '"' A_ScriptFullPath '"'
+        )
+    }
+}
+
+ToggleStartup(*)
+{
+    global startup_shortcut_path
+
+    try {
+        if FileExist(startup_shortcut_path)
+            FileDelete(startup_shortcut_path)
+        else
+            CreateStartupShortcut()
+
+        UpdateStartupMenu()
+    }
+    catch Error as err {
+        DebugError("Update startup shortcut", err)
+        MsgBox(
+            "Could not update the startup shortcut.`n`n" err.Message,
+            "Windows Key Overhaul",
+            "Icon!"
+        )
+    }
+}
+
+UpdateStartupMenu()
+{
+    global startup_shortcut_path
+
+    if FileExist(startup_shortcut_path)
+        A_TrayMenu.Check("Run at startup")
+    else
+        A_TrayMenu.Uncheck("Run at startup")
+}

@@ -1,4 +1,4 @@
-; Internal Window Hotkeys module. Launch ..\window-hotkeys.ahk instead.
+; Internal Windows Key Overhaul module. Launch ..\windows-key-overhaul.ahk instead.
 ; Included into the same script; functions share the existing global state.
 
 ; =============================================================================
@@ -20,6 +20,7 @@ StretchWindowVertically()
     window := "ahk_id " hwnd
 
     try {
+        RememberNormalWindowPlacement(hwnd)
         PruneVerticalStretchWindows()
 
         ; Special states do not have reliable ordinary-window geometry.
@@ -207,6 +208,7 @@ ToggleHorizontalStretch(side)
     window := "ahk_id " hwnd
 
     try {
+        RememberNormalWindowPlacement(hwnd)
         PruneHorizontalStretchWindows()
 
         ; Special window states do not have reliable normal geometry for a
@@ -265,6 +267,11 @@ ToggleHorizontalStretch(side)
         }
 
         state := horizontal_stretch_windows[hwnd]
+        obstacles := GetHorizontalStretchObstacles(hwnd, monitor_handle)
+        active_rect := GetWindowLayoutRectangle(hwnd)
+        collision_edge := GetCollisionLimitedEdge(
+            side, active_rect, obstacles, side = "left" ? work_left : work_right
+        )
 
         if side = "left" {
             next_stretched := !state["left_stretched"]
@@ -276,7 +283,7 @@ ToggleHorizontalStretch(side)
 
             target_visible_left := (
                 next_stretched
-                ? work_left
+                ? collision_edge
                 : original_edge
             )
 
@@ -297,9 +304,18 @@ ToggleHorizontalStretch(side)
 
             target_visible_right := (
                 next_stretched
-                ? work_right
+                ? collision_edge
                 : original_edge
             )
+        }
+
+        if next_stretched
+            && Abs(target_visible_left - visible_left) <= 1
+            && Abs(target_visible_right - visible_right) <= 1
+        {
+            if !state["left_stretched"] && !state["right_stretched"]
+                ForgetHorizontalStretch(hwnd)
+            return
         }
 
         ; Do not mutate or discard restore state until the geometry move succeeds.
@@ -328,6 +344,23 @@ ToggleHorizontalStretch(side)
         if !state["left_stretched"] && !state["right_stretched"]
             ForgetHorizontalStretch(hwnd)
     }
+}
+
+
+GetHorizontalStretchObstacles(active_hwnd, monitor_handle)
+{
+    obstacles := []
+    for hwnd in WinGetList() {
+        if hwnd = active_hwnd || !IsWindowToggleCandidate(hwnd)
+            continue
+        candidate_monitor := DllCall(
+            "MonitorFromWindow", "ptr", hwnd, "uint", 2, "ptr"
+        )
+        if candidate_monitor != monitor_handle
+            continue
+        try obstacles.Push(GetWindowLayoutRectangle(hwnd))
+    }
+    return obstacles
 }
 
 GetHorizontalStretchGeometry(
@@ -472,7 +505,25 @@ MoveWindowToVisibleHorizontalBounds(
         return false
     }
 
-    return true
+    ; Fixed-size and size-constrained apps may accept WinMove but ignore the
+    ; requested width. Verify both edges before committing the stretch state.
+    Loop 3 {
+        Sleep 10
+        if GetHorizontalStretchGeometry(
+            hwnd, &check_x, &check_y, &check_width, &check_height,
+            &check_left, &check_right, &check_inset_left, &check_inset_right
+        ) {
+            if Abs(check_left - target_visible_left) <= 2
+                && Abs(check_right - target_visible_right) <= 2
+            {
+                return true
+            }
+        }
+    }
+
+    ; Roll back a partially accepted resize instead of moving the opposite edge.
+    try WinMove(raw_x, raw_y, raw_width, raw_height, hwnd)
+    return false
 }
 
 
@@ -733,307 +784,237 @@ RestoreAllHorizontalStretches()
 
 
 ; =============================================================================
-; side-layout cycle
+; side-layout cycle and top/bottom tiles
 ; =============================================================================
 
 CycleWindowSnap(side)
 {
-    global last_minimized_hwnd
-    global borderless_windows
-
-    ; Special states start a fresh side cycle even if restoring them happens
-    ; to put the window on coordinates that match an existing layout.
-    fresh_cycle_entry := !!last_minimized_hwnd
-
-    hwnd := GetWindowControlTarget()
-
+    Critical "On"
+    hwnd := GetPlacementTarget(&fresh_entry)
     if !hwnd
         return
 
-    window := "ahk_id " hwnd
-
     try {
-        if borderless_windows.Has(hwnd)
-            fresh_cycle_entry := true
-        else if WinGetMinMax(window) = 1
-            fresh_cycle_entry := true
+        work_area := GetLayoutWorkArea(hwnd)
+        family := "side-" side
+        layouts := []
+        for ratios in GetSideCycleRatios(side)
+            layouts.Push(BuildRatioLayout(work_area, ratios))
 
-        PrepareWindowForPlacement(hwnd)
-
-        GetWindowMonitorWorkArea(
-            hwnd,
-            &left,
-            &top,
-            &right,
-            &bottom
-        )
-
-        work_width := right - left
-        work_height := bottom - top
-
-        half_width := Floor(work_width / 2)
-        third_width := Floor(work_width / 3)
-        two_thirds_width := Floor(work_width * 2 / 3)
-
-        center_third_x :=
-            left + Floor((work_width - third_width) / 2)
-
-        center_third := [
-            center_third_x,
-            top,
-            third_width,
-            work_height
-        ]
-
-        left_layouts := [
-            [left, top, half_width, work_height],
-            [left, top, third_width, work_height],
-            center_third,
-            [left, top, two_thirds_width, work_height]
-        ]
-
-        right_layouts := [
-            [right - half_width, top, half_width, work_height],
-            [right - third_width, top, third_width, work_height],
-            center_third,
-            [
-                right - two_thirds_width,
-                top,
-                two_thirds_width,
-                work_height
-            ]
-        ]
-
-        if side = "left" {
-            layouts := left_layouts
-            opposite_layouts := right_layouts
-        } else {
-            layouts := right_layouts
-            opposite_layouts := left_layouts
-        }
-
-        if !fresh_cycle_entry {
-            ; If the window already belongs to this arrow's cycle, advance one
-            ; step. The center third acts as the junction before the two-thirds
-            ; layout on either side.
-            matched_index := FindMatchingLayoutIndex(
-                window,
-                layouts
-            )
-
-            if matched_index {
-                next_index := (
-                    matched_index = layouts.Length
-                    ? 1
-                    : matched_index + 1
-                )
-
-                target := layouts[next_index]
-            } else {
-                ; Pressing the opposite arrow walks backward through the side
-                ; the window currently occupies instead of jumping across.
-                opposite_index := FindMatchingLayoutIndex(
-                    window,
-                    opposite_layouts
-                )
-
-                if opposite_index {
-                    previous_index := (
-                        opposite_index = 1
-                        ? opposite_layouts.Length
-                        : opposite_index - 1
-                    )
-
-                    target := opposite_layouts[previous_index]
-                } else {
-                    fresh_cycle_entry := true
-                }
-            }
-        }
-
-        if fresh_cycle_entry {
-            ; Every fresh side-cycle entry starts at two-thirds.
-            target := layouts[4]
-        }
-
-        WinMove(
-            target[1],
-            target[2],
-            target[3],
-            target[4],
-            window
-        )
+        index := fresh_entry ? 0 : FindCurrentLayoutIndex(hwnd, family, work_area, layouts)
+        target_index := GetNextCycleIndex(index, layouts.Length)
+        ApplyTrackedLayout(hwnd, family, work_area, layouts, target_index)
+    }
+    catch Error as err {
+        DebugError("Cycle side layout", err)
     }
 }
 
-FindMatchingLayoutIndex(window, layouts, tolerance := 8)
+PlaceCornerTile(position)
 {
-    WinGetPos(
-        &x,
-        &y,
-        &width,
-        &height,
-        window
-    )
+    Critical "On"
+    hwnd := GetPlacementTarget(&fresh_entry)
+    if !hwnd
+        return
 
-    for layout_index, layout in layouts {
-        if Abs(x - layout[1]) > tolerance
-            continue
+    try {
+        parts := StrSplit(position, "-")
+        if parts.Length != 2
+            throw ValueError("Unknown corner tile: " position)
+        vertical_position := parts[1]
+        side := parts[2]
+        work_area := GetLayoutWorkArea(hwnd)
+        side_ratios := GetSideCycleRatios(side)
+        layouts := [
+            BuildRatioLayout(work_area, side_ratios[1], vertical_position),
+            BuildRatioLayout(work_area, side_ratios[2], vertical_position)
+        ]
+        family := "corner-" position
+        index := fresh_entry ? 0 : FindCurrentLayoutIndex(hwnd, family, work_area, layouts)
+        ApplyTrackedLayout(hwnd, family, work_area, layouts, GetNextCycleIndex(index, 2))
+    }
+    catch Error as err {
+        DebugError("Place corner tile", err)
+    }
+}
 
-        if Abs(y - layout[2]) > tolerance
-            continue
+PlaceCenterTile(vertical_position)
+{
+    Critical "On"
+    hwnd := GetPlacementTarget(&fresh_entry)
+    if !hwnd
+        return
 
-        if Abs(width - layout[3]) > tolerance
-            continue
+    try {
+        work_area := GetLayoutWorkArea(hwnd)
+        family := "center-" vertical_position
+        layouts := [
+            BuildRatioLayout(work_area, [2, 4, 2], vertical_position),
+            BuildRatioLayout(work_area, [2, 2, 4], vertical_position),
+            BuildRatioLayout(work_area, [4, 2, 2], vertical_position)
+        ]
+        index := fresh_entry ? 0 : FindCurrentLayoutIndex(hwnd, family, work_area, layouts)
+        next_side := GetNextCenterTileSide(hwnd, vertical_position)
+        target_index := index = 1 ? (next_side = "left" ? 2 : 3) : 1
 
-        if Abs(height - layout[4]) > tolerance
-            continue
+        if !ApplyTrackedLayout(hwnd, family, work_area, layouts, target_index)
+            return
 
-        return layout_index
+        ; Each window remembers an independent next narrow side for top and
+        ; bottom. Switching shortcuts does not restart every narrow tile at left.
+        if target_index = 2 || (target_index = 1 && index = 2)
+            SetNextCenterTileSide(hwnd, vertical_position, "right")
+        else if target_index = 3 || (target_index = 1 && index = 3)
+            SetNextCenterTileSide(hwnd, vertical_position, "left")
+    }
+    catch Error as err {
+        DebugError("Place center tile", err)
+    }
+}
+
+; =============================================================================
+; placement state and geometry matching
+; =============================================================================
+
+GetPlacementTarget(&fresh_entry)
+{
+    global last_minimized_hwnd, borderless_windows
+    fresh_entry := !!last_minimized_hwnd
+    hwnd := GetWindowControlTarget()
+    if !hwnd
+        return 0
+
+    try {
+        if !IsWindowToggleCandidate(hwnd)
+            return 0
+        if borderless_windows.Has(hwnd) || WinGetMinMax(hwnd) != 0
+            fresh_entry := true
+        PruneLayoutStates()
+        PrepareWindowForPlacement(hwnd)
+        return hwnd
+    }
+    catch Error as err {
+        DebugError("Prepare layout target", err)
+        return 0
+    }
+}
+
+GetLayoutWorkArea(hwnd)
+{
+    GetWindowMonitorWorkArea(hwnd, &left, &top, &right, &bottom)
+    return [left, top, right, bottom]
+}
+
+GetWindowLayoutRectangle(hwnd)
+{
+    if !GetVisibleWindowBounds(hwnd, &x, &y, &width, &height)
+        WinGetPos(&x, &y, &width, &height, hwnd)
+    return [x, y, width, height]
+}
+
+FindCurrentLayoutIndex(hwnd, family, work_area, layouts)
+{
+    global layout_cycle_windows
+    current_rect := GetWindowLayoutRectangle(hwnd)
+
+    if layout_cycle_windows.Has(hwnd) {
+        saved := layout_cycle_windows[hwnd]
+        if saved["pid"] = WinGetPID(hwnd)
+            && RectanglesMatch(saved["work_area"], work_area, 0)
+            && RectanglesMatch(saved["actual_rect"], current_rect)
+        {
+            ; Switching arrows starts that side at 25%; it no longer walks the
+            ; opposite side's cycle backwards. Other shortcut families also start
+            ; their own sequence, even when a rectangle happens to be shared.
+            return saved["family"] = family ? saved["index"] : 0
+        }
+        layout_cycle_windows.Delete(hwnd)
     }
 
+    for index, layout in layouts {
+        if RectanglesMatch(current_rect, layout)
+            return index
+    }
     return 0
 }
 
-; =============================================================================
-; quarter placement
-; =============================================================================
-
-PlaceWindowQuarter(position)
+ApplyTrackedLayout(hwnd, family, work_area, layouts, target_index)
 {
-    hwnd := GetWindowControlTarget()
+    global layout_cycle_windows
+    if !MoveWindowToVisibleRectangle(hwnd, layouts[target_index])
+        return false
 
-    if !hwnd
-        return
-
-    window := "ahk_id " hwnd
-
-    try {
-        PrepareWindowForPlacement(hwnd)
-
-        third_layout := GetQuarterLayout(
-            hwnd,
-            position,
-            "third"
-        )
-
-        half_layout := GetQuarterLayout(
-            hwnd,
-            position,
-            "half"
-        )
-
-        ; Arbitrary positions enter at the smaller third-width tile.
-        ; Repeating the same shortcut toggles between third and half width.
-        if WindowMatchesLayout(window, third_layout)
-            target := half_layout
-        else
-            target := third_layout
-
-        WinMove(
-            target[1],
-            target[2],
-            target[3],
-            target[4],
-            window
-        )
-    }
-}
-
-ToggleCenterQuarter()
-{
-    hwnd := GetWindowControlTarget()
-
-    if !hwnd
-        return
-
-    window := "ahk_id " hwnd
-
-    try {
-        PrepareWindowForPlacement(hwnd)
-
-        top_layout := GetQuarterLayout(hwnd, "top-center", "third")
-        bottom_layout := GetQuarterLayout(hwnd, "bottom-center", "third")
-
-        if WindowMatchesLayout(window, top_layout)
-            target := bottom_layout
-        else
-            target := top_layout
-
-        WinMove(
-            target[1],
-            target[2],
-            target[3],
-            target[4],
-            window
-        )
-    }
-}
-
-GetQuarterLayout(hwnd, position, width_mode := "half")
-{
-    GetWindowMonitorWorkArea(
-        hwnd,
-        &left,
-        &top,
-        &right,
-        &bottom
+    ; Store the actual result: an app may enforce a minimum size larger than a
+    ; quarter-screen tile. That must not strand the cycle on its first step.
+    layout_cycle_windows[hwnd] := Map(
+        "pid", WinGetPID(hwnd),
+        "family", family,
+        "work_area", work_area,
+        "index", target_index,
+        "actual_rect", GetWindowLayoutRectangle(hwnd)
     )
-
-    work_width := right - left
-    work_height := bottom - top
-
-    tile_width := (
-        width_mode = "third"
-        ? Floor(work_width / 3)
-        : Floor(work_width / 2)
-    )
-
-    half_height := Floor(work_height / 2)
-
-    switch position {
-        case "top-left", "bottom-left":
-            target_x := left
-        case "top-center", "bottom-center":
-            target_x := left + Floor((work_width - tile_width) / 2)
-        case "top-right", "bottom-right":
-            target_x := right - tile_width
-        default:
-            throw Error("Unknown quarter position: " position)
-    }
-
-    is_top := InStr(position, "top-") = 1
-    target_y := is_top ? top : top + half_height
-
-    ; The bottom tile receives any leftover pixel from an odd work-area height.
-    tile_height := is_top ? half_height : bottom - target_y
-
-    return [target_x, target_y, tile_width, tile_height]
+    return true
 }
 
-WindowMatchesLayout(window, layout, tolerance := 8)
+GetNextCenterTileSide(hwnd, vertical_position)
 {
-    return FindMatchingLayoutIndex(window, [layout], tolerance) = 1
+    global center_tile_next_sides
+    process_id := WinGetPID(hwnd)
+    if !center_tile_next_sides.Has(hwnd)
+        || center_tile_next_sides[hwnd]["pid"] != process_id
+    {
+        center_tile_next_sides[hwnd] := Map(
+            "pid", process_id, "top", "left", "bottom", "left"
+        )
+    }
+    return center_tile_next_sides[hwnd][vertical_position]
 }
 
-; =============================================================================
-; prepare a window for placement
-; =============================================================================
+SetNextCenterTileSide(hwnd, vertical_position, side)
+{
+    global center_tile_next_sides
+    GetNextCenterTileSide(hwnd, vertical_position)
+    center_tile_next_sides[hwnd][vertical_position] := side
+}
+
+ForgetWindowLayoutCycle(hwnd)
+{
+    global layout_cycle_windows
+    try layout_cycle_windows.Delete(hwnd)
+}
+
+PruneLayoutStates()
+{
+    global layout_cycle_windows, center_tile_next_sides, normal_window_placements
+    for states in [layout_cycle_windows, center_tile_next_sides, normal_window_placements] {
+        stale_hwnds := []
+        for hwnd, entry in states {
+            stale := !DllCall("IsWindow", "ptr", hwnd, "int")
+            if !stale {
+                try stale := WinGetPID(hwnd) != entry["pid"]
+                catch {
+                    stale := true
+                }
+            }
+            if stale
+                stale_hwnds.Push(hwnd)
+        }
+        for hwnd in stale_hwnds
+            states.Delete(hwnd)
+    }
+}
 
 PrepareWindowForPlacement(hwnd)
 {
     global borderless_windows
-
+    RememberNormalWindowPlacement(hwnd)
     ForgetHorizontalStretch(hwnd)
     ForgetVerticalStretch(hwnd)
-
-    window := "ahk_id " hwnd
 
     if borderless_windows.Has(hwnd) {
         RestoreBorderlessWindow(hwnd, false, true)
         return
     }
-
-    if WinGetMinMax(window) != 0
-        WinRestore(window)
+    if WinGetMinMax(hwnd) != 0
+        WinRestore(hwnd)
 }
