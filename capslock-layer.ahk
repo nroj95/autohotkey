@@ -250,7 +250,7 @@ CapsLock & F4::PostPlainWindowCascadeCommandOnce(
     cascade_command_close_scope,
     "F4"
 )
-CapsLock & F7::PostAltOnlyWindowCascadeCommandOnce(
+CapsLock & F7::PostPlainWindowCascadeCommandOnce(
     cascade_command_gather_to_monitor,
     "F7"
 )
@@ -332,6 +332,7 @@ Tab::UseArmedWindowCascadeCommand(cascade_command_rotate_layers, "Tab")
 Home::UseArmedWindowCascadeCommand(cascade_command_bring_forward, "Home")
 m::UseArmedWindowCascadeCommand(cascade_command_toggle_minimize, "m")
 F4::UseArmedWindowCascadeCommand(cascade_command_close_scope, "F4")
+F7::UseArmedWindowCascadeCommand(cascade_command_gather_to_monitor, "F7")
 Delete::UseArmedWindowCascadeCommand(cascade_command_close_active, "Delete")
 h::UseArmedWindowCascadeCommand(cascade_command_show_help, "h")
 
@@ -693,14 +694,6 @@ PostWindowCascadeCommand(command_id, parameter := 0)
         "ptr", parameter,
         "int"
     )
-}
-
-PostAltOnlyWindowCascadeCommandOnce(command_id, physical_key)
-{
-    if GetKeyState("Alt", "P")
-        PostWindowCascadeCommand(command_id)
-
-    KeyWait physical_key
 }
 
 

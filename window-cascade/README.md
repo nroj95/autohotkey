@@ -81,6 +81,8 @@ closed, moved-out, re-minimized, or manually dragged targets stop holding a rest
 
 `Caps + F4` closes all managed layers on the command monitor, using the former full-monitor close scope. it registers that whole scope before sending any `WinClose` requests. the former current-layer close command and the Alt variant are removed. destroy events remove windows from that batch, while layout compaction for the affected monitor stays deferred. the final destroyed target releases the batch and allows one queued compaction, so the cascade does not repeatedly reflow between individual closes.
 
+`Caps + F7` gathers the other monitors' cascades onto the command monitor. the former `Caps + Alt + F7` modifier is removed; the plain command is also available through the one-shot Caps layer.
+
 ## window drag and drop
 
 `cascade_slot_tolerance` is the single membership/drop tolerance, defaulting to 56 screen-coordinate pixels on each axis. the old separate release tolerance is removed. slot proximity is measured from the window's visible top-left corner, not the pointer. among eligible canonical positions, the nearest position by squared distance wins; equal distances prefer the earlier slot.
@@ -153,9 +155,9 @@ for Window Cascade changes, check:
 - missed restore notifications and interrupted queued work: the existing slow fallback recovers the pending merge
 - unchanged layouts/tabs should not keep issuing opacity writes or restarting placement corrections
 - adoption and the one-shot adoption undo path
-- gathering and cross-monitor moves
+- Caps + F7 gathering and cross-monitor moves
 - while disabled: Caps + M resumes; every other cascade shortcut is inert, tabs stay absent, and Win Key Overhaul/Terminal/extra-key controls remain independent
-- removed Caps + P, Caps + Alt + M, and Caps + Alt + F4 do not invoke cascade commands
+- removed Caps + P, Caps + Alt + M, Caps + Alt + F4, and Caps + Alt + F7 do not invoke cascade commands
 - tray help displays icons/window-cascade.ico in its caption/Alt+Tab; Escape and the hotkey both close it without leaking icon handles
 - tray Disable cascade mirrors Caps + M; rotate-key and focus-tab color preferences survive disable/resume
 - required CapsLock Layer behavior during startup, quick reloads, and a sustained dependency loss
