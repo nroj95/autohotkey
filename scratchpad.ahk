@@ -940,9 +940,14 @@ class ScratchpadController
                 WinHide "ahk_id " this.window_hwnd
         }
         finally {
-            ; Never strand a live editor partly clipped after an animation error.
-            DllCall("SetWindowRgn", "ptr", this.window_hwnd, "ptr", 0, "int", true)
-            WinMove bounds.x, bounds.y, bounds.w, bounds.h, "ahk_id " this.window_hwnd
+            if showing {
+                ; Finish a successful show at the normal visible bounds.
+                DllCall("SetWindowRgn", "ptr", this.window_hwnd, "ptr", 0, "int", true)
+                WinMove bounds.x, bounds.y, bounds.w, bounds.h, "ahk_id " this.window_hwnd
+            } else {
+                ; Keep the fully retracted editor hidden until the next show.
+                try WinHide "ahk_id " this.window_hwnd
+            }
         }
     }
 
