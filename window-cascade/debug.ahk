@@ -82,7 +82,13 @@ CopyDebugLogToClipboard()
         log_text := ""
         if FileExist(debug_log_path)
             log_text := FileRead(debug_log_path, "UTF-8")
-        A_Clipboard := log_text != "" ? log_text : "Window Cascade debug log is empty."
+        if log_text != "" {
+            log_text := RegExReplace(log_text, "\R+$")
+            code_fence := Chr(96) Chr(96) Chr(96)
+            A_Clipboard := code_fence "text`n" log_text "`n" code_fence
+        } else {
+            A_Clipboard := "Window Cascade debug log is empty."
+        }
         return true
     }
     catch Error as err {
