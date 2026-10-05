@@ -217,9 +217,24 @@ class ScratchpadController
             IniWrite legacy_f12 ? "F12" : "Win+F12", this.settings_path, "Controls", "ToggleHotkey"
         }
         try IniDelete this.settings_path, "Controls", "EnableF12"
-        ; Do not reuse NotepadExecutable: an existing value points at Notepad++.
+        ; Do not reuse the old Notepad++ path. Remove that legacy key and ensure
+        ; the dedicated Notepad3 setting exists instead.
+        try IniDelete this.settings_path, "Paths", "NotepadExecutable"
         if IniRead(this.settings_path, "Paths", "Notepad3Executable", "<missing>") = "<missing>"
             IniWrite "", this.settings_path, "Paths", "Notepad3Executable"
+
+        ; Windows INI writes use CRLF. Normalize the controller settings after
+        ; migrations so Notepad3 never sees a mixture of LF and CRLF lines.
+        settings := FileRead(this.settings_path, "UTF-16")
+        settings := StrReplace(settings, "`r`n", "`n")
+        settings := StrReplace(settings, "`r", "`n")
+        settings := StrReplace(settings, "`n", "`r`n")
+        settings_file := FileOpen(this.settings_path, "w", "UTF-16")
+        if !settings_file
+            throw Error("Could not normalize settings.ini.")
+        settings_file.Write(settings)
+        settings_file.Close()
+
         ; Notepad3 owns this UTF-8 INI. Never rewrite its existing preferences.
         if !FileExist(this.editor_profile)
             FileAppend "[Notepad3]`n`n[Settings]`nSettingsVersion=5`n", this.editor_profile, "UTF-8-RAW"
