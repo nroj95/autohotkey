@@ -193,6 +193,201 @@ GetPlacementReadinessReason(hwnd)
     return retry_reason
 }
 
+ReserveNewWindowPlacement(hwnd, source_hwnd, queued_monitor, request)
+{
+    global handled_windows, placement_reservations
+    global window_width_ratio, window_height_ratio
+    global edge_margin, minimum_width, minimum_height
+    global cascade_display_generation
+
+    display_generation := cascade_display_generation
+    target_monitor := GetTargetMonitor(hwnd, source_hwnd, queued_monitor)
+    dpi_transition :=
+        GetCascadeWindowMonitorDpi(hwnd) != GetCascadeMonitorDpi(target_monitor)
+
+    MonitorGetWorkAreaPixels(
+        target_monitor,
+        &work_left,
+        &work_top,
+        &work_right,
+        &work_bottom
+    )
+
+    work_width := work_right - work_left
+    work_height := work_bottom - work_top
+    window_width := Min(
+        Max(minimum_width, Floor(work_width * window_width_ratio)),
+        work_width - edge_margin * 2
+    )
+    window_height := Min(
+        Max(minimum_height, Floor(work_height * window_height_ratio)),
+        work_height - edge_margin * 2
+    )
+
+    previous_critical := Critical("On")
+    try {
+        if !IsCurrentNewWindowPlacement(hwnd, request)
+            || handled_windows.Has(hwnd)
+            || IsCascadeWindowBeingDragged(hwnd)
+            || IsCascadeDisplayTransition()
+            || display_generation != cascade_display_generation
+            return 0
+
+        position := GetNextCascadePosition(
+            target_monitor,
+            work_left,
+            work_top,
+            work_right,
+            work_bottom,
+            window_width,
+            window_height,
+            hwnd
+        )
+        reservation := Map(
+            "monitor", target_monitor,
+            "x", position[1],
+            "y", position[2]
+        )
+        placement_reservations[hwnd] := reservation
+    }
+    finally {
+        Critical(previous_critical)
+    }
+
+    return {
+        display_generation: display_generation,
+        monitor: target_monitor,
+        x: position[1],
+        y: position[2],
+        width: window_width,
+        height: window_height,
+        dpi_transition: dpi_transition,
+        reservation: reservation
+    }
+}
+
+
+TryProvisionalNewWindowPlacement(hwnd, source_hwnd, queued_monitor, request)
+{
+    global placement_reservations, cascade_display_generation
+
+    if request.HasOwnProp("provisional_placement") && IsObject(request.provisional_placement)
+        return true
+
+    ; The settled pass retains the normal eligibility check. If the window is
+    ; not ready enough yet, skip the early move and keep the old behavior.
+    if !IsCascadeWindow(hwnd)
+        return false
+
+    plan := 0
+    try {
+        plan := ReserveNewWindowPlacement(
+            hwnd,
+            source_hwnd,
+            queued_monitor,
+            request
+        )
+        if !IsObject(plan)
+            return false
+
+        raw_target := GetRawRectForVisibleTarget(
+            hwnd,
+            plan.x,
+            plan.y,
+            plan.width,
+            plan.height
+        )
+
+        initial_rect := "unavailable"
+        if GetVisibleWindowBounds(
+            hwnd,
+            &initial_x,
+            &initial_y,
+            &initial_width,
+            &initial_height
+        ) {
+            initial_rect :=
+                "(" initial_x "," initial_y
+                . " " initial_width "x" initial_height ")"
+        }
+
+        if !IsCurrentNewWindowPlacement(hwnd, request)
+            || IsCascadeWindowBeingDragged(hwnd)
+            || IsCascadeDisplayTransition()
+            || plan.display_generation != cascade_display_generation
+        {
+            if placement_reservations.Has(hwnd)
+                && placement_reservations[hwnd] = plan.reservation
+                placement_reservations.Delete(hwnd)
+            return false
+        }
+
+        DebugLog(
+            "Provisional new-window placement begin."
+            . " | monitor=" plan.monitor
+            . " | initial-visible-rect=" initial_rect
+            . " | target-visible-rect=(" plan.x "," plan.y
+            . " " plan.width "x" plan.height ")"
+            . " | hwnd=" hwnd
+        )
+
+        moved := PhysicalDllCall(
+            "SetWindowPos",
+            "ptr", hwnd,
+            "ptr", 0,
+            "int", raw_target[1],
+            "int", raw_target[2],
+            "int", raw_target[3],
+            "int", raw_target[4],
+            "uint", 0x4014, ; ASYNC | NOACTIVATE | NOZORDER
+            "int"
+        )
+        move_error := A_LastError
+
+        if !moved {
+            if placement_reservations.Has(hwnd)
+                && placement_reservations[hwnd] = plan.reservation
+                placement_reservations.Delete(hwnd)
+            DebugLog(
+                "Provisional new-window placement failed."
+                . " | last-error=" move_error
+                . " | hwnd=" hwnd
+            )
+            return false
+        }
+
+        if !IsCurrentNewWindowPlacement(hwnd, request)
+            || IsCascadeWindowBeingDragged(hwnd)
+            || IsCascadeDisplayTransition()
+            || plan.display_generation != cascade_display_generation
+        {
+            if placement_reservations.Has(hwnd)
+                && placement_reservations[hwnd] = plan.reservation
+                placement_reservations.Delete(hwnd)
+            return false
+        }
+
+        request.provisional_placement := plan
+
+        DebugLog(
+            "Provisional new-window placement complete."
+            . " | monitor=" plan.monitor
+            . " | visible-rect=(" plan.x "," plan.y
+            . " " plan.width "x" plan.height ")"
+            . " | hwnd=" hwnd
+        )
+        return true
+    }
+    catch Error as err {
+        if IsObject(plan) && placement_reservations.Has(hwnd)
+            && placement_reservations[hwnd] = plan.reservation
+            placement_reservations.Delete(hwnd)
+        DebugError("Provisional new-window placement", err)
+        return false
+    }
+}
+
+
 PlaceNewWindow(
     hwnd,
     source_hwnd,
@@ -204,7 +399,7 @@ PlaceNewWindow(
 {
     global pending_windows, handled_windows, placement_reservations
     global placement_ready_retry_ms, placement_ready_retry_limit
-    global placement_settle_delay_ms
+    global placement_settle_delay_ms, placement_stabilize_tolerance
     global window_width_ratio, window_height_ratio
     global edge_margin, minimum_width, minimum_height
 
@@ -289,6 +484,15 @@ PlaceNewWindow(
             )
 
             if queued_monitor && source_is_shell_or_gone {
+                ; Move a ready window before the shell/startup grace period.
+                ; The settled pass reuses this exact reservation if it succeeds.
+                TryProvisionalNewWindowPlacement(
+                    hwnd,
+                    source_hwnd,
+                    queued_monitor,
+                    request
+                )
+
                 retry_scheduled := true
 
                 SetTimer(
@@ -315,69 +519,127 @@ PlaceNewWindow(
             return
         }
 
-        target_monitor := GetTargetMonitor(hwnd, source_hwnd, queued_monitor)
-        dpi_transition := GetCascadeWindowMonitorDpi(hwnd) != GetCascadeMonitorDpi(target_monitor)
+        provisional := (
+            request.HasOwnProp("provisional_placement")
+            ? request.provisional_placement
+            : 0
+        )
+
+        if IsObject(provisional)
+            && (
+                provisional.display_generation != cascade_display_generation
+                || !placement_reservations.Has(hwnd)
+                || placement_reservations[hwnd] != provisional.reservation
+            )
+        {
+            if placement_reservations.Has(hwnd)
+                && placement_reservations[hwnd] = provisional.reservation
+                placement_reservations.Delete(hwnd)
+            request.provisional_placement := 0
+            provisional := 0
+        }
+
+        reused_provisional := IsObject(provisional)
+        plan := (
+            reused_provisional
+            ? provisional
+            : ReserveNewWindowPlacement(
+                hwnd,
+                source_hwnd,
+                queued_monitor,
+                request
+            )
+        )
+        if !IsObject(plan) {
+            if IsCascadeDisplayTransition()
+                || display_generation != cascade_display_generation
+            {
+                retry_scheduled := true
+                SetTimer(
+                    PlaceNewWindow.Bind(
+                        hwnd,
+                        source_hwnd,
+                        queued_monitor,
+                        retry_count,
+                        settle_complete,
+                        request
+                    ),
+                    -placement_ready_retry_ms
+                )
+            }
+            return
+        }
+
+        target_monitor := plan.monitor
+        target_x := plan.x
+        target_y := plan.y
+        window_width := plan.width
+        window_height := plan.height
+        dpi_transition := plan.dpi_transition
+        owned_reservation := plan.reservation
 
         DebugLog(
             "Placement monitor resolved."
             . " | dpi-transfer=" dpi_transition
             . " | monitor=" target_monitor
             . " | queued-monitor=" queued_monitor
+            . " | provisional=" reused_provisional
             . " | target=" DebugDescribeWindow(hwnd)
             . " | source=" DebugDescribeWindow(source_hwnd)
         )
 
-        MonitorGetWorkAreaPixels(
-            target_monitor,
-            &work_left,
-            &work_top,
-            &work_right,
-            &work_bottom
-        )
-
-        work_width := work_right - work_left
-        work_height := work_bottom - work_top
-
-        window_width := Floor(work_width * window_width_ratio)
-        window_height := Floor(work_height * window_height_ratio)
-
-        window_width := Max(minimum_width, window_width)
-        window_height := Max(minimum_height, window_height)
-
-        window_width := Min(window_width, work_width - edge_margin * 2)
-        window_height := Min(window_height, work_height - edge_margin * 2)
-
-        ; Slot selection and reservation must be atomic. An asynchronous move
-        ; may not reach its target before another window needs a slot.
-        previous_critical := Critical("On")
-
-        try {
-            if !IsCurrentNewWindowPlacement(hwnd, request)
-                || handled_windows.Has(hwnd) || IsCascadeWindowBeingDragged(hwnd)
-                return
-            position := GetNextCascadePosition(
-                target_monitor,
-                work_left,
-                work_top,
-                work_right,
-                work_bottom,
-                window_width,
-                window_height,
-                hwnd
-            )
-
-            target_x := position[1]
-            target_y := position[2]
-
-            owned_reservation := Map(
-                "monitor", target_monitor,
-                "x", target_x,
-                "y", target_y
-            )
-            placement_reservations[hwnd] := owned_reservation
-        }
-        finally {
-            Critical(previous_critical)
+        if reused_provisional
+            && IsCurrentNewWindowPlacement(hwnd, request)
+            && !handled_windows.Has(hwnd)
+            && !IsCascadeWindowBeingDragged(hwnd)
+            && !IsCascadeDisplayTransition()
+            && display_generation = cascade_display_generation
+        {
+            try {
+                if GetVisibleWindowBounds(
+                    hwnd,
+                    &current_x,
+                    &current_y,
+                    &current_width,
+                    &current_height
+                ) && GetMonitorForWindow(hwnd) = target_monitor
+                    && Abs(current_x - target_x) <= placement_stabilize_tolerance
+                    && Abs(current_y - target_y) <= placement_stabilize_tolerance
+                    && Abs(current_width - window_width) <= placement_stabilize_tolerance
+                    && Abs(current_height - window_height) <= placement_stabilize_tolerance
+                {
+                    DebugLog(
+                        "Final placement move skipped."
+                        . " | reason=provisional-matched"
+                        . " | actual=(" current_x "," current_y
+                        . " " current_width "x" current_height ")"
+                        . " | requested=(" target_x "," target_y
+                        . " " window_width "x" window_height ")"
+                        . " | hwnd=" hwnd
+                    )
+                    handled_windows[hwnd] := true
+                    RecordCascadeWindow(target_monitor, hwnd)
+                    DebugLog(
+                        "Placement complete."
+                        . " | monitor=" target_monitor
+                        . " | final-move=skipped"
+                        . " | " DebugDescribeWindow(hwnd)
+                    )
+                    SchedulePlacementStabilization(
+                        hwnd,
+                        target_x,
+                        target_y,
+                        window_width,
+                        window_height,
+                        dpi_transition
+                    )
+                    StartNewWindowFocus(hwnd, request.focus)
+                    return
+                }
+            }
+            catch {
+                ; Fall through to the normal settled move if geometry is unavailable.
+            }
         }
 
         raw_target := GetRawRectForVisibleTarget(
@@ -396,6 +658,7 @@ PlaceNewWindow(
         DebugLog(
             "Placement slot reserved."
             . " | monitor=" target_monitor
+            . " | provisional=" reused_provisional
             . " | visible-rect=(" target_x "," target_y
             . " " window_width "x" window_height ")"
             . " | hwnd=" hwnd
