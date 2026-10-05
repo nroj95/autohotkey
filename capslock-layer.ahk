@@ -141,20 +141,22 @@ UpdateStartupMenu()
         return
     }
 
-    if (
-        GetKeyState("Shift", "P")
-        || GetKeyState("Ctrl", "P")
-        || GetKeyState("Alt", "P")
-    ) {
+    if GetKeyState("Alt", "P") {
+        SuppressCascadeAltMenu()
         return
     }
+
+    if GetKeyState("Shift", "P") || GetKeyState("Ctrl", "P")
+        return
 
     ArmCapsLayer()
 }
 
-; Win is part of the Caps layer here, not a standalone Start-menu press.
+; Win and Alt are part of the Caps layer here, not standalone shell/menu presses.
 CapsLock & LWin::SuppressStartMenu()
 CapsLock & RWin::SuppressStartMenu()
+CapsLock & LAlt::SuppressCascadeAltMenu()
+CapsLock & RAlt::SuppressCascadeAltMenu()
 
 
 ; Top row.
@@ -215,6 +217,7 @@ CapsLock & Left::
         return
 
     if GetKeyState("Alt", "P") {
+        SuppressCascadeAltMenu()
         PostWindowCascadeCommand(
             cascade_command_move_monitor_left,
             WinExist("A")
@@ -233,6 +236,7 @@ CapsLock & Right::
         return
 
     if GetKeyState("Alt", "P") {
+        SuppressCascadeAltMenu()
         PostWindowCascadeCommand(
             cascade_command_move_monitor_right,
             WinExist("A")
@@ -800,11 +804,23 @@ PostWindowCascadeRotateCommandOnce(physical_key)
     ; changes when Alt is released before the selected Space/Tab key.
     if !GetKeyState("Shift", "P") && !GetKeyState("Ctrl", "P")
         && !GetKeyState("LWin", "P") && !GetKeyState("RWin", "P") {
-        direction := GetKeyState("Alt", "P") ? -1 : 1
+        alt_held := GetKeyState("Alt", "P")
+        if alt_held
+            SuppressCascadeAltMenu()
+        direction := alt_held ? -1 : 1
         PostWindowCascadeCommand(cascade_command_rotate_layers, direction)
     }
 
     KeyWait physical_key
+}
+
+SuppressCascadeAltMenu()
+{
+    ; Alt is sampled inside a custom Caps chord instead of being declared as the
+    ; hotkey modifier, so AutoHotkey cannot apply its normal Alt menu masking.
+    ; vkE8 is unassigned; pressing it while Alt is still down prevents the later
+    ; Alt release from looking like a standalone menu/access-key tap to the app.
+    SendEvent "{Blind}{vkE8}"
 }
 
 PostWindowCascadeCommand(command_id, parameter := 0)
