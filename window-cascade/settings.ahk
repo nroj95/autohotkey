@@ -28,10 +28,6 @@ new_window_focus_poll_ms := 100
 ; Foreground-proven new windows may recover from shell handoffs during this period.
 new_window_shell_settle_ms := 5000
 
-; Keep actionable lifecycle/error logs. Raw show/destroy/poll events and detailed
-; window-title/appearance snapshots are opt-in.
-debug_verbose_enabled := false
-
 ; Restore requests can finish before their native/DWM rectangles settle.
 ; Poll only during restores; a failed restore must not lock compaction forever.
 cascade_restore_poll_ms := 50
@@ -109,6 +105,12 @@ caps_layer_check_ms := 1000
 
 settings_directory := EnvGet("LOCALAPPDATA") "\Window Cascade"
 settings_path := settings_directory "\settings.ini"
+
+; Keep actionable lifecycle/error logging enabled. Raw show/destroy/poll events
+; and detailed window-title/appearance snapshots are opt-in for the current run.
+debug_enabled := true
+debug_verbose_enabled := false
+debug_log_path := settings_directory "\window-cascade-debug.log"
 
 focus_corner_active_slot_color_name := IniRead(
     settings_path,

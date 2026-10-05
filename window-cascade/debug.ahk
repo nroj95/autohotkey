@@ -7,10 +7,12 @@
 
 InitializeDebugLogging()
 {
-    global debug_enabled
+    global debug_enabled, settings_directory
 
     if !debug_enabled
         return
+
+    try DirCreate(settings_directory)
 
     reset_message := DllCall(
         "RegisterWindowMessage",
@@ -28,6 +30,21 @@ InitializeDebugLogging()
     OnError(LogUnhandledError)
 
     DebugLogSession("started")
+}
+
+ToggleVerboseDebugLogging(*)
+{
+    global debug_verbose_enabled
+
+    if debug_verbose_enabled {
+        DebugLog("Verbose debug logging disabled.")
+        debug_verbose_enabled := false
+    } else {
+        debug_verbose_enabled := true
+        DebugLog("Verbose debug logging enabled.")
+    }
+
+    UpdateTrayMenu()
 }
 
 HandleDebugResetLogsMessage(command_id, parameter, message_id, target_hwnd)

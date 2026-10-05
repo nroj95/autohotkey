@@ -8,7 +8,7 @@ launch `../window-cascade.ahk`, not the files in this directory. the launcher ow
 
 | file | responsibility |
 | --- | --- |
-| `settings.ahk` | defaults, persisted rotate-key and focus-tab color selections, shared runtime state, and CapsLock Layer command IDs. |
+| `settings.ahk` | defaults, persisted rotate-key and focus-tab color selections, shared runtime state, debug settings, and CapsLock Layer command IDs. |
 | `controls.ahk` | focus-tab mouse bindings, ordinary desktop-click handling, required CapsLock Layer presence/watch logic, and registered-message dispatch. |
 | `discovery.ahk` | desktop monitor hints, the startup window snapshot, discovery polling, placement queueing, Windows event hooks, and destroyed-window cleanup. |
 | `window-drag.ahk` | native mouse-drag tracking, release-time snap/adopt/release decisions, and deferred-layout recovery. |
@@ -37,7 +37,7 @@ keep the `cascade_command_*` IDs in `settings.ahk` synchronized with the matchin
 
 `WindowCascade.Command`, the CapsLock Layer presence mutex, and the registered-message parameter contract form the cross-process integration surface. cross-monitor commands pass the original active window handle through that message path so the intended window remains the move target.
 
-the launcher remains at the repository root. startup shortcuts, `icons/window-cascade.ico`, `window-cascade-debug.log`, and the settings file under `%LOCALAPPDATA%\Window Cascade\settings.ini` keep their existing paths.
+the launcher remains at the repository root. startup shortcuts and `icons/window-cascade.ico` keep their existing paths. Window Cascade stores `settings.ini` and `window-cascade-debug.log` under `%LOCALAPPDATA%\Window Cascade`.
 
 ## focus-tab clicks
 
@@ -57,7 +57,7 @@ focus-tab colors are selected separately for the active and inactive slots from 
 
 normal tab rendering changes native opacity only when the desired value changes and repaints changed or newly shown overlays. the opacity cache is updated only after a successful native operation. overlay operations use pure HWNDs so hidden-window lookup does not depend on `DetectHiddenWindows`. the configured opacity values remain unchanged, and deeper tabs do not contribute additional opacity.
 
-when both `debug_enabled` and `debug_verbose_enabled` are enabled, `Focus-tab appearance.` entries are written only when the observed state changes. they include the active window, active-slot window count, click ownership, tab role, color, cached base alpha, native alpha, visibility, topmost state, Z-order predecessor, and rectangle. clicks do not override opacity. compare entries from a faint and a clear state when investigating intermittent appearance changes.
+**Verbose debug logging** in the tray toggles `debug_verbose_enabled` for the current run only and defaults to off after every restart. when verbose logging is enabled, `Focus-tab appearance.` entries are written only when the observed state changes. they include the active window, active-slot window count, click ownership, tab role, color, cached base alpha, native alpha, visibility, topmost state, Z-order predecessor, and rectangle. clicks do not override opacity. compare entries from a faint and a clear state when investigating intermittent appearance changes.
 
 ## global disable and resume
 
@@ -111,7 +111,7 @@ the shell-settle path tries `SetForegroundWindow` first. after three consecutive
 
 `Caps + Delete` closes the active window with `WinClose("A")`, without sending Alt+F4. application-specific close handling still applies. a foreground target's stale marker is hidden immediately; the overlay renderer still selects the next layer's tab independently. an active-slot tab for a deeper layer remains intentional and does not by itself indicate failed focus.
 
-ordinary lifecycle/error logging stays enabled. focus recovery, placement, restore reconciliation, compaction, and destruction of pending/handled/managed windows remain visible in the normal log. `debug_verbose_enabled` defaults to false; raw show/poll events, unrelated or repeated destroy events, and expensive title/appearance snapshots are opt-in. destruction is always processed even when its log entry is suppressed. foreground diagnostics retain the foreground HWND, thread-active HWND, keyboard-focus HWND/root, and process IDs, and skip native diagnostic queries when logging is disabled. the temporary placement `foreground-before` / `foreground-after` probes are removed.
+ordinary lifecycle/error logging stays enabled and writes to `%LOCALAPPDATA%\Window Cascade\window-cascade-debug.log`. focus recovery, placement, restore reconciliation, compaction, and destruction of pending/handled/managed windows remain visible in the normal log. **Verbose debug logging** in the tray toggles `debug_verbose_enabled` for the current run only and defaults to false after every restart; raw show/poll events, unrelated or repeated destroy events, and expensive title/appearance snapshots are opt-in. destruction is always processed even when its log entry is suppressed. foreground diagnostics retain the foreground HWND, thread-active HWND, keyboard-focus HWND/root, and process IDs, and skip native diagnostic queries when logging is disabled. the temporary placement `foreground-before` / `foreground-after` probes are removed.
 
 `SetWinDelay 0` yields without AutoHotkey's default per-window 100 ms sleep; restore/placement watchers still decide readiness explicitly. a focus-tab pass uses one observed rectangle per candidate and one canonical geometry calculation per monitor. minimized overlays are cached/hidden rather than repeatedly destroyed, and unchanged opacity/Z-order operations are skipped. per-window placement requests retain object identity through retries so stale callbacks cannot target a later request for a recycled handle. placement confirmation stops after `placement_stabilize_confirmation_limit` (3) final checks instead of polling forever. no Windows desktop timing benchmark is implied by these source-level optimizations.
 

@@ -55,14 +55,7 @@ try TraySetIcon(A_ScriptDir "\icons\window-cascade.ico", , true)
 CoordMode "Mouse", "Screen"
 
 
-; =============================================================================
-; debug
-; =============================================================================
-
-debug_enabled := true
-debug_log_path := A_ScriptDir "\window-cascade-debug.log"
-
-; Initialize cleanup state before registering an exit handler or callbacks.
+; Initialize shared settings/state before registering an exit handler or callbacks.
 #Include "%A_ScriptDir%\window-cascade\settings.ahk"
 
 InitializeDebugLogging()

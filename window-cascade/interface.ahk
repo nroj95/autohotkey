@@ -53,6 +53,7 @@ BuildTrayMenu()
 
     A_TrayMenu.Add()
     A_TrayMenu.Add("Run at startup", ToggleStartup)
+    A_TrayMenu.Add("Verbose debug logging", ToggleVerboseDebugLogging)
     A_TrayMenu.Add()
     A_TrayMenu.AddStandard()
     ; Native Pause/Suspend would bypass the restore set and the Caps + M wake path.
@@ -177,7 +178,7 @@ ToggleStartup(*)
 UpdateTrayMenu()
 {
     global cascade_disabled, startup_shortcut_path
-    global focus_corner_visible
+    global focus_corner_visible, debug_verbose_enabled
     global rotate_key, rotate_key_menu
     global focus_tab_color_presets
     global focus_corner_active_slot_color_name
@@ -202,6 +203,11 @@ UpdateTrayMenu()
         A_TrayMenu.Check("Show focus tabs")
     else
         A_TrayMenu.Uncheck("Show focus tabs")
+
+    if debug_verbose_enabled
+        A_TrayMenu.Check("Verbose debug logging")
+    else
+        A_TrayMenu.Uncheck("Verbose debug logging")
 
     if (
         IsObject(focus_tab_active_slot_color_menu)
@@ -301,7 +307,8 @@ ToggleWindowCascadeHelp(*)
     "Disable cascade      Same all-monitor disable / resume toggle as Caps + M`n"
     "Show focus tabs      Show / hide the faint focus tabs`n"
     "Focus tab colors     Choose colors for the active and inactive slots`n"
-    "Check compatibility  Check conflicting settings"
+    "Check compatibility  Check conflicting settings`n"
+    "Verbose debug logging  Toggle detailed diagnostics for this run"
     )
 
     help_gui.AddText("w780", help_text)
