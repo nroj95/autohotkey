@@ -1501,6 +1501,17 @@ class ScratchpadController
 
         foreground := DllCall("GetForegroundWindow", "ptr")
 
+        ; A window can enter Win Key Overhaul borderless mode after Scratchpad
+        ; is already open. Adopt that newly marked foreground source so explicit
+        ; AlwaysOnTop continues to keep the drawer above it.
+        if this.always_on_top
+            && foreground
+            && foreground != this.window_hwnd
+            && this.IsCoordinatedBorderlessSource(foreground)
+        {
+            this.coordinated_borderless_source := foreground
+        }
+
         ; Win Key Overhaul clears its marker when borderless mode ends.
         if this.coordinated_borderless_source
             && !this.IsCoordinatedBorderlessSource(this.coordinated_borderless_source)
