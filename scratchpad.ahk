@@ -211,8 +211,8 @@ class ScratchpadController
         DirCreate this.scratch_directory
         ; Resolve . and .. before enforcing the direct-child page boundary.
         this.scratch_directory := RTrim(ScratchpadFullPath(this.scratch_directory), "\/")
-        this.width_percent := this.ReadNumber("Window", "WidthPercent", 75, 30, 100)
-        this.height_percent := this.ReadNumber("Window", "HeightPercent", 40, 20, 100)
+        this.width_percent := this.ReadNumber("Window", "WidthPercent", 45, 30, 100)
+        this.height_percent := this.ReadNumber("Window", "HeightPercent", 35, 20, 100)
         this.animation_ms := this.ReadNumber("Window", "AnimationDurationMs", 180, 0, 1000)
         this.autosave_ms := this.ReadNumber("Saving", "AutosaveIntervalMs", 10000, 500, 60000)
         this.allowed_extensions := "|md|txt|ps1|psm1|psd1|py|pyw|ahk|lua|js|ts|jsx|tsx|"
@@ -247,7 +247,7 @@ class ScratchpadController
     {
         if !FileExist(this.settings_path) {
             settings := "[Paths]`nScratchDirectory=D:\toolbox\scratch`nNotepad3Executable=`n"
-                . "`n[Window]`nWidthPercent=75`nHeightPercent=40`nAnimationDurationMs=180`n"
+                . "`n[Window]`nWidthPercent=45`nHeightPercent=35`nAnimationDurationMs=180`n"
                 . "`n[Saving]`nAutosaveIntervalMs=10000`n`n[Controls]`nToggleHotkey=Win+F12`n"
                 . "`n[Setup]`nWelcomePending=1`n"
             FileAppend settings, this.settings_path, "UTF-16"
