@@ -627,10 +627,12 @@ class ScratchpadController
         if choice != "Yes"
             throw Error("Notepad3 is required to use Scratchpad.")
 
+        existing_notepad3_windows := this.SnapshotNotepad3Windows()
+
         MsgBox(
             "Scratchpad will open the Notepad3 installer.`n`n"
-                . "Follow the setup wizard. Scratchpad will continue automatically "
-                . "when installation finishes.",
+                . "Choose any installation options you want. Scratchpad will continue "
+                . "automatically when setup finishes.",
             "Scratchpad setup",
             "Iconi 4096"
         )
@@ -648,6 +650,13 @@ class ScratchpadController
 
             throw Error("Notepad3 is required to use Scratchpad.")
         }
+
+        ; The installer can optionally launch an ordinary Notepad3 window.
+        ; Close only windows that appeared during this installation; anything
+        ; that existed beforehand is left completely alone.
+        this.CloseInstallerNotepad3Windows(existing_notepad3_windows)
+        Sleep 200
+        this.CloseInstallerNotepad3Windows(existing_notepad3_windows)
 
         ; Give App Paths and the installation directory a moment to appear.
         loop 50 {
@@ -704,6 +713,34 @@ class ScratchpadController
         try return RunWait(command, , "Hide") = 0
         catch
             return false
+    }
+
+    SnapshotNotepad3Windows()
+    {
+        known_windows := Map()
+        for hwnd in WinGetList("ahk_exe Notepad3.exe")
+            known_windows[hwnd] := true
+        return known_windows
+    }
+
+    CloseInstallerNotepad3Windows(known_windows)
+    {
+        for hwnd in WinGetList("ahk_exe Notepad3.exe") {
+            if known_windows.Has(hwnd)
+                continue
+
+            ; Never touch a Scratchpad-owned editor if this helper is reused later.
+            if DllCall(
+                "GetPropW",
+                "ptr", hwnd,
+                "str", this.window_marker,
+                "ptr"
+            )
+                continue
+
+            ; Ask only the newly launched ordinary window to close normally.
+            try PostMessage 0x0010, 0, 0, , "ahk_id " hwnd ; WM_CLOSE
+        }
     }
 
     SelectNotepad3Executable()
