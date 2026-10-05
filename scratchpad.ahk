@@ -588,9 +588,9 @@ class ScratchpadController
         initial_path := ScratchpadFullPath(initial_path)
         before_load_stamp := ScratchpadFileStamp(initial_path)
         ; /n requests a new process/window, /f isolates its INI, /l0 prompts on
-        ; external changes. No /i tray mode, copied executable or title parsing.
+        ; external changes. No /i tray mode or copied executable.
         command_line := '"' executable '" /n /f "' this.editor_profile
-            . '" /l0 /t Scratchpad "' initial_path '"'
+            . '" /l0 "' initial_path '"'
         Run command_line, this.scratch_directory, "Hide", &editor_pid
         this.editor_pid := editor_pid
         deadline := A_TickCount + 12000
