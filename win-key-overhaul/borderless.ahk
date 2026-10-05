@@ -5,6 +5,33 @@
 ; borderless fullscreen
 ; =============================================================================
 
+MarkBorderlessWindow(hwnd)
+{
+    static marker := "nroj.WinKeyOverhaul.Borderless"
+
+    if !DllCall(
+        "SetPropW",
+        "ptr", hwnd,
+        "str", marker,
+        "ptr", 1,
+        "int"
+    ) {
+        throw OSError(
+            A_LastError,
+            "SetPropW",
+            "Could not mark the borderless window."
+        )
+    }
+}
+
+ClearBorderlessWindowMarker(hwnd)
+{
+    static marker := "nroj.WinKeyOverhaul.Borderless"
+
+    if hwnd && DllCall("IsWindow", "ptr", hwnd, "int")
+        DllCall("RemovePropW", "ptr", hwnd, "str", marker, "ptr")
+}
+
 EnterBorderlessFullscreen(hwnd)
 {
     global borderless_windows
@@ -50,6 +77,7 @@ EnterBorderlessFullscreen(hwnd)
         )
 
         WinSetAlwaysOnTop 1, window
+        MarkBorderlessWindow(hwnd)
         WinActivate(window)
     }
     catch {
@@ -106,6 +134,7 @@ RestoreBorderlessWindow(
         if saved["was_topmost"]
             WinSetAlwaysOnTop 1, window
 
+        ClearBorderlessWindowMarker(hwnd)
         restore_succeeded := true
     }
     finally {
@@ -199,6 +228,8 @@ SuspendBorderlessSteamWindow(hwnd)
                 "Window left minimized state during borderless suspension."
             )
         }
+
+        ClearBorderlessWindowMarker(hwnd)
 
         suspended_borderless_windows[hwnd] := Map(
             "state", saved,
@@ -434,6 +465,7 @@ RestoreAllBorderlessWindows(exit_reason, exit_code)
                 if saved["was_topmost"]
                     WinSetAlwaysOnTop 1, window
 
+                ClearBorderlessWindowMarker(hwnd)
                 borderless_windows.Delete(hwnd)
             } else {
                 RestoreBorderlessWindow(hwnd, true)

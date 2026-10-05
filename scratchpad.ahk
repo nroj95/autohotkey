@@ -163,6 +163,7 @@ class ScratchpadController
         this.last_external_window := 0
         this.fullscreen_source_window := 0
         this.opening_topmost := false
+        this.coordinated_borderless_source := 0
         this.system_text_input_escape_pending := false
         this.last_bounds := 0
         this.page_lock_handle := 0
@@ -1383,6 +1384,12 @@ class ScratchpadController
 
         ; Enter the topmost band before the first visible frame so the drawer
         ; never begins its animation behind the currently focused application.
+        ; Keep a Win Key Overhaul borderless source topmost so it continues to
+        ; cover the taskbar; the marker only coordinates ordering between us.
+        this.coordinated_borderless_source := this.IsCoordinatedBorderlessSource(source_window)
+            ? source_window
+            : 0
+
         this.fullscreen_source_window := ScratchpadIsFullscreenWindow(source_window) ? source_window : 0
         this.opening_topmost := true
         this.SetDrawerTopmost(true)
@@ -1410,6 +1417,7 @@ class ScratchpadController
         this.AnimateWindow(false, bounds)
         this.fullscreen_source_window := 0
         this.opening_topmost := false
+        this.coordinated_borderless_source := 0
         this.SetDrawerTopmost(false)
         if was_active && this.previous_window
             && DllCall("IsWindowVisible", "ptr", this.previous_window, "int")
@@ -1417,6 +1425,38 @@ class ScratchpadController
         {
             try WinActivate "ahk_id " this.previous_window
         }
+    }
+
+    IsCoordinatedBorderlessSource(hwnd)
+    {
+        static marker := "nroj.WinKeyOverhaul.Borderless"
+
+        return hwnd
+            && DllCall("IsWindow", "ptr", hwnd, "int")
+            && DllCall("GetPropW", "ptr", hwnd, "str", marker, "ptr")
+    }
+
+    RaiseDrawerAboveCoordinatedSource()
+    {
+        if !this.window_hwnd
+            || !DllCall("IsWindow", "ptr", this.window_hwnd, "int")
+        {
+            return
+        }
+
+        ; Move Scratchpad to the front of the topmost band without activating it.
+        ; The borderless application keeps focus and remains topmost over the taskbar.
+        DllCall(
+            "SetWindowPos",
+            "ptr", this.window_hwnd,
+            "ptr", -1, ; HWND_TOPMOST
+            "int", 0,
+            "int", 0,
+            "int", 0,
+            "int", 0,
+            "uint", 0x0013, ; SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE
+            "int"
+        )
     }
 
     WantsTopmost()
@@ -1461,6 +1501,13 @@ class ScratchpadController
 
         foreground := DllCall("GetForegroundWindow", "ptr")
 
+        ; Win Key Overhaul clears its marker when borderless mode ends.
+        if this.coordinated_borderless_source
+            && !this.IsCoordinatedBorderlessSource(this.coordinated_borderless_source)
+        {
+            this.coordinated_borderless_source := 0
+        }
+
         ; Focus normally lands synchronously after ShowWindow, but keep this as a
         ; low-frequency fallback if Windows delays the foreground transition.
         if this.opening_topmost && foreground = this.window_hwnd
@@ -1503,6 +1550,16 @@ class ScratchpadController
         }
 
         this.SetDrawerTopmost(wants_topmost)
+
+        ; With persistent topmost enabled, a clicked Win Key Overhaul borderless
+        ; source may move ahead of Scratchpad inside the topmost band. Put the
+        ; drawer back above it without stealing focus.
+        if this.always_on_top
+            && this.coordinated_borderless_source
+            && foreground = this.coordinated_borderless_source
+        {
+            this.RaiseDrawerAboveCoordinatedSource()
+        }
     }
 
     FindYieldDialog(foreground)
