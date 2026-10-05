@@ -848,7 +848,7 @@ class ScratchpadController
         this.persisted_stamp := this.disk_stamp
     }
 
-    SaveCurrentPage()
+    SaveCurrentPage(require_clean := true)
     {
         path := this.CheckCurrentPage()
         current_stamp := ScratchpadFileStamp(path)
@@ -863,31 +863,85 @@ class ScratchpadController
                 throw Error("The file changed again while being checked. Retry after the other writer has finished.")
             this.disk_stamp := current_stamp
         }
-        ; Always ask the native editor to save: encoding-only changes may not set
-        ; Scintilla's text-dirty flag.
-        this.bridge.Save()
 
-        ; Notepad3 may finish its atomic file replacement before the modified flag
-        ; is observed as cleared. Wait for the editor and disk state to settle
-        ; before recording our new conflict-detection baseline.
-        save_deadline := A_TickCount + 2000
-        loop {
-            if this.bridge.CurrentPath() != path || !FileExist(path)
-                throw Error("The save target changed or disappeared. Inspect the editor before retrying.")
+        ; Autosave needs only one completed disk snapshot. Commands that hide,
+        ; switch, reload or exit require the editor itself to become fully clean.
+        save_passes := require_clean ? 3 : 1
 
-            if !this.bridge.IsDirty()
-                break
+        loop save_passes {
+            before_save_stamp := ScratchpadFileStamp(path)
+            save_snapshot := this.bridge.DocumentText()
 
-            if A_TickCount >= save_deadline
-                throw Error("Notepad3 still has unsaved changes after waiting for the save to finish. Saving/hiding/switching has been stopped.")
+            ; Always ask the native editor to save: encoding-only changes may not
+            ; set Scintilla's text-dirty flag.
+            this.bridge.Save()
 
-            Sleep 10
+            save_deadline := A_TickCount + 2000
+            loop {
+                if this.bridge.CurrentPath() != path || !FileExist(path)
+                    throw Error("The save target changed or disappeared. Inspect the editor before retrying.")
+
+                if !this.bridge.IsDirty() {
+                    clean_stamp := ScratchpadFileStamp(path)
+
+                    if !this.bridge.MatchesDiskText(path, save_snapshot)
+                        throw Error("The page changed on disk while Scratchpad was saving. No new save baseline was accepted.")
+
+                    if ScratchpadFileStamp(path) != clean_stamp
+                        throw Error("The file changed again while the completed save was being verified.")
+
+                    this.disk_stamp := clean_stamp
+                    this.PersistCurrentState()
+                    this.autosave_paused := false
+                    A_IconTip := "Scratchpad"
+                    return
+                }
+
+                if A_TickCount >= save_deadline
+                    break
+
+                Sleep 10
+            }
+
+            after_save_stamp := ScratchpadFileStamp(path)
+
+            ; A changed timestamp alone does not prove that Notepad3 performed
+            ; the write: another program could have touched the file meanwhile.
+            ; Accept a new baseline only when the stamp changed and disk contains
+            ; the exact editor snapshot that was submitted to Save.
+            if after_save_stamp != before_save_stamp
+                && this.bridge.MatchesDiskText(path, save_snapshot)
+            {
+                if ScratchpadFileStamp(path) != after_save_stamp
+                    throw Error("The file changed again while the completed save was being verified.")
+
+                this.disk_stamp := after_save_stamp
+                this.PersistCurrentState()
+
+                if !require_clean {
+                    this.autosave_paused := false
+                    A_IconTip := "Scratchpad"
+                    return
+                }
+
+                ; If disk and the current editor also agree, only the dirty flag
+                ; lagged. Otherwise newer edits need another strict save pass.
+                if this.bridge.MatchesDisk(path) {
+                    this.autosave_paused := false
+                    A_IconTip := "Scratchpad"
+                    return
+                }
+
+                continue
+            }
+
+            if after_save_stamp != before_save_stamp
+                throw Error("The page changed on disk while Scratchpad was saving, but the disk version does not match the editor snapshot that was submitted to Notepad3. No new save baseline was accepted.")
+
+            throw Error("Notepad3 still has unsaved changes and no completed disk write could be verified. Saving/hiding/switching has been stopped.")
         }
 
-        this.disk_stamp := ScratchpadFileStamp(path)
-        this.PersistCurrentState()
-        this.autosave_paused := false
-        A_IconTip := "Scratchpad"
+        throw Error("The page kept changing while Scratchpad tried to save it. Stop editing briefly and retry.")
     }
 
     ConfigureNewPage()
@@ -950,7 +1004,7 @@ class ScratchpadController
         if !ScratchpadWindowIdle(this.window_hwnd)
             return
         this.busy := true
-        try this.SaveCurrentPage()
+        try this.SaveCurrentPage(false)
         catch as failure {
             this.autosave_paused := true
             A_IconTip := "Scratchpad - autosave paused"
@@ -1610,7 +1664,18 @@ class Notepad3Bridge
             throw Error("Notepad3 did not switch to:`n" path)
     }
 
+    DocumentText()
+    {
+        this.CheckReady()
+        return this.ReadWindowText(this.editor_hwnd)
+    }
+
     MatchesDisk(path)
+    {
+        return this.MatchesDiskText(path, this.DocumentText())
+    }
+
+    MatchesDiskText(path, expected_text)
     {
         if FileGetSize(path) > 32 * 1024 * 1024
             throw Error("This file is too large for automatic conflict comparison. Preserve both versions before continuing.")
@@ -1645,7 +1710,7 @@ class Notepad3Bridge
                     return false
             }
         }
-        return disk_text == this.ReadWindowText(this.editor_hwnd)
+        return disk_text == expected_text
     }
 }
 
