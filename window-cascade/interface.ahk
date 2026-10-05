@@ -264,9 +264,6 @@ ToggleWindowCascadeHelp(*)
     "Caps + H             Toggle this help`n"
     "Caps + M             Minimize all / disable; restore all / resume`n"
     "`n"
-    "CAPSLOCK LAYER REQUIRED`n"
-    "Keep capslock-layer.ahk running with Window Cascade.`n"
-    "`n"
     "HINTS`n"
     "Hold Caps + key      Run a command normally`n"
     "Tap Caps, then key   One-shot command for 1.4 seconds (plain keys only)`n"
@@ -313,7 +310,10 @@ ToggleWindowCascadeHelp(*)
     "Show focus tabs            Show / hide the faint focus tabs`n"
     "Focus tab colors           Choose colors for the active and inactive slots`n"
     "Check compatibility        Check conflicting settings`n"
-    "Verbose debug logging      Toggle detailed diagnostics for this run"
+    "Verbose debug logging      Toggle detailed diagnostics for this run`n"
+    "`n"
+    "CAPSLOCK LAYER REQUIRED`n"
+    "Keep capslock-layer.ahk running with Window Cascade."
     )
 
     help_gui.AddText("w780", help_text)
