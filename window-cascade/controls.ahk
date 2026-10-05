@@ -171,18 +171,33 @@ ActiveWindowBlocksCascadeCommands()
 
 RegisterIntegrationMessages()
 {
-    global cascade_command_message
+    global cascade_command_message, cascade_rotate_key_message
 
     cascade_command_message := DllCall(
-        "RegisterWindowMessage",
-        "str", "WindowCascade.Command",
-        "uint"
+        "RegisterWindowMessage", "str", "WindowCascade.Command", "uint"
     )
-
-    if !cascade_command_message
+    cascade_rotate_key_message := DllCall(
+        "RegisterWindowMessage", "str", "WindowCascade.RotateKeyChanged", "uint"
+    )
+    if !cascade_command_message || !cascade_rotate_key_message
         throw OSError(A_LastError, "RegisterIntegrationMessages")
 
     OnMessage(cascade_command_message, HandleCascadeCommandMessage)
+    BroadcastCascadeRotateKey()
+}
+
+BroadcastCascadeRotateKey()
+{
+    global cascade_rotate_key_message, rotate_key
+
+    if !cascade_rotate_key_message
+        return
+    DllCall(
+        "PostMessage", "ptr", 0xFFFF, ; HWND_BROADCAST
+        "uint", cascade_rotate_key_message,
+        "uptr", rotate_key = "Tab" ? 2 : 1,
+        "ptr", 0, "int"
+    )
 }
 
 HandleCascadeCommandMessage(command_id, parameter, message_id, target_hwnd)

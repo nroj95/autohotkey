@@ -138,6 +138,7 @@ SetRotateKey(new_rotate_key, *)
     }
 
     rotate_key := new_rotate_key
+    BroadcastCascadeRotateKey()
     UpdateTrayMenu()
 }
 

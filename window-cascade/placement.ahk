@@ -410,8 +410,10 @@ PlaceNewWindow(
             "int"
         )
 
+        ; Logging and diagnostics call Windows too; preserve the original error.
+        set_window_pos_error := A_LastError
         set_window_pos_elapsed_ms :=
-            A_TickCount - set_window_pos_start_tick
+            (A_TickCount - set_window_pos_start_tick) & 0xFFFFFFFF
 
         DebugLog(
             "SetWindowPos returned."
@@ -426,7 +428,7 @@ PlaceNewWindow(
 
             DebugLog(
                 "SetWindowPos failed."
-                . " | last-error=" A_LastError
+                . " | last-error=" set_window_pos_error
                 . " | target=" DebugDescribeWindow(hwnd)
             )
             return
@@ -787,8 +789,9 @@ StabilizePlacedWindow(
             "int"
         )
 
+        stabilization_error := A_LastError
         stabilization_elapsed_ms :=
-            A_TickCount - stabilization_start_tick
+            (A_TickCount - stabilization_start_tick) & 0xFFFFFFFF
 
         DebugLog(
             "Stabilization SetWindowPos returned."
@@ -806,7 +809,7 @@ StabilizePlacedWindow(
                 "Placement reservation released."
                 . " | reason=stabilization-failed"
                 . " | generation=" stabilization_generation
-                . " | last-error=" A_LastError
+                . " | last-error=" stabilization_error
                 . " | hwnd=" hwnd
             )
 

@@ -59,7 +59,8 @@ UpdateFocusCornerOverlays()
 
     for hwnd, managed_monitor in live_windows {
 
-        if !DllCall("IsWindowVisible", "ptr", hwnd, "int")
+        ; Cloaked windows may still have WS_VISIBLE on another virtual desktop.
+        if !DllCall("IsWindowVisible", "ptr", hwnd, "int") || IsWindowCloaked(hwnd)
             continue
 
         try {
@@ -114,7 +115,8 @@ UpdateFocusCornerOverlays()
         }
     }
 
-    z_ranks := GetCascadeWindowZRanks()
+    ; No visible slot means no need to enumerate every desktop window for Z-order.
+    z_ranks := slot_stacks.Length ? GetCascadeWindowZRanks() : Map()
 
     ; Keep the hide/show handoff together, but do not lock the geometry queries.
     previous_critical := A_IsCritical
@@ -403,8 +405,9 @@ CreateFocusCornerOverlay(hwnd, marker_color, marker_alpha)
     global focus_corner_overlays
     global focus_corner_targets
 
+    ; DWM bounds are already pixel dimensions; do not scale the overlay again.
     marker_gui := Gui(
-        "-Caption"
+        "-Caption -DPIScale"
         . " +ToolWindow"
         . " +E0x08000000",
         "Window Cascade Focus Marker"

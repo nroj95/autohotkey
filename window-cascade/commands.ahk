@@ -299,30 +299,44 @@ GetCascadeWindowsForMonitorClose(monitor_index)
 
 CloseCascadeWindowList(windows, monitor_index)
 {
-    if windows.Length = 0 || !monitor_index
+    global cascade_close_batches, cascade_close_timeout_ms
+
+    if !IsCascadeEnabled() || windows.Length = 0 || !monitor_index
         return
 
-    z_ranks := GetCascadeWindowZRanks()
-    ordered_windows := SortCascadeWindowsByZOrder(
-        windows,
-        z_ranks
-    )
-    windows_to_close := []
+    ordered_windows := SortCascadeWindowsByZOrder(windows, GetCascadeWindowZRanks())
+    ; Register every target before the first close can deliver a destroy event.
+    batch := BeginCascadeCloseBatch(monitor_index, ordered_windows)
+    if !IsObject(batch)
+        return
 
-    for hwnd in ordered_windows {
-        if WinExist("ahk_id " hwnd)
-            windows_to_close.Push(hwnd)
+    try {
+        for hwnd in ordered_windows {
+            ; A disable or newer batch can take ownership while WinClose yields.
+            if !IsCascadeEnabled() || !cascade_close_batches.Has(monitor_index)
+                || cascade_close_batches[monitor_index] != batch
+                break
+            if !batch.targets.Has(hwnd)
+                continue
+            try {
+                if !WinExist(hwnd) || WinGetPID(hwnd) != batch.targets[hwnd] {
+                    RemoveWindowFromCascadeCloseBatch(hwnd, batch)
+                    continue
+                }
+                WinClose(hwnd)
+            }
+            catch Error as err {
+                RemoveWindowFromCascadeCloseBatch(hwnd, batch)
+                DebugError("Close cascade window", err)
+            }
+        }
     }
-
-    if windows_to_close.Length = 0
-        return
-
-    ; Register the full scope before sending the first close request. Destroy
-    ; events can then remove targets without allowing an intermediate reflow.
-    BeginCascadeCloseBatch(monitor_index, windows_to_close)
-
-    for hwnd in windows_to_close {
-        try WinClose("ahk_id " hwnd)
+    finally {
+        ; Give the whole batch its grace period after issuing the requests.
+        ; An old bound callback cannot expire a newer close command's batch.
+        if cascade_close_batches.Has(monitor_index)
+            && cascade_close_batches[monitor_index] = batch
+            SetTimer(ExpireCascadeCloseBatch.Bind(monitor_index, batch), -cascade_close_timeout_ms)
     }
 }
 
@@ -331,40 +345,58 @@ BeginCascadeCloseBatch(monitor_index, windows)
 {
     global cascade_close_batches
 
-    if !cascade_close_batches.Has(monitor_index)
-        cascade_close_batches[monitor_index] := Map()
-
-    batch := cascade_close_batches[monitor_index]
-
-    for hwnd in windows
-        batch[hwnd] := true
+    batch := {targets: Map()}
+    for hwnd in windows {
+        try batch.targets[hwnd] := WinGetPID(hwnd)
+    }
+    if !batch.targets.Count
+        return 0
+    cascade_close_batches[monitor_index] := batch
+    return batch
 }
 
 
-RemoveWindowFromCascadeCloseBatch(hwnd)
+RemoveWindowFromCascadeCloseBatch(hwnd, expected_batch := 0)
 {
     global cascade_close_batches
 
-    matched_monitor := 0
-    batch_finished := false
-
-    for monitor_index, batch in cascade_close_batches {
-        if !batch.Has(hwnd)
-            continue
-
-        batch.Delete(hwnd)
-        matched_monitor := monitor_index
-        batch_finished := batch.Count = 0
-        break
+    previous_critical := Critical("On")
+    try {
+        for monitor_index, batch in cascade_close_batches.Clone() {
+            if IsObject(expected_batch) && batch != expected_batch
+                continue
+            if !batch.targets.Has(hwnd)
+                continue
+            batch.targets.Delete(hwnd)
+            if batch.targets.Count
+                continue
+            cascade_close_batches.Delete(monitor_index)
+            QueueCascadeCompaction(monitor_index)
+        }
     }
+    finally {
+        Critical(previous_critical)
+    }
+}
 
-    if !batch_finished
-        return
+ExpireCascadeCloseBatch(monitor_index, expected_batch)
+{
+    global cascade_close_batches
 
-    cascade_close_batches.Delete(matched_monitor)
-
-    ; Queued destroy-time compaction can now run once for the completed batch.
-    QueueCascadeCompaction(matched_monitor)
+    previous_critical := Critical("On")
+    try {
+        if !cascade_close_batches.Has(monitor_index)
+            || cascade_close_batches[monitor_index] != expected_batch
+            return
+        cascade_close_batches.Delete(monitor_index)
+        ; A save prompt may still be open. Only release the layout gate.
+        QueueCascadeCompaction(monitor_index)
+    }
+    finally {
+        Critical(previous_critical)
+    }
+    DebugLog("Cascade close batch expired. | monitor=" monitor_index
+        " | remaining-targets=" expected_batch.targets.Count)
 }
 
 

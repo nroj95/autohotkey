@@ -34,6 +34,10 @@ cascade_restore_poll_ms := 50
 cascade_restore_settle_ms := 200
 cascade_restore_timeout_ms := 5000
 
+; A cancelled/ignored close must not defer this monitor's compaction forever.
+; This only expires bookkeeping; it never forces a window to close.
+cascade_close_timeout_ms := 5000
+
 ; Some applications expose their real top-level window before it is ready for
 ; placement. Keep the original launch context while waiting briefly for it.
 placement_ready_retry_ms := 200
@@ -210,6 +214,7 @@ window_move_size_hook := 0
 window_restore_hook := 0
 
 cascade_command_message := 0
+cascade_rotate_key_message := 0
 
 ; =============================================================================
 ; CapsLock Layer command protocol

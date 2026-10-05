@@ -189,7 +189,7 @@ StopCascadeActivity()
 {
     global pending_windows, startup_windows, known_windows, handled_windows
     global placement_reservations, placement_stabilization_generations
-    global cascade_restore_batches, cascade_compaction_timer_pending
+    global cascade_restore_batches, cascade_close_batches, cascade_compaction_timer_pending
     global focus_corner_update_pending, focus_corner_overlays, focus_tab_click_generation
     global cascade_mouse_press, desktop_monitor_hint, desktop_monitor_hint_tick
 
@@ -222,6 +222,8 @@ StopCascadeActivity()
     placement_reservations.Clear()
     placement_stabilization_generations.Clear()
     cascade_restore_batches.Clear()
+    ; Closed/cancelled requests must not preserve an old compaction gate on resume.
+    cascade_close_batches.Clear()
 
     ; Hidden means no hit target at all, not merely the normal alpha-1 tab setting.
     for hwnd in focus_corner_overlays.Clone()

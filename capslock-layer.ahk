@@ -28,8 +28,21 @@ caps_layer_arm_window_ms := 1400
 
 terminal_macro_running := false
 
+; One release watcher serves every overlapping keypress and stops when idle.
+held_virtual_keys := Map()
+caps_layer_key_guards := Map()
+caps_layer_key_poll_ms := 10
+OnExit(ReleaseCapsLayerInputs)
+
 startup_shortcut_path := A_Startup "\CapsLock Layer.lnk"
 window_cascade_settings_path := EnvGet("LOCALAPPDATA") "\Window Cascade\settings.ini"
+window_cascade_rotate_key := ReadWindowCascadeRotateKey()
+window_cascade_rotate_key_message := DllCall(
+    "RegisterWindowMessage", "str", "WindowCascade.RotateKeyChanged", "uint"
+)
+if !window_cascade_rotate_key_message
+    throw OSError(A_LastError, "RegisterWindowMessage", "Could not register rotate-key updates.")
+OnMessage(window_cascade_rotate_key_message, HandleWindowCascadeRotateKeyChanged)
 
 window_cascade_command_message := DllCall(
     "RegisterWindowMessage",
@@ -352,27 +365,23 @@ ClearTerminalBuffer(physical_key)
 
     if terminal_macro_running
         return
-
-    if !WinActive("ahk_exe WindowsTerminal.exe")
+    target := CaptureTerminalMacroTarget()
+    if !IsObject(target)
         return
 
     terminal_macro_running := true
-
     try {
-        ; Never inject Terminal shortcuts while the Caps chord is still active.
+        ; Do not inject shortcuts until the original chord has been released.
         KeyWait physical_key
         KeyWait "CapsLock"
 
-        Send "^+k"
-        Sleep 50
-
-        Send "^c"
-        Sleep 50
-
-        Send "{Enter}"
-        Sleep 50
-
-        Send "^+k"
+        for index, shortcut in ["^+k", "^c", "{Enter}", "^+k"] {
+            ; Waiting and sleeping can hand focus to an entirely different app.
+            if !SendTerminalMacroShortcut(target, shortcut)
+                return
+            if index < 4
+                Sleep 50
+        }
     }
     finally {
         terminal_macro_running := false
@@ -385,40 +394,78 @@ CopyTerminalBuffer(physical_key)
 
     if terminal_macro_running
         return
-
-    if !WinActive("ahk_exe WindowsTerminal.exe")
+    target := CaptureTerminalMacroTarget()
+    if !IsObject(target)
         return
 
     terminal_macro_running := true
-
+    clipboard_cleared := false
     try {
-        ; Never inject Terminal shortcuts while the Caps chord is still active.
         KeyWait physical_key
         KeyWait "CapsLock"
+        if !IsTerminalMacroTargetActive(target)
+            return
 
         previous_clipboard := ClipboardAll()
-        A_Clipboard := ""
-
-        Send "^+a"
-        Sleep 50
-
-        Send "^+c"
-
-        ; Restore the old clipboard if Terminal copy fails.
-        if !ClipWait(1) {
-            A_Clipboard := previous_clipboard
+        if !IsTerminalMacroTargetActive(target)
             return
-        }
+        A_Clipboard := ""
+        cleared_sequence := DllCall("GetClipboardSequenceNumber", "uint")
+        clipboard_cleared := true
 
+        if !SendTerminalMacroShortcut(target, "^+a")
+            return
+        Sleep 50
+        if !SendTerminalMacroShortcut(target, "^+c") || !ClipWait(1)
+            return
+        if !IsTerminalMacroTargetActive(target)
+            return
+
+        copied_sequence := DllCall("GetClipboardSequenceNumber", "uint")
         ; Keep internal blank lines, but trim trailing empty ones.
         copied_text := RegExReplace(A_Clipboard, "(\R[ \t]*)+$")
-
         code_fence := Chr(96) Chr(96) Chr(96)
-        A_Clipboard := code_fence "`n" copied_text "`n" code_fence
+
+        ; Do not knowingly overwrite a newer clipboard update during formatting.
+        if IsTerminalMacroTargetActive(target)
+            && DllCall("GetClipboardSequenceNumber", "uint") = copied_sequence
+            A_Clipboard := code_fence "`n" copied_text "`n" code_fence
     }
     finally {
+        ; Restore only our own still-empty clipboard, never somebody else's copy.
+        if clipboard_cleared
+            && DllCall("GetClipboardSequenceNumber", "uint") = cleared_sequence
+            try A_Clipboard := previous_clipboard
         terminal_macro_running := false
     }
+}
+
+CaptureTerminalMacroTarget()
+{
+    hwnd := WinActive("ahk_exe WindowsTerminal.exe")
+    if !hwnd
+        return 0
+    try return {hwnd: hwnd, pid: WinGetPID(hwnd)}
+    catch
+        return 0
+}
+
+IsTerminalMacroTargetActive(target)
+{
+    if DllCall("GetForegroundWindow", "ptr") != target.hwnd
+        return false
+    try return WinGetPID(target.hwnd) = target.pid
+    catch
+        return false
+}
+
+SendTerminalMacroShortcut(target, shortcut)
+{
+    ; Abort rather than focus the old Terminal over the user's new foreground app.
+    if !IsTerminalMacroTargetActive(target)
+        return false
+    Send shortcut
+    return true
 }
 
 #HotIf terminal_macro_running
@@ -441,10 +488,20 @@ CopyTerminalBuffer(physical_key)
 {
     global last_left_shift_release_ms, double_tap_window_ms
 
+    ; Ordinary shifted typing must not count as a bare Shift-tap gesture.
+    if A_PriorKey != "LShift" || GetKeyState("Ctrl", "P")
+        || GetKeyState("Alt", "P") || GetKeyState("LWin", "P")
+        || GetKeyState("RWin", "P") || GetKeyState("RShift", "P")
+        || GetKeyState("CapsLock", "P")
+    {
+        last_left_shift_release_ms := 0
+        return
+    }
+
     current_time_ms := A_TickCount
 
     if last_left_shift_release_ms
-        && current_time_ms - last_left_shift_release_ms <= double_tap_window_ms
+        && ((current_time_ms - last_left_shift_release_ms) & 0xFFFFFFFF) <= double_tap_window_ms
     {
         SetCapsLockState GetKeyState("CapsLock", "T") ? "Off" : "On"
         last_left_shift_release_ms := 0
@@ -491,11 +548,10 @@ ArmCapsLayer()
 
     caps_layer_armed := true
 
-    ShowCapsLayerTip()
-
-    ; Refresh the one-shot timeout on every tap.
+    ; Establish the timeout before cosmetic window/monitor queries can fail.
     SetTimer DisarmCapsLayer, 0
     SetTimer DisarmCapsLayer, -caps_layer_arm_window_ms
+    try ShowCapsLayerTip()
 }
 
 DisarmCapsLayer()
@@ -519,76 +575,85 @@ HandleCapsLayerDisarm(*)
 
 UseArmedVirtualKey(virtual_key, physical_key)
 {
-    ; The one-shot has been consumed, so hide its indicator immediately.
-    HideCapsLayerTip()
-    SetTimer DisarmCapsLayer, 0
-
-    previous_send_level := SendLevel(1)
-
-    try {
-        SendEvent "{Blind}{" virtual_key "}"
-        KeyWait physical_key
-    }
-    finally {
-        SendLevel previous_send_level
-        DisarmCapsLayer()
-    }
+    if !ConsumeCapsLayerKey(physical_key)
+        return
+    SendCapsLayerVirtualKey(virtual_key)
 }
 
 
 UseArmedNoOpKey(physical_key)
 {
-    HideCapsLayerTip()
-    SetTimer DisarmCapsLayer, 0
-
-    try {
-        KeyWait physical_key
-    }
-    finally {
-        DisarmCapsLayer()
-    }
+    ConsumeCapsLayerKey(physical_key)
 }
 
 UseArmedTerminalMacro(callback, physical_key)
 {
-    HideCapsLayerTip()
-    SetTimer DisarmCapsLayer, 0
-
-    try {
+    if ConsumeCapsLayerKey(physical_key)
         callback(physical_key)
-    }
-    finally {
-        DisarmCapsLayer()
-    }
 }
 
 UseArmedRegisteredCommand(message_id, physical_key)
 {
-    ; The one-shot has been consumed, so hide its indicator immediately.
-    HideCapsLayerTip()
-    SetTimer DisarmCapsLayer, 0
-
-    try {
+    if ConsumeCapsLayerKey(physical_key)
         PostRegisteredCommand(message_id)
-        KeyWait physical_key
-    }
-    finally {
-        DisarmCapsLayer()
-    }
 }
 
 UseArmedWindowCascadeCommand(command_id, physical_key)
 {
     ; Monitor/cross-monitor parameters are intentionally unavailable here.
-    HideCapsLayerTip()
-    SetTimer DisarmCapsLayer, 0
-
-    try {
+    if ConsumeCapsLayerKey(physical_key)
         PostWindowCascadeCommand(command_id)
-        KeyWait physical_key
+}
+
+ConsumeCapsLayerKey(physical_key)
+{
+    global caps_layer_armed, caps_layer_key_guards, caps_layer_key_poll_ms
+
+    previous_critical := Critical("On")
+    try {
+        if !caps_layer_armed || caps_layer_key_guards.Has(physical_key)
+            return false
+
+        ; Consume now, not after KeyWait: another mapped key must remain ordinary.
+        DisarmCapsLayer()
+        if GetKeyState(physical_key, "P") {
+            ; Suppress only repeats/release of the consumed key. Everything else
+            ; passes through; I2 excludes our own SendLevel-1 virtual output.
+            key_guard := InputHook("V L0 I2")
+            key_guard.KeyOpt("{" physical_key "}", "SN")
+            key_guard.OnKeyUp := FinishCapsLayerKeyGuard.Bind(physical_key)
+            caps_layer_key_guards[physical_key] := key_guard
+            try {
+                key_guard.Start()
+                SetTimer(WatchCapsLayerKeyReleases, caps_layer_key_poll_ms)
+            }
+            catch Error as err {
+                FinishCapsLayerKeyGuard(physical_key, key_guard)
+                throw err
+            }
+        }
+        return true
     }
     finally {
-        DisarmCapsLayer()
+        Critical(previous_critical)
+    }
+}
+
+FinishCapsLayerKeyGuard(physical_key, expected_guard, *)
+{
+    global caps_layer_key_guards
+
+    previous_critical := Critical("On")
+    try {
+        ; A delayed release must not stop a newer press's suppression hook.
+        if !caps_layer_key_guards.Has(physical_key)
+            || caps_layer_key_guards[physical_key] != expected_guard
+            return
+        expected_guard.Stop()
+        caps_layer_key_guards.Delete(physical_key)
+    }
+    finally {
+        Critical(previous_critical)
     }
 }
 
@@ -599,23 +664,73 @@ UseArmedWindowCascadeCommand(command_id, physical_key)
 
 HoldVirtualKey(virtual_key, physical_key)
 {
-    ; Use an elevated send level so companion AutoHotkey scripts can receive
-    ; these virtual keys as hotkeys.
-    previous_send_level := SendLevel(1)
+    global held_virtual_keys, caps_layer_key_poll_ms
 
+    previous_critical := Critical("On")
     try {
-        SendEvent "{Blind}{" virtual_key " down}"
-
-        ; The virtual key is held only while both physical keys remain down.
-        while GetKeyState("CapsLock", "P")
-            && GetKeyState(physical_key, "P")
-        {
-            Sleep 10
-        }
+        if held_virtual_keys.Has(physical_key)
+            return
+        held_virtual_keys[physical_key] := virtual_key
+        ; Arm recovery before sending, so a failed send cannot bypass cleanup.
+        SetTimer(WatchCapsLayerKeyReleases, caps_layer_key_poll_ms)
+        SendCapsLayerVirtualKey(virtual_key, " down")
+        ; Return instead of nesting wait loops when Q/W/etc. overlap.
     }
     finally {
-        SendEvent "{Blind}{" virtual_key " up}"
-        SendLevel previous_send_level
+        Critical(previous_critical)
+    }
+}
+
+SendCapsLayerVirtualKey(virtual_key, key_state := "")
+{
+    ; Companion AutoHotkey scripts receive this layer's generated hotkeys.
+    previous_send_level := SendLevel(1)
+    try SendEvent "{Blind}{" virtual_key key_state "}"
+    finally SendLevel previous_send_level
+}
+
+WatchCapsLayerKeyReleases()
+{
+    global held_virtual_keys, caps_layer_key_guards
+
+    previous_critical := Critical("On")
+    try {
+        caps_held := GetKeyState("CapsLock", "P")
+        for physical_key, virtual_key in held_virtual_keys.Clone() {
+            if caps_held && GetKeyState(physical_key, "P")
+                continue
+            SendCapsLayerVirtualKey(virtual_key, " up")
+            held_virtual_keys.Delete(physical_key)
+        }
+        for physical_key, key_guard in caps_layer_key_guards.Clone() {
+            if !GetKeyState(physical_key, "P")
+                FinishCapsLayerKeyGuard(physical_key, key_guard)
+        }
+        if !held_virtual_keys.Count && !caps_layer_key_guards.Count
+            SetTimer(WatchCapsLayerKeyReleases, 0)
+    }
+    finally {
+        Critical(previous_critical)
+    }
+}
+
+ReleaseCapsLayerInputs(*)
+{
+    global held_virtual_keys, caps_layer_key_guards, caps_layer_presence_mutex
+
+    SetTimer(WatchCapsLayerKeyReleases, 0)
+    SetTimer(DisarmCapsLayer, 0)
+    ; Reload/exit cannot rely on an interrupted hotkey's ordinary finally block.
+    for physical_key, virtual_key in held_virtual_keys
+        try SendCapsLayerVirtualKey(virtual_key, " up")
+    held_virtual_keys.Clear()
+    for physical_key, key_guard in caps_layer_key_guards
+        try key_guard.Stop()
+    caps_layer_key_guards.Clear()
+    try HideCapsLayerTip()
+    if caps_layer_presence_mutex {
+        DllCall("CloseHandle", "ptr", caps_layer_presence_mutex)
+        caps_layer_presence_mutex := 0
     }
 }
 
@@ -627,28 +742,30 @@ HoldVirtualKey(virtual_key, physical_key)
 
 WindowCascadeRotateKeyIs(expected_key)
 {
+    global window_cascade_rotate_key
+    ; #HotIf stays memory-only; the Cascade tray broadcasts committed changes.
+    return window_cascade_rotate_key = expected_key
+}
+
+ReadWindowCascadeRotateKey()
+{
     global window_cascade_settings_path
 
-    rotate_key := IniRead(
-        window_cascade_settings_path,
-        "Controls",
-        "RotateKey",
-        ""
-    )
-
-    ; Read the legacy INI section only to preserve an existing rotate-key choice.
+    rotate_key := IniRead(window_cascade_settings_path, "Controls", "RotateKey", "")
+    ; Preserve existing preferences saved by the former standalone controls.
     if rotate_key = ""
-        rotate_key := IniRead(
-            window_cascade_settings_path,
-            "Standalone",
-            "RotateKey",
-            "Space"
-        )
+        rotate_key := IniRead(window_cascade_settings_path, "Standalone", "RotateKey", "Space")
+    return rotate_key = "Tab" ? "Tab" : "Space"
+}
 
-    if rotate_key != "Space" && rotate_key != "Tab"
-        rotate_key := "Space"
+HandleWindowCascadeRotateKeyChanged(key_id, parameter, message_id, target_hwnd)
+{
+    global window_cascade_rotate_key
 
-    return rotate_key = expected_key
+    ; Broadcasts also reach our help GUI; accept once through the main window.
+    if target_hwnd != A_ScriptHwnd || (key_id != 1 && key_id != 2)
+        return
+    window_cascade_rotate_key := key_id = 2 ? "Tab" : "Space"
 }
 
 PostPlainWindowCascadeCommand(command_id)
@@ -674,7 +791,8 @@ PostWindowCascadeRotateCommandOnce(physical_key)
 
     ; Sample Alt once per press. KeyWait prevents held-key repeats or direction
     ; changes when Alt is released before the selected Space/Tab key.
-    if !GetKeyState("Shift", "P") {
+    if !GetKeyState("Shift", "P") && !GetKeyState("Ctrl", "P")
+        && !GetKeyState("LWin", "P") && !GetKeyState("RWin", "P") {
         direction := GetKeyState("Alt", "P") ? -1 : 1
         PostWindowCascadeCommand(cascade_command_rotate_layers, direction)
     }
@@ -745,8 +863,13 @@ ActiveWindowBlocksLayerTip()
         return false
 
     ; Suppress the mode indicator in maximized windows.
-    if WinGetMinMax("ahk_id " active_hwnd) = 1
+    try {
+        if WinGetMinMax(active_hwnd) = 1
+            return true
+    }
+    catch {
         return true
+    }
 
     try WinGetPos(
         &window_x,

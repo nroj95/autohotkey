@@ -542,6 +542,7 @@ BringCascadeForward(monitor_index)
     )
 
     visible_windows := []
+    originally_topmost := Map()
 
     for hwnd in ordered_windows {
         if !WinExist("ahk_id " hwnd)
@@ -550,6 +551,7 @@ BringCascadeForward(monitor_index)
         try {
             if WinGetMinMax("ahk_id " hwnd) = -1
                 continue
+            originally_topmost[hwnd] := !!(WinGetExStyle(hwnd) & 0x8) ; WS_EX_TOPMOST
         }
         catch {
             continue
@@ -592,13 +594,18 @@ BringCascadeForward(monitor_index)
         index -= 1
     }
 
-    ; Immediately return the group to the normal Z band. Doing this in the
-    ; same bottom-to-top order keeps every cascade window above unrelated
-    ; normal windows without leaving the cascade always-on-top.
+    ; Return only temporarily promoted windows to the normal Z band, keeping
+    ; the bottom-to-top order. Preserve an application's existing always-on-top
+    ; setting rather than clearing it as a side effect of bringing the group up.
     index := visible_windows.Length
 
     while index >= 1 {
         hwnd := visible_windows[index]
+
+        if originally_topmost[hwnd] {
+            index -= 1
+            continue
+        }
 
         try DllCall(
             "SetWindowPos",

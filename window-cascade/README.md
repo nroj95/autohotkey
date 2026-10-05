@@ -37,6 +37,8 @@ keep the `cascade_command_*` IDs in `settings.ahk` synchronized with the matchin
 
 `WindowCascade.Command`, the CapsLock Layer presence mutex, and the registered-message parameter contract form the cross-process integration surface. cross-monitor commands pass the original active window handle through that message path so the intended window remains the move target.
 
+`WindowCascade.RotateKeyChanged` broadcasts the committed rotate-key setting: `wParam = 1` means Space, `wParam = 2` means Tab, and `lParam = 0`. Window Cascade announces it at startup and after a successful tray-menu change. CapsLock Layer reads the persisted setting at startup, then uses this notification so its `#HotIf` predicate stays memory-only. reload both scripts after editing the INI externally; tray changes apply without a reload. the existing command IDs are unchanged.
+
 the launcher remains at the repository root. startup shortcuts and `icons/window-cascade.ico` keep their existing paths. Window Cascade stores `settings.ini` and `window-cascade-debug.log` under `%LOCALAPPDATA%\Window Cascade`.
 
 ## focus-tab clicks
@@ -54,6 +56,8 @@ the renderer hides the old representative before showing its replacement. geomet
 focus-tab colors are selected separately for the active and inactive slots from the tray. the selections persist under `[FocusTabs]` in `%LOCALAPPDATA%\Window Cascade\settings.ini`; defaults are Green for the active slot and Grey for inactive slots.
 
 ### appearance diagnostics
+
+focus-tab GUIs use `-DPIScale` because their dimensions already come from native pixel bounds. cloaked target windows are excluded from rendering and live click activation, without discarding their managed membership. an overlay pass with no visible slot candidates skips the global Z-order enumeration.
 
 normal tab rendering changes native opacity only when the desired value changes and repaints changed or newly shown overlays. the opacity cache is updated only after a successful native operation. overlay operations use pure HWNDs so hidden-window lookup does not depend on `DetectHiddenWindows`. the configured opacity values remain unchanged, and deeper tabs do not contribute additional opacity.
 
@@ -79,7 +83,9 @@ closed, moved-out, re-minimized, or manually dragged targets stop holding a rest
 
 ## scoped close batching
 
-`Caps + F4` closes all managed layers on the command monitor, using the former full-monitor close scope. it registers that whole scope before sending any `WinClose` requests. the former current-layer close command and the Alt variant are removed. destroy events remove windows from that batch, while layout compaction for the affected monitor stays deferred. the final destroyed target releases the batch and allows one queued compaction, so the cascade does not repeatedly reflow between individual closes.
+`Caps + F4` closes all managed layers on the command monitor, using the former full-monitor close scope. it registers that whole HWND/PID scope before sending any `WinClose` requests. the former current-layer close command and the Alt variant are removed. destroy events remove windows from that batch, while layout compaction for the affected monitor stays deferred. the final destroyed target releases the batch and allows one queued compaction, so the cascade does not repeatedly reflow between individual closes.
+
+if a close is cancelled, ignored, or fails, `cascade_close_timeout_ms` releases the remaining batch after 5000 ms from the end of request dispatch. this is only a compaction grace period: it never dismisses a save prompt, retries the close, or kills an application. a still-open save prompt does not keep compaction blocked indefinitely. stale expiration callbacks cannot clear a newer batch. disabling the cascade also clears old close-batch gates, and an interrupted close loop sends no further requests once it observes the disabled state.
 
 `Caps + F7` gathers the other monitors' cascades onto the command monitor. the former `Caps + Alt + F7` modifier is removed; the plain command is also available through the one-shot Caps layer.
 
@@ -100,6 +106,8 @@ placement correction follows each window's final destination. dropped-out window
 `Caps + Insert` remains available for explicit adoption and re-slotting, and newly opened windows still use normal automatic placement. global disable stops both automatic new-window placement and intentional cascade drag/drop. keyboard cascade commands are held off during a native move/resize interaction. the temporary drag watcher stops on completion, cancellation, destruction, or script exit.
 
 ## foreground recovery and performance
+
+bringing a cascade forward preserves each window's pre-existing always-on-top setting; only temporarily promoted normal windows are returned to the normal Z-order band.
 
 new-window placement remains non-activating. discovery retains focus context when a new window is already foreground or appears within `new_window_focus_timeout_ms` (3000 ms) of a taskbar mouse press. taskbar correlation is a recent-input heuristic, not proof of which process the taskbar launched. background launches without that context or observed foreground ownership are not activated.
 
@@ -140,6 +148,7 @@ for Window Cascade changes, check:
 - holding/dragging/releasing: no preview or repeat action; release outside the tab or on another monitor is still consumed
 - ordinary app clicks/drags and Escape retain native behavior; also test close/minimize/move, focus changes, and reload/exit while holding
 - slot swaps, slot/layer rotation, and exposed-stack ordering
+- bring a mixed normal/always-on-top cascade forward; existing topmost windows must remain topmost and normal windows must return to the normal band
 - Caps + F4: all layers on the current monitor close without intermediate compaction; other monitors stay untouched
 - drop-slot preservation: exactly one full layer and multiple layers; other windows fill gaps without moving the dropped window
 - partial layer: drops within the first N slots stay put; drops beyond that range compact inward
@@ -161,6 +170,16 @@ for Window Cascade changes, check:
 - tray help displays icons/window-cascade.ico in its caption/Alt+Tab; Escape and the hotkey both close it without leaking icon handles
 - tray Disable cascade mirrors Caps + M; rotate-key and focus-tab color preferences survive disable/resume
 - required CapsLock Layer behavior during startup, quick reloads, and a sustained dependency loss
+- cancel a save prompt after Caps + F4; verify compaction resumes after the close grace period without forcing the window closed
+- overlap close attempts, then disable/resume; an older expiration must not release a newer batch or retain an old gate
+- switch virtual desktops and test tabs at 100%, 125%, and 150% scaling; hidden/cloaked targets must not leave clickable tabs behind
+- change Space/Tab from the Cascade tray with the Caps help GUI open, then reload Caps; the selection must stay synchronized
+- hold Caps + Q, add W, release Q while holding W: F13 must release independently of F14; also release Caps first and reload while held
+- tap Caps, hold Q, then press W: only Q consumes the one-shot; W stays ordinary and Q does not leak repeat characters
+- type uppercase letters using separate left-Shift presses; ordinary shifted typing must not toggle Caps Lock, while a bare double-tap still does
+- re-arm Caps while an older consumed key is held; releasing the old key must not cancel the new one-shot
+- start a Terminal copy/clear chord, switch apps before releasing it, and verify the new app receives no macro shortcuts
+- test normal and failed Terminal copies; a failed copy restores the previous clipboard only while the script's cleared clipboard is unchanged
 
 avoid close-scope tests with unsaved work. syntax validation does not replace Windows desktop behavior testing. wait for the validation process and inspect its actual exit code; a previously printed success line is not a substitute for loading the updated launcher.
 

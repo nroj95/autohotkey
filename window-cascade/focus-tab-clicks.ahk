@@ -101,6 +101,7 @@ ActivateFocusTabClick(press)
         || focus_corner_overlays[target_hwnd].gui.Hwnd != press.overlay_hwnd
         || !focus_corner_overlays[target_hwnd].shown
         || !DllCall("IsWindowVisible", "ptr", target_hwnd, "int")
+        || IsWindowCloaked(target_hwnd)
         || WinGetMinMax(target_hwnd) != 0
         return
 
