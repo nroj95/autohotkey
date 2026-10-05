@@ -56,6 +56,12 @@ IsPlausibleTopLevelWindow(hwnd)
     if ex_style & 0x08000000 ; WS_EX_NOACTIVATE
         return false
 
+    ; Standard Windows dialogs and Explorer file-operation prompts are
+    ; transient UI, not standalone application windows.
+    if window_class = "#32770"
+        || window_class = "OperationStatusWindow"
+        return false
+
     ; Owned top-level windows are normally dialogs or transient popups.
     if DllCall("GetWindow", "ptr", hwnd, "uint", 4, "ptr") ; GW_OWNER
         return false
@@ -126,6 +132,12 @@ IsCascadeWindow(hwnd)
     if ex_style & 0x08000000 {
         return false
     }
+
+    ; Standard Windows dialogs and Explorer file-operation prompts are
+    ; transient UI, not standalone application windows.
+    if window_class = "#32770"
+        || window_class = "OperationStatusWindow"
+        return false
 
     ; Owned top-level windows are normally dialogs or transient popups.
     if DllCall("GetWindow", "ptr", hwnd, "uint", 4, "ptr") {
