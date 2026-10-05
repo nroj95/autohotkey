@@ -45,7 +45,7 @@ holding the toggle key opens or hides the drawer only once; release it before to
 
 by default, the drawer uses 75% of the selected monitor's work-area width and 40% of its height, centered horizontally at the top. the monitor is selected from the window active when the drawer is opened.
 
-the default motion is a 180 ms eased slide down/up. Windows' disabled-animation setting is respected. the drawer stays on top by default, and hiding it attempts to restore focus to the previous application.
+the default motion is a 180 ms eased slide down/up. Windows' disabled-animation setting is respected. the drawer uses normal window Z-order by default: opening it brings it forward, but other windows can cover it normally. when opened from a fullscreen or borderless-fullscreen window, Scratchpad temporarily becomes topmost so the drawer can appear over that application; the temporary state ends when the drawer is hidden, the source leaves fullscreen, or focus moves to an unrelated ordinary window. hiding attempts to restore focus to the previous application.
 
 Scratchpad marks its editor with `nroj.WindowCascade.Ignore`, so Window Cascade leaves the drawer alone.
 
@@ -86,7 +86,7 @@ Notepad3Executable=
 WidthPercent=75
 HeightPercent=40
 AnimationDurationMs=180
-AlwaysOnTop=1
+AlwaysOnTop=0
 
 [Saving]
 AutosaveIntervalMs=10000
@@ -95,7 +95,7 @@ AutosaveIntervalMs=10000
 ToggleHotkey=Win+F12
 ```
 
-leave `Notepad3Executable` blank for automatic detection, or enter the full path without surrounding quotes. `ToggleHotkey` stores the friendly shortcut name, for example `Win+F12` or `Ctrl+Shift+Space`. edit the settings through the tray menu, then reload. existing window-size and autosave settings are preserved; the values above are defaults, not forced migrations. `AnimationDurationMs=0` disables motion and `AlwaysOnTop=0` allows ordinary windows to cover the drawer.
+leave `Notepad3Executable` blank for automatic detection, or enter the full path without surrounding quotes. `ToggleHotkey` stores the friendly shortcut name, for example `Win+F12` or `Ctrl+Shift+Space`. edit the settings through the tray menu, then reload. existing window-size and autosave settings are preserved. the topmost setting is migrated once from the old `AlwaysOnTop=1` default to `0`; after that, an explicit `AlwaysOnTop=1` choice is preserved and pins Scratchpad above ordinary windows. modal, error and file-operation dialogs are still allowed above the drawer so prompts are not hidden. `AnimationDurationMs=0` disables motion.
 
 the current-page record is stored in `%LOCALAPPDATA%\Scratchpad\state.ini`, the dedicated editor configuration is stored in `%LOCALAPPDATA%\Scratchpad\Notepad3.ini`, and errors are logged to `%LOCALAPPDATA%\Scratchpad\errors.log`.
 

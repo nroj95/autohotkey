@@ -135,6 +135,8 @@ class ScratchpadController
         this.persisted_path := ""
         this.persisted_stamp := ""
         this.previous_window := 0
+        this.last_external_window := 0
+        this.fullscreen_source_window := 0
         this.last_bounds := 0
         this.page_lock_handle := 0
         this.page_lock_path := ""
@@ -187,7 +189,7 @@ class ScratchpadController
         this.width_percent := this.ReadNumber("Window", "WidthPercent", 75, 30, 100)
         this.height_percent := this.ReadNumber("Window", "HeightPercent", 40, 20, 100)
         this.animation_ms := this.ReadNumber("Window", "AnimationDurationMs", 180, 0, 1000)
-        this.always_on_top := this.ReadNumber("Window", "AlwaysOnTop", 1, 0, 1)
+        this.always_on_top := this.ReadNumber("Window", "AlwaysOnTop", 0, 0, 1)
         this.autosave_ms := this.ReadNumber("Saving", "AutosaveIntervalMs", 10000, 500, 60000)
         this.allowed_extensions := "|md|txt|ps1|psm1|psd1|py|pyw|ahk|lua|js|ts|jsx|tsx|"
             . "json|jsonc|yaml|yml|xml|html|htm|css|scss|ini|cfg|conf|toml|log|"
@@ -221,9 +223,9 @@ class ScratchpadController
     {
         if !FileExist(this.settings_path) {
             settings := "[Paths]`nScratchDirectory=D:\toolbox\scratch`nNotepad3Executable=`n"
-                . "`n[Window]`nWidthPercent=75`nHeightPercent=40`nAnimationDurationMs=180`nAlwaysOnTop=1`n"
+                . "`n[Window]`nWidthPercent=75`nHeightPercent=40`nAnimationDurationMs=180`nAlwaysOnTop=0`n"
                 . "`n[Saving]`nAutosaveIntervalMs=10000`n`n[Controls]`nToggleHotkey=Win+F12`n"
-                . "`n[Setup]`nWelcomePending=1`n"
+                . "`n[Setup]`nWelcomePending=1`nSettingsVersion=2`n"
             FileAppend settings, this.settings_path, "UTF-16"
         }
         if IniRead(this.settings_path, "Controls", "ToggleHotkey", "<missing>") = "<missing>" {
@@ -238,6 +240,16 @@ class ScratchpadController
             IniDelete this.settings_path, "Paths", "NotepadExecutable"
         if IniRead(this.settings_path, "Paths", "Notepad3Executable", "<missing>") = "<missing>"
             IniWrite "", this.settings_path, "Paths", "Notepad3Executable"
+
+        ; Version 2 changes the drawer default to normal Z-order. Existing files
+        ; inherited AlwaysOnTop=1 from the old default, so migrate it once. After
+        ; this marker is written, an explicit user choice of 1 is preserved.
+        settings_version := IniRead(this.settings_path, "Setup", "SettingsVersion", "1")
+        if settings_version = "1" {
+            if IniRead(this.settings_path, "Window", "AlwaysOnTop", "1") = "1"
+                IniWrite 0, this.settings_path, "Window", "AlwaysOnTop"
+            IniWrite 2, this.settings_path, "Setup", "SettingsVersion"
+        }
 
         ; Windows INI writes use CRLF. Normalize the controller settings after
         ; migrations so Notepad3 never sees a mixture of LF and CRLF lines.
@@ -550,6 +562,11 @@ class ScratchpadController
                 this.ProtectPage(path)
 
             this.bridge.PrepareDrawer()
+            ; A reloaded controller cannot safely infer the window that originally
+            ; opened a visible drawer, so only the explicit persistent setting is
+            ; restored here. A later show can opt into temporary fullscreen topmost.
+            this.fullscreen_source_window := 0
+            this.SetDrawerTopmost(this.IsVisible() && this.always_on_top)
             return true
         }
         return false
@@ -926,12 +943,17 @@ class ScratchpadController
 
     SyncPageLock(*)
     {
+        if this.busy || !this.IsVisible()
+            return
+
+        ; Reuse the existing low-frequency watcher for Z-order too. This keeps
+        ; dialogs visible above a topmost drawer without another permanent timer.
+        try this.SyncZOrder()
+
         ; Native Save As happens outside Scratchpad's command path. While the
         ; drawer is visible, cheaply watch Notepad3's current filename so the
         ; delete-denying handle follows it without waiting for autosave.
         ; Four checks per second are enough here; this is not an animation loop.
-        if this.busy || !this.IsVisible()
-            return
         if !this.bridge || this.bridge.tainted
             return
         if !ScratchpadWindowIdle(this.window_hwnd)
@@ -1252,8 +1274,10 @@ class ScratchpadController
             this.FocusEditor()
             return
         }
-        if source_window && source_window != this.window_hwnd
+        if source_window && source_window != this.window_hwnd {
             this.previous_window := source_window
+            this.last_external_window := source_window
+        }
         this.last_bounds := this.GetBounds(source_window)
         bounds := this.last_bounds
 
@@ -1267,7 +1291,12 @@ class ScratchpadController
         WinGetPos , , &actual_width, &actual_height, "ahk_id " this.window_hwnd
         bounds.w := actual_width
         bounds.h := actual_height
-        WinSetAlwaysOnTop this.always_on_top, "ahk_id " this.window_hwnd
+
+        ; Normal desktop use stays in ordinary Z-order. When the drawer is opened
+        ; from a fullscreen/borderless window, temporarily enter the topmost band
+        ; so the drawer can actually appear over that source window.
+        this.fullscreen_source_window := ScratchpadIsFullscreenWindow(source_window) ? source_window : 0
+        this.SetDrawerTopmost(this.WantsTopmost())
         this.AnimateWindow(true, bounds, animate)
         this.FocusEditor()
     }
@@ -1286,12 +1315,153 @@ class ScratchpadController
         bounds.start_y := window_y
         this.last_bounds := bounds
         this.AnimateWindow(false, bounds)
+        this.fullscreen_source_window := 0
+        this.SetDrawerTopmost(false)
         if was_active && this.previous_window
             && DllCall("IsWindowVisible", "ptr", this.previous_window, "int")
             && !DllCall("IsIconic", "ptr", this.previous_window, "int")
         {
             try WinActivate "ahk_id " this.previous_window
         }
+    }
+
+    WantsTopmost()
+    {
+        return !!this.always_on_top || !!this.fullscreen_source_window
+    }
+
+    SetDrawerTopmost(enabled)
+    {
+        if !this.window_hwnd || !DllCall("IsWindow", "ptr", this.window_hwnd, "int")
+            return
+
+        enabled := !!enabled
+        ex_style := DllCall("GetWindowLongPtrW", "ptr", this.window_hwnd, "int", -20, "ptr")
+        is_topmost := !!(ex_style & 0x8) ; WS_EX_TOPMOST
+        if is_topmost = enabled
+            return
+
+        WinSetAlwaysOnTop enabled, "ahk_id " this.window_hwnd
+    }
+
+    SyncZOrder()
+    {
+        if !this.IsVisible()
+            return
+
+        foreground := DllCall("GetForegroundWindow", "ptr")
+        if foreground && foreground != this.window_hwnd
+            && !ScratchpadIsDialogWindow(foreground)
+        {
+            this.last_external_window := foreground
+        }
+
+        ; Temporary fullscreen topmost belongs only to the source window that
+        ; opened the drawer. Drop it if that window stops being fullscreen or the
+        ; user moves to an unrelated ordinary application.
+        if this.fullscreen_source_window {
+            source := this.fullscreen_source_window
+            source_valid := DllCall("IsWindow", "ptr", source, "int")
+                && DllCall("IsWindowVisible", "ptr", source, "int")
+                && !DllCall("IsIconic", "ptr", source, "int")
+                && ScratchpadIsFullscreenWindow(source)
+
+            if !source_valid
+                this.fullscreen_source_window := 0
+            else if foreground && foreground != this.window_hwnd && foreground != source
+                && !ScratchpadIsDialogWindow(foreground)
+                this.fullscreen_source_window := 0
+        }
+
+        wants_topmost := this.WantsTopmost()
+
+        ; A prompt created behind a topmost drawer may never become foreground, so
+        ; foreground-only detection cannot see it. Scan conservatively for visible
+        ; dialog windows related to the most recent external application.
+        if wants_topmost {
+            dialog := this.FindYieldDialog(foreground)
+            if dialog {
+                this.YieldDrawerTo(dialog)
+                return
+            }
+        }
+
+        this.SetDrawerTopmost(wants_topmost)
+    }
+
+    FindYieldDialog(foreground)
+    {
+        if foreground && foreground != this.window_hwnd
+            && ScratchpadIsDialogWindow(foreground)
+            return foreground
+
+        context := 0
+        if foreground && foreground != this.window_hwnd
+            && ScratchpadUsableWindow(foreground)
+            && !ScratchpadIsDialogWindow(foreground)
+        {
+            context := foreground
+        } else if ScratchpadUsableWindow(this.last_external_window) {
+            context := this.last_external_window
+        }
+
+        context_pid := context ? ScratchpadWindowProcessId(context) : 0
+
+        ; WinGetList follows top-level Z-order and, with DetectHiddenWindows off,
+        ; only returns visible windows. OperationStatusWindow is specific enough to
+        ; yield globally; broader dialog forms must belong to the current context.
+        for candidate in WinGetList() {
+            if candidate = this.window_hwnd || !ScratchpadIsDialogWindow(candidate)
+                continue
+
+            try candidate_class := WinGetClass("ahk_id " candidate)
+            catch
+                continue
+
+            if candidate_class = "OperationStatusWindow"
+                return candidate
+
+            ; Explorer's File In Use/delete/error prompts commonly use the classic
+            ; dialog class. Recognize those directly so a fast prompt cannot slip
+            ; between foreground samples and lose its Explorer context.
+            if candidate_class = "#32770" {
+                try candidate_process := WinGetProcessName("ahk_id " candidate)
+                catch
+                    candidate_process := ""
+                if StrLower(candidate_process) = "explorer.exe"
+                    return candidate
+            }
+
+            owner := DllCall("GetWindow", "ptr", candidate, "uint", 4, "ptr") ; GW_OWNER
+            if owner = this.window_hwnd
+                return candidate
+
+            if context {
+                if owner = context
+                    return candidate
+
+                candidate_pid := ScratchpadWindowProcessId(candidate)
+                if context_pid && candidate_pid = context_pid
+                    return candidate
+            }
+        }
+
+        return 0
+    }
+
+    YieldDrawerTo(dialog)
+    {
+        if !ScratchpadUsableWindow(dialog)
+            return
+
+        this.SetDrawerTopmost(false)
+
+        ; HWND_NOTOPMOST can leave the drawer at the top of the normal band. Put
+        ; it explicitly behind the prompt so the prompt becomes visible without
+        ; activating, moving, resizing or otherwise modifying that foreign window.
+        DllCall("SetWindowPos", "ptr", this.window_hwnd, "ptr", dialog,
+            "int", 0, "int", 0, "int", 0, "int", 0,
+            "uint", 0x213, "int") ; NOSIZE | NOMOVE | NOACTIVATE | NOOWNERZORDER
     }
 
     AnimateWindow(showing, bounds, animate := true)
@@ -1437,8 +1607,19 @@ class ScratchpadController
         try FileAppend detail, this.error_log, "UTF-8-RAW"
         if notification
             TrayTip failure.Message, "Scratchpad - autosave paused", 2
-        else
-            MsgBox failure.Message "`n`nDetails: " this.error_log, "Scratchpad", "Iconx 4096"
+        else {
+            ; ProcessCommands keeps the controller busy while reporting failures,
+            ; so the timer cannot yield Z-order for our own modal message box.
+            ; Lower the drawer explicitly, then restore the requested policy.
+            restore_topmost := this.IsVisible() && this.WantsTopmost()
+            if restore_topmost
+                try this.SetDrawerTopmost(false)
+            try MsgBox failure.Message "`n`nDetails: " this.error_log, "Scratchpad", "Iconx 4096"
+            finally {
+                if restore_topmost && this.IsVisible()
+                    try this.SetDrawerTopmost(this.WantsTopmost())
+            }
+        }
     }
 
     ; =========================================================================
@@ -1949,6 +2130,79 @@ ScratchpadWindowIdle(hwnd)
         return false
     popup := DllCall("GetLastActivePopup", "ptr", hwnd, "ptr")
     return !popup || popup = hwnd || !DllCall("IsWindowVisible", "ptr", popup, "int")
+}
+
+ScratchpadUsableWindow(hwnd)
+{
+    return hwnd
+        && DllCall("IsWindow", "ptr", hwnd, "int")
+        && DllCall("IsWindowVisible", "ptr", hwnd, "int")
+        && !DllCall("IsIconic", "ptr", hwnd, "int")
+}
+
+ScratchpadWindowProcessId(hwnd)
+{
+    if !hwnd
+        return 0
+    process_id := Buffer(4, 0)
+    DllCall("GetWindowThreadProcessId", "ptr", hwnd, "ptr", process_id, "uint")
+    return NumGet(process_id, 0, "uint")
+}
+
+ScratchpadIsDialogWindow(hwnd)
+{
+    if !hwnd || !DllCall("IsWindow", "ptr", hwnd, "int")
+        || !DllCall("IsWindowVisible", "ptr", hwnd, "int")
+        || DllCall("IsIconic", "ptr", hwnd, "int")
+        return false
+
+    try {
+        window_class := WinGetClass("ahk_id " hwnd)
+        if window_class = "#32770" || window_class = "OperationStatusWindow"
+            return true
+    }
+    catch {
+        return false
+    }
+
+    ex_style := DllCall("GetWindowLongPtrW", "ptr", hwnd, "int", -20, "ptr")
+    if ex_style & 0x1 ; WS_EX_DLGMODALFRAME
+        return true
+
+    ; Owned top-level windows are commonly prompts, property sheets and other
+    ; transient UI that should not be hidden under an explicitly topmost drawer.
+    return DllCall("GetWindow", "ptr", hwnd, "uint", 4, "ptr") != 0 ; GW_OWNER
+}
+
+ScratchpadIsFullscreenWindow(hwnd)
+{
+    if !hwnd || !DllCall("IsWindow", "ptr", hwnd, "int")
+        || !DllCall("IsWindowVisible", "ptr", hwnd, "int")
+        || DllCall("IsIconic", "ptr", hwnd, "int")
+        return false
+
+    monitor := DllCall("MonitorFromWindow", "ptr", hwnd, "uint", 2, "ptr")
+    if !monitor
+        return false
+
+    monitor_info := Buffer(40, 0)
+    NumPut("uint", monitor_info.Size, monitor_info)
+    if !DllCall("GetMonitorInfoW", "ptr", monitor, "ptr", monitor_info, "int")
+        return false
+
+    bounds := Buffer(16, 0)
+    ; DWM bounds exclude invisible resize borders. Fall back for exclusive-mode
+    ; or non-DWM windows where the extended-frame query is unavailable.
+    if DllCall("dwmapi\DwmGetWindowAttribute", "ptr", hwnd, "uint", 9,
+        "ptr", bounds, "uint", bounds.Size, "int") != 0
+        && !DllCall("GetWindowRect", "ptr", hwnd, "ptr", bounds, "int")
+        return false
+
+    tolerance := 2
+    return Abs(NumGet(bounds, 0, "int") - NumGet(monitor_info, 4, "int")) <= tolerance
+        && Abs(NumGet(bounds, 4, "int") - NumGet(monitor_info, 8, "int")) <= tolerance
+        && Abs(NumGet(bounds, 8, "int") - NumGet(monitor_info, 12, "int")) <= tolerance
+        && Abs(NumGet(bounds, 12, "int") - NumGet(monitor_info, 16, "int")) <= tolerance
 }
 
 ScratchpadFullPath(path)
