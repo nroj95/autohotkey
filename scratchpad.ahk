@@ -49,9 +49,34 @@ catch as startup_failure {
 }
 
 #HotIf ScratchpadEditorFocused()
+~#.::
+{
+    scratchpad.NoteSystemTextInputInvocation()
+}
+
+#HotIf IsSet(scratchpad) && scratchpad.SystemTextInputEscapePending()
+~LButton Up::
+~RButton Up::
+~MButton Up::
+~XButton1 Up::
+~XButton2 Up::
+{
+    scratchpad.HandleSystemTextInputClick()
+}
+
+#HotIf ScratchpadEditorFocused()
 $Esc::
 {
-    scratchpad.HandleEscape()
+    if scratchpad.SystemTextInputEscapePending() {
+        scratchpad.ConsumeSystemTextInputEscape()
+
+        ; Let Windows dismiss the system text-input surface first. $Esc keeps
+        ; the forwarded key from recursively invoking this hotkey.
+        Send "{Esc}"
+    } else {
+        scratchpad.HandleEscape()
+    }
+
     KeyWait "Escape"
 }
 $^n::
@@ -137,6 +162,7 @@ class ScratchpadController
         this.previous_window := 0
         this.last_external_window := 0
         this.fullscreen_source_window := 0
+        this.system_text_input_escape_pending := false
         this.last_bounds := 0
         this.page_lock_handle := 0
         this.page_lock_path := ""
@@ -288,6 +314,63 @@ class ScratchpadController
             KeyWait key
     }
 
+    NoteSystemTextInputInvocation()
+    {
+        this.system_text_input_escape_pending := true
+    }
+
+    SystemTextInputEscapePending()
+    {
+        return this.system_text_input_escape_pending
+    }
+
+    ConsumeSystemTextInputEscape()
+    {
+        this.system_text_input_escape_pending := false
+    }
+
+    HandleSystemTextInputClick()
+    {
+        if !this.system_text_input_escape_pending
+            return
+
+        point := Buffer(8, 0)
+        if !DllCall("GetCursorPos", "ptr", point, "int") {
+            this.ConsumeSystemTextInputEscape()
+            return
+        }
+
+        point_value := NumGet(point, 0, "int64")
+        clicked_hwnd := DllCall(
+            "WindowFromPoint",
+            "int64", point_value,
+            "ptr"
+        )
+
+        if !clicked_hwnd {
+            this.ConsumeSystemTextInputEscape()
+            return
+        }
+
+        ; The Windows emoji picker exposes its interactive surface under the
+        ; pointer as TextInputHost / Windows.UI.Core.CoreWindow. Clicks there
+        ; keep the picker session alive; any click elsewhere dismisses it.
+        try {
+            process_name := WinGetProcessName("ahk_id " clicked_hwnd)
+            window_class := WinGetClass("ahk_id " clicked_hwnd)
+        }
+        catch {
+            process_name := ""
+            window_class := ""
+        }
+
+        if StrLower(process_name) != "textinputhost.exe"
+            || window_class != "Windows.UI.Core.CoreWindow"
+        {
+            this.ConsumeSystemTextInputEscape()
+        }
+    }
+
     SetToggleHotkey(name, persist := true)
     {
         parsed := this.ParseToggleHotkey(name)
@@ -409,6 +492,11 @@ class ScratchpadController
 
     QueueCommand(command, *)
     {
+        ; Hiding or toggling the drawer ends any outstanding Windows text-input
+        ; session so it cannot affect Escape after Scratchpad is reopened.
+        if command = "hide" || command = "toggle"
+            this.ConsumeSystemTextInputEscape()
+
         if this.command_queue.Length >= 8
             return
         this.command_queue.Push({name: command, source_window: WinExist("A")})
