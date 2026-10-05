@@ -208,7 +208,7 @@ class ScratchpadController
     {
         if !FileExist(this.settings_path) {
             settings := "[Paths]`nScratchDirectory=D:\toolbox\scratch`nNotepad3Executable=`n"
-                . "`n[Window]`nWidthPercent=75`nHeightPercent=60`nAnimationDurationMs=180`nAlwaysOnTop=1`n"
+                . "`n[Window]`nWidthPercent=75`nHeightPercent=40`nAnimationDurationMs=180`nAlwaysOnTop=1`n"
                 . "`n[Saving]`nAutosaveIntervalMs=2000`n`n[Controls]`nToggleHotkey=Win+F12`n"
             FileAppend settings, this.settings_path, "UTF-16"
         }
