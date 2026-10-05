@@ -21,7 +21,7 @@ a top-edge scratch drawer for temporary notes and code, using Notepad3 as the ed
 - supports quick page creation and keyboard page navigation
 - tracks native **Save As** renames inside the scratch folder
 - protects the active page from accidental external deletion or replacement
-- uses normal Z-order by default, but can temporarily rise above fullscreen applications
+- stays topmost while visible so the drawer remains available over other applications
 - file-operation and error dialogs are allowed above the drawer
 - includes first-run setup, tray controls, startup support, and built-in help
 
@@ -58,7 +58,6 @@ Notepad3Executable=
 WidthPercent=75
 HeightPercent=40
 AnimationDurationMs=180
-AlwaysOnTop=0
 
 [Saving]
 AutosaveIntervalMs=10000
