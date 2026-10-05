@@ -602,31 +602,126 @@ class ScratchpadController
         configured := IniRead(this.settings_path, "Paths", "Notepad3Executable", "")
         if configured != "" {
             SplitPath configured, &file_name
-            if !FileExist(configured) || file_name != "Notepad3.exe"
+            if !FileExist(configured) || StrLower(file_name) != "notepad3.exe"
                 throw Error("Notepad3Executable must point to Notepad3.exe:`n" configured
                     . "`n`nCorrect it in Scratchpad settings, then reload.")
             return configured
         }
-        candidates := []
-        for root in ["HKCU", "HKLM"] {
-            try candidates.Push(RegRead(root "\Software\Microsoft\Windows\CurrentVersion\App Paths\Notepad3.exe"))
+
+        if executable := this.FindInstalledNotepad3()
+            return executable
+
+        choice := MsgBox(
+            "Notepad3 was not found.`n`n"
+                . "Scratchpad requires Notepad3.`n`n"
+                . "Yes = install Notepad3`n"
+                . "No = locate Notepad3.exe manually`n"
+                . "Cancel = stop",
+            "Scratchpad setup",
+            "YesNoCancel Iconi 4096"
+        )
+
+        if choice = "No"
+            return this.SelectNotepad3Executable()
+
+        if choice != "Yes"
+            throw Error("Notepad3 is required to use Scratchpad.")
+
+        MsgBox(
+            "Scratchpad will open the Notepad3 installer.`n`n"
+                . "Follow the setup wizard. Scratchpad will continue automatically "
+                . "when installation finishes.",
+            "Scratchpad setup",
+            "Iconi 4096"
+        )
+
+        if !this.InstallNotepad3WithWinget() {
+            choice := MsgBox(
+                "Scratchpad could not install Notepad3 automatically.`n`n"
+                    . "Would you like to locate an existing Notepad3.exe manually?",
+                "Scratchpad setup",
+                "YesNo Iconx 4096"
+            )
+
+            if choice = "Yes"
+                return this.SelectNotepad3Executable()
+
+            throw Error("Notepad3 is required to use Scratchpad.")
         }
+
+        ; Give App Paths and the installation directory a moment to appear.
+        loop 50 {
+            if executable := this.FindInstalledNotepad3()
+                return executable
+            Sleep 100
+        }
+
+        MsgBox(
+            "Notepad3 appears to be installed, but Scratchpad could not locate it "
+                . "automatically.`n`nLocate Notepad3.exe to continue.",
+            "Scratchpad setup",
+            "Iconi 4096"
+        )
+        return this.SelectNotepad3Executable()
+    }
+
+    FindInstalledNotepad3()
+    {
+        candidates := []
+
+        for root in ["HKCU", "HKLM"] {
+            try candidates.Push(
+                RegRead(root "\Software\Microsoft\Windows\CurrentVersion\App Paths\Notepad3.exe")
+            )
+        }
+
         for variable in ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"] {
             directory := EnvGet(variable)
             if directory != ""
                 candidates.Push(directory "\Notepad3\Notepad3.exe")
         }
-        for candidate in WinGetList("ahk_exe Notepad3.exe") {
-            try candidates.Push(WinGetProcessPath("ahk_id " candidate))
+
+        for hwnd in WinGetList("ahk_exe Notepad3.exe") {
+            try candidates.Push(WinGetProcessPath("ahk_id " hwnd))
         }
+
         for candidate in candidates {
-            if FileExist(candidate)
+            if !FileExist(candidate)
+                continue
+            SplitPath candidate, &file_name
+            if StrLower(file_name) = "notepad3.exe"
                 return candidate
         }
-        selected := FileSelect(1, , "Locate Notepad3.exe (installed or portable)", "Notepad3 (Notepad3.exe)")
+
+        return ""
+    }
+
+    InstallNotepad3WithWinget()
+    {
+        command := "winget.exe install --exact --id Rizonesoft.Notepad3 --source winget"
+            . " --accept-package-agreements --accept-source-agreements --interactive"
+
+        try return RunWait(command, , "Hide") = 0
+        catch
+            return false
+    }
+
+    SelectNotepad3Executable()
+    {
+        selected := FileSelect(
+            1,
+            ,
+            "Locate Notepad3.exe (installed or portable)",
+            "Notepad3 (Notepad3.exe)"
+        )
+
+        if selected = ""
+            throw Error("Notepad3 is required to use Scratchpad.")
+
         SplitPath selected, &file_name
-        if selected = "" || file_name != "Notepad3.exe"
+        if StrLower(file_name) != "notepad3.exe"
             throw Error("Select Notepad3.exe, not its installer or a shortcut.")
+
         IniWrite selected, this.settings_path, "Paths", "Notepad3Executable"
         return selected
     }
