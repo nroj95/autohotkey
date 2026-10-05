@@ -136,6 +136,8 @@ class ScratchpadController
         this.persisted_stamp := ""
         this.previous_window := 0
         this.last_bounds := 0
+        this.page_lock_handle := 0
+        this.page_lock_path := ""
         this.window_marker := "nroj.Scratchpad.Notepad3Window"
         this.cascade_ignore_marker := "nroj.WindowCascade.Ignore"
         this.controller_title := "nroj.Scratchpad.Controller"
@@ -193,6 +195,7 @@ class ScratchpadController
 
         this.process_commands_callback := ObjBindMethod(this, "ProcessCommands")
         this.autosave_callback := ObjBindMethod(this, "Autosave")
+        this.page_lock_sync_callback := ObjBindMethod(this, "SyncPageLock")
         OnExit ObjBindMethod(this, "OnScriptExit")
 
         ; Hidden owner/sender window for WM_COPYDATA page switches.
@@ -202,6 +205,7 @@ class ScratchpadController
         configured_hotkey := IniRead(this.settings_path, "Controls", "ToggleHotkey", "Win+F12")
         this.SetToggleHotkey(configured_hotkey, false)
         SetTimer this.autosave_callback, this.autosave_ms
+        SetTimer this.page_lock_sync_callback, 50
     }
 
     CreateDefaultSettings()
@@ -210,6 +214,7 @@ class ScratchpadController
             settings := "[Paths]`nScratchDirectory=D:\toolbox\scratch`nNotepad3Executable=`n"
                 . "`n[Window]`nWidthPercent=75`nHeightPercent=40`nAnimationDurationMs=180`nAlwaysOnTop=1`n"
                 . "`n[Saving]`nAutosaveIntervalMs=10000`n`n[Controls]`nToggleHotkey=Win+F12`n"
+                . "`n[Setup]`nWelcomePending=1`n"
             FileAppend settings, this.settings_path, "UTF-16"
         }
         if IniRead(this.settings_path, "Controls", "ToggleHotkey", "<missing>") = "<missing>" {
@@ -476,13 +481,25 @@ class ScratchpadController
 
     HasWindow()
     {
-        if !this.window_hwnd || !DllCall("IsWindow", "ptr", this.window_hwnd, "int")
+        if !this.window_hwnd || !DllCall("IsWindow", "ptr", this.window_hwnd, "int") {
+            this.ReleasePageLock()
             return false
-        if !DllCall("GetPropW", "ptr", this.window_hwnd, "str", this.window_marker, "ptr")
+        }
+        if !DllCall("GetPropW", "ptr", this.window_hwnd, "str", this.window_marker, "ptr") {
+            this.ReleasePageLock()
             return false
-        try return WinGetPID("ahk_id " this.window_hwnd) = this.editor_pid
-        catch
+        }
+
+        try {
+            valid := WinGetPID("ahk_id " this.window_hwnd) = this.editor_pid
+            if !valid
+                this.ReleasePageLock()
+            return valid
+        }
+        catch {
+            this.ReleasePageLock()
             return false
+        }
     }
 
     IsVisible()
@@ -516,6 +533,11 @@ class ScratchpadController
             ; Keep the old disk stamp on reattach: reload must not bless a conflict.
             this.disk_stamp := path = saved_path
                 ? IniRead(this.state_path, "CurrentPage", "DiskStamp", "") : ""
+
+            attributes := FileExist(path)
+            if this.IsScratchPath(path) && attributes && !InStr(attributes, "D")
+                this.ProtectPage(path)
+
             this.bridge.PrepareDrawer()
             return true
         }
@@ -538,15 +560,31 @@ class ScratchpadController
         executable := this.FindNotepad3Executable()
         initial_path := IniRead(this.state_path, "CurrentPage", "Path", "")
         new_page := false
+        welcome_pending := IniRead(
+            this.settings_path,
+            "Setup",
+            "WelcomePending",
+            "0"
+        ) = "1"
+
         if !this.IsScratchPath(initial_path) || !FileExist(initial_path) {
             pages := this.ListPages()
+
             if pages.Length
                 initial_path := pages[pages.Length]
             else {
                 initial_path := this.CreatePage()
+
+                if welcome_pending
+                    FileAppend this.WelcomeText(), initial_path, "UTF-8-RAW"
+
                 new_page := true
             }
         }
+
+        ; Welcome is a first-install opportunity, not a recurring empty-folder state.
+        if welcome_pending
+            IniWrite 0, this.settings_path, "Setup", "WelcomePending"
         initial_path := ScratchpadFullPath(initial_path)
         before_load_stamp := ScratchpadFileStamp(initial_path)
         ; /n requests a new process/window, /f isolates its INI, /l0 prompts on
@@ -582,6 +620,7 @@ class ScratchpadController
         WinHide "ahk_id " this.window_hwnd
         this.current_path := initial_path
         this.disk_stamp := before_load_stamp
+        this.ProtectPage(initial_path)
         this.bridge.PrepareDrawer()
         this.last_bounds := this.GetBounds(source_window)
         this.PersistCurrentState()
@@ -814,6 +853,102 @@ class ScratchpadController
         }
     }
 
+    ProtectPage(path)
+    {
+        path := ScratchpadFullPath(path)
+
+        if this.page_lock_handle && path = this.page_lock_path
+            return
+
+        attributes := FileExist(path)
+        if !attributes || InStr(attributes, "D")
+            throw Error("Cannot protect a missing or invalid scratch page:`n" path)
+
+        ; Match the tested PowerShell lock: permit normal reads/writes while
+        ; denying delete sharing. This blocks external delete/rename/replace
+        ; without interfering with Notepad3's normal Save or Save As.
+        new_handle := DllCall(
+            "CreateFileW",
+            "str", path,
+            "uint", 0x80000000, ; GENERIC_READ
+            "uint", 0x00000003, ; FILE_SHARE_READ | FILE_SHARE_WRITE
+            "ptr", 0,
+            "uint", 3,          ; OPEN_EXISTING
+            "uint", 0x80,       ; FILE_ATTRIBUTE_NORMAL
+            "ptr", 0,
+            "ptr"
+        )
+
+        if new_handle = -1
+            throw OSError(A_LastError, "CreateFileW", path)
+
+        ; Acquire the new lock before releasing the old one so a page switch
+        ; never leaves both pages unprotected because opening the new lock failed.
+        old_handle := this.page_lock_handle
+        this.page_lock_handle := new_handle
+        this.page_lock_path := path
+
+        if old_handle
+            DllCall("CloseHandle", "ptr", old_handle)
+    }
+
+    ReleasePageLock()
+    {
+        if this.page_lock_handle
+            DllCall("CloseHandle", "ptr", this.page_lock_handle)
+
+        this.page_lock_handle := 0
+        this.page_lock_path := ""
+    }
+
+    SyncPageLock(*)
+    {
+        ; Native Save As happens outside Scratchpad's command path. While the
+        ; drawer is visible, cheaply watch Notepad3's current filename so the
+        ; delete-denying handle follows it without waiting for autosave.
+        if this.busy || !this.IsVisible()
+            return
+        if !this.bridge || this.bridge.tainted
+            return
+        if !ScratchpadWindowIdle(this.window_hwnd)
+            return
+
+        try {
+            path := this.bridge.CurrentPath()
+
+            if path = this.page_lock_path
+                return
+
+            attributes := path != "" ? FileExist(path) : ""
+
+            if this.IsScratchPath(path) && attributes && !InStr(attributes, "D")
+                this.ProtectPage(path)
+            else
+                this.ReleasePageLock()
+        }
+        catch {
+            ; Native dialogs and transient filename changes are retried on the
+            ; next tick. Normal Scratchpad commands still report real failures.
+        }
+    }
+
+    WelcomeText()
+    {
+        if this.toggle_hotkey_name = "Disabled"
+            toggle_text := "The global toggle shortcut is currently disabled."
+        else
+            toggle_text := this.DisplayHotkeyName(this.toggle_hotkey_name)
+                . " — show or hide Scratchpad"
+
+        return "# Welcome to Scratchpad`n`n"
+            . toggle_text "`n"
+            . "Escape — hide Scratchpad`n`n"
+            . "Right-click the Scratchpad tray icon and choose **How to use** "
+            . "for shortcuts and more.`n`n"
+            . "You can also change the toggle shortcut from the tray menu.`n`n"
+            . "Start typing below.`n`n"
+    }
+
     CheckCurrentPage()
     {
         if !this.HasWindow()
@@ -825,9 +960,14 @@ class ScratchpadController
         if !this.IsScratchPath(path)
             throw Error("The editor is not showing a supported file directly inside:`n"
                 . this.scratch_directory "`n`nReturn to a scratch page or use File > Save As. Unrelated files will not be saved or closed automatically.")
-        if !FileExist(path) || InStr(FileExist(path), "D")
-            throw Error("The open page was renamed, moved or deleted outside Notepad3:`n" path
-                . "`n`nUse File > Save As to preserve it, or reopen the renamed page. The old name will not be recreated automatically.")
+        attributes := FileExist(path)
+        if !attributes
+            throw Error("The active scratch page unexpectedly disappeared from disk:`n" path)
+        if InStr(attributes, "D")
+            throw Error("The open page path now refers to a directory:`n" path)
+
+        this.ProtectPage(path)
+
         if path != this.current_path {
             ; Notepad3's path control follows native Open, Rename and Save As.
             ; Accept the user's explicit document change; subsequent disk changes
@@ -950,6 +1090,10 @@ class ScratchpadController
         this.bridge.Command(Notepad3Bridge.encoding_utf8)
         this.bridge.Command(Notepad3Bridge.line_endings_lf)
         this.SaveCurrentPage()
+
+        ; New pages open ready for immediate typing; welcome pages start below the guide.
+        length := this.bridge.Scintilla(2006) ; SCI_GETLENGTH
+        this.bridge.Scintilla(2160, length, length) ; SCI_SETSEL
     }
 
     SwitchPage(next_path, new_page := false)
@@ -965,6 +1109,8 @@ class ScratchpadController
         this.bridge.OpenPage(next_path, this.controller_window.Hwnd)
         if this.bridge.CurrentPath() != next_path
             throw Error("Notepad3 did not load the requested page. Inspect its dialog and retry.")
+
+        this.ProtectPage(next_path)
         this.current_path := next_path
         this.disk_stamp := before_load_stamp
         this.PersistCurrentState()
@@ -1445,6 +1591,7 @@ class ScratchpadController
     OnScriptExit(exit_reason, exit_code)
     {
         SetTimer this.autosave_callback, 0
+        SetTimer this.page_lock_sync_callback, 0
         SetTimer this.process_commands_callback, 0
         if this.HasWindow() {
             if !this.exit_prepared {
@@ -1463,6 +1610,7 @@ class ScratchpadController
                 }
             }
         }
+        this.ReleasePageLock()
         this.bridge := 0
         if this.mutex_handle {
             DllCall("CloseHandle", "ptr", this.mutex_handle)
