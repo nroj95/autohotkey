@@ -19,7 +19,7 @@ cascade_y := 24
 ; top-left must be within this distance on both axes; the closest slot wins.
 cascade_slot_tolerance := 56
 
-placement_delay_ms := 60
+placement_delay_ms := 20
 
 ; Recent taskbar hints and ordinary focus requests use this timeout.
 new_window_focus_timeout_ms := 3000
