@@ -62,7 +62,7 @@ HandleDebugResetLogsMessage(command_id, parameter, message_id, target_hwnd)
 {
     if target_hwnd != A_ScriptHwnd || !IsCascadeEnabled()
         return
-    ResetDebugLog()
+    ShowDebugActionTip(ResetDebugLog() ? "debug log cleared" : "debug log clear failed")
 }
 
 HandleDebugCopyLogMessage(command_id, parameter, message_id, target_hwnd)
@@ -71,7 +71,7 @@ HandleDebugCopyLogMessage(command_id, parameter, message_id, target_hwnd)
     ; clear the log, or emit another log entry that would contaminate the snapshot.
     if target_hwnd != A_ScriptHwnd
         return
-    CopyDebugLogToClipboard()
+    ShowDebugActionTip(CopyDebugLogToClipboard() ? "debug log copied" : "debug log copy failed")
 }
 
 CopyDebugLogToClipboard()
@@ -83,12 +83,30 @@ CopyDebugLogToClipboard()
         if FileExist(debug_log_path)
             log_text := FileRead(debug_log_path, "UTF-8")
         A_Clipboard := log_text != "" ? log_text : "Window Cascade debug log is empty."
+        return true
     }
     catch Error as err {
         ; Report through the clipboard rather than the log so the captured history
         ; remains unchanged even when the read fails.
         A_Clipboard := "Could not copy Window Cascade debug log: " err.Message
+        return false
     }
+}
+
+ShowDebugActionTip(text)
+{
+    CoordMode "Mouse", "Screen"
+    CoordMode "ToolTip", "Screen"
+    MouseGetPos &mouse_x, &mouse_y
+
+    ; Use a separate tooltip slot so this never replaces CapsLock Layer's mode tip.
+    ToolTip text, mouse_x + 14, mouse_y + 18, 3
+    SetTimer HideDebugActionTip, -900
+}
+
+HideDebugActionTip()
+{
+    ToolTip , , , 3
 }
 
 ResetDebugLog()
@@ -96,7 +114,7 @@ ResetDebugLog()
     global debug_enabled, debug_log_path
 
     if !debug_enabled
-        return
+        return false
 
     try {
         if FileExist(debug_log_path)
@@ -107,10 +125,11 @@ ResetDebugLog()
             "Debug log reset failed."
             . " | message=" err.Message
         )
-        return
+        return false
     }
 
     DebugLogSession("reset")
+    return true
 }
 
 DebugLogSession(reason)

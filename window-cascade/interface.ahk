@@ -16,6 +16,7 @@ BuildTrayMenu()
     A_TrayMenu.Delete()
 
     A_TrayMenu.Add("How to use", ToggleWindowCascadeHelp)
+    A_TrayMenu.Add("How to debug", ShowWindowCascadeDebugHelp)
     A_TrayMenu.Add()
     A_TrayMenu.Add("Disable cascade", ToggleCascadeDisabled)
     A_TrayMenu.Add("Show focus tabs", ToggleFocusCornerVisibility)
@@ -254,7 +255,6 @@ ToggleWindowCascadeHelp(*)
         return
     }
 
-    ; Only control-free focus tabs are per-monitor aware, not the text help GUI.
     help_gui := CallWithDpiContext(-2, Gui, "+AlwaysOnTop", "Window Cascade")
     help_icons := SetWindowCascadeHelpIcons(help_gui)
     help_gui.SetFont("s10", "Cascadia Mono")
@@ -308,11 +308,12 @@ ToggleWindowCascadeHelp(*)
     "Dropped windows keep their slot; a cascade smaller than one full layer may compact inward.`n"
     "`n"
     "TRAY`n"
-    "Disable cascade      Same all-monitor disable / resume toggle as Caps + M`n"
-    "Show focus tabs      Show / hide the faint focus tabs`n"
-    "Focus tab colors     Choose colors for the active and inactive slots`n"
-    "Check compatibility  Check conflicting settings`n"
-    "Verbose debug logging  Toggle detailed diagnostics for this run"
+    "How to debug               Isolate a bug and prepare a GitHub report`n"
+    "Disable cascade            Same all-monitor disable / resume toggle as Caps + M`n"
+    "Show focus tabs            Show / hide the faint focus tabs`n"
+    "Focus tab colors           Choose colors for the active and inactive slots`n"
+    "Check compatibility        Check conflicting settings`n"
+    "Verbose debug logging      Toggle detailed diagnostics for this run"
     )
 
     help_gui.AddText("w780", help_text)
@@ -329,6 +330,66 @@ ToggleWindowCascadeHelp(*)
             DllCall("DestroyIcon", "ptr", icon_handle, "int")
         help_icons := []
     }
+}
+
+
+ShowWindowCascadeDebugHelp(*)
+{
+    static debug_gui := 0
+    static debug_icons := []
+
+    if debug_gui {
+        debug_gui.Show()
+        return
+    }
+
+    debug_gui := CallWithDpiContext(-2, Gui, "+AlwaysOnTop", "Window Cascade - How to debug")
+    debug_icons := SetWindowCascadeHelpIcons(debug_gui)
+    debug_gui.SetFont("s10", "Cascadia Mono")
+
+    debug_text :=
+    (
+    "HOW TO DEBUG`n"
+    "`n"
+    "Use a clean log so a bug report contains only the actions that matter.`n"
+    "`n"
+    "1. Close the help windows.`n"
+    "2. Press Caps + F5 to clear the debug log.`n"
+    "3. Reproduce the problem with as few unrelated actions as possible.`n"
+    "4. Press Caps + F6 to copy the current debug log to the clipboard.`n"
+    "5. Open GitHub Issues and paste the log with a short description.`n"
+    "`n"
+    "Please include what you expected, what actually happened, and which`n"
+    "application/window was involved. Include monitor/scaling details when relevant.`n"
+    "`n"
+    "If the normal log is not detailed enough, enable Verbose debug logging`n"
+    "from the tray menu, clear the log again, and repeat the reproduction.`n"
+    "`n"
+    "Caps + F6 does not clear the log or open/focus another window, so the`n"
+    "captured history remains isolated."
+    )
+
+    debug_gui.AddText("w720", debug_text)
+    issues_button := debug_gui.AddButton("xm w170", "Open GitHub Issues")
+    issues_button.OnEvent("Click", OpenWindowCascadeIssues)
+
+    debug_gui.OnEvent("Close", CloseDebugHelp)
+    debug_gui.OnEvent("Escape", CloseDebugHelp)
+    debug_gui.Show()
+
+    CloseDebugHelp(*) {
+        try debug_gui.Destroy()
+        debug_gui := 0
+        for icon_handle in debug_icons
+            DllCall("DestroyIcon", "ptr", icon_handle, "int")
+        debug_icons := []
+    }
+}
+
+
+OpenWindowCascadeIssues(*)
+{
+    Run "https://github.com/nroj95/autohotkey/issues"
 }
 
 
