@@ -59,7 +59,7 @@ new pages are named `scratch-yyyyMMdd-HHmmss.md`, use UTF-8 without BOM and LF l
 
 page rotation is ordered by file creation time, with filename breaking ties. subdirectories are not scanned. common text, code and configuration extensions are accepted, including `.md`, `.txt`, `.ps1`, `.py`, `.ahk`, `.lua`, `.json` and `.ini`; see `allowed_extensions` in the script for the full list.
 
-visible pages are autosaved every two seconds and explicitly saved before hiding, switching or exiting. failed saves or detected disk conflicts stop the operation instead of overwriting uncertain data.
+visible pages are autosaved every 10 seconds and explicitly saved before hiding, switching or exiting. failed saves or detected disk conflicts stop the operation instead of overwriting uncertain data.
 
 page switching reuses the same Notepad3 window. **undo history survives hiding and Scratchpad reloads, but not switching pages**. caret, selection and scroll position are remembered during the script session.
 
@@ -87,7 +87,7 @@ AnimationDurationMs=180
 AlwaysOnTop=1
 
 [Saving]
-AutosaveIntervalMs=2000
+AutosaveIntervalMs=10000
 
 [Controls]
 ToggleHotkey=Win+F12

@@ -186,7 +186,7 @@ class ScratchpadController
         this.height_percent := this.ReadNumber("Window", "HeightPercent", 60, 20, 100)
         this.animation_ms := this.ReadNumber("Window", "AnimationDurationMs", 180, 0, 1000)
         this.always_on_top := this.ReadNumber("Window", "AlwaysOnTop", 1, 0, 1)
-        this.autosave_ms := this.ReadNumber("Saving", "AutosaveIntervalMs", 2000, 500, 60000)
+        this.autosave_ms := this.ReadNumber("Saving", "AutosaveIntervalMs", 10000, 500, 60000)
         this.allowed_extensions := "|md|txt|ps1|psm1|psd1|py|pyw|ahk|lua|js|ts|jsx|tsx|"
             . "json|jsonc|yaml|yml|xml|html|htm|css|scss|ini|cfg|conf|toml|log|"
             . "sh|bash|bat|cmd|sql|c|cpp|h|hpp|cs|rs|go|java|rb|php|csv|tsv|"
@@ -209,7 +209,7 @@ class ScratchpadController
         if !FileExist(this.settings_path) {
             settings := "[Paths]`nScratchDirectory=D:\toolbox\scratch`nNotepad3Executable=`n"
                 . "`n[Window]`nWidthPercent=75`nHeightPercent=40`nAnimationDurationMs=180`nAlwaysOnTop=1`n"
-                . "`n[Saving]`nAutosaveIntervalMs=2000`n`n[Controls]`nToggleHotkey=Win+F12`n"
+                . "`n[Saving]`nAutosaveIntervalMs=10000`n`n[Controls]`nToggleHotkey=Win+F12`n"
             FileAppend settings, this.settings_path, "UTF-16"
         }
         if IniRead(this.settings_path, "Controls", "ToggleHotkey", "<missing>") = "<missing>" {
@@ -1391,7 +1391,7 @@ class ScratchpadController
         "Use File > Save As to name a page; rename closed files normally.`n"
         "`n"
         "SAVING`n"
-        "Autosave runs while visible (two seconds by default).`n"
+        "Autosave runs while visible (10 seconds by default).`n"
         "Pages are also saved before hiding or switching.`n"
         "Undo history survives hiding, but not switching pages.`n"
         "`n"
