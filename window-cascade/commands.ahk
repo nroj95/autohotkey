@@ -57,7 +57,7 @@ CaptureAdoptionUndoSnapshot(hwnd)
     global handled_windows
 
     try {
-        WinGetPos(
+        WinGetPosPixels(
             &window_x,
             &window_y,
             &window_width,
@@ -116,7 +116,7 @@ UndoPendingAdoption()
     CancelPlacementStabilization(hwnd)
 
     try {
-        WinMove(
+        WinMovePixels(
             snapshot["x"],
             snapshot["y"],
             snapshot["width"],
@@ -477,7 +477,7 @@ RestoreCascadeWindowList(windows)
         if !WinExist("ahk_id " hwnd)
             continue
 
-        try DllCall(
+        try PhysicalDllCall(
             "SetWindowPos",
             "ptr", hwnd,
             "ptr", 0, ; HWND_TOP
@@ -609,7 +609,7 @@ WatchCascadeWindowRestores()
                     ready := false
                     continue
                 }
-                WinGetPos(&raw_x, &raw_y, &raw_width, &raw_height, hwnd)
+                WinGetPosPixels(&raw_x, &raw_y, &raw_width, &raw_height, hwnd)
                 snapshot .= (
                     hwnd ":" x "," y "," width "," height
                     . ":" raw_x "," raw_y "," raw_width "," raw_height "|"

@@ -142,7 +142,7 @@ SwapActiveCascadeWindow(direction)
         | 0x0200  ; SWP_NOOWNERZORDER
     )
 
-    try DllCall(
+    try PhysicalDllCall(
         "SetWindowPos",
         "ptr", target_hwnd,
         "ptr", active_hwnd,
@@ -159,10 +159,11 @@ SwapActiveCascadeWindow(direction)
 
 MoveCascadeWindowToSlot(hwnd, target_x, target_y)
 {
-    if !IsCascadeEnabled()
+    if !IsCascadeEnabled() || IsCascadeDisplayTransition()
         return false
 
-    global placement_reservations
+    global placement_reservations, cascade_display_generation
+    display_generation := cascade_display_generation
 
     ; A minimize can complete after planning but before this individual move.
     if IsCascadeWindowBeingDragged(hwnd) || !WinExist(hwnd)
@@ -188,8 +189,12 @@ MoveCascadeWindowToSlot(hwnd, target_x, target_y)
         return false
     }
 
-    if current_x = target_x && current_y = target_y
+    if IsCascadeDisplayTransition() || display_generation != cascade_display_generation
+        return false
+    if current_x = target_x && current_y = target_y {
+        RememberCascadeSlot(hwnd, GetManagedCascadeMonitor(hwnd), target_x, target_y)
         return true
+    }
 
     ; Compaction must replace the previous stabilization destination, otherwise
     ; its delayed retry could pull a just-dropped window back to an old slot.
@@ -204,12 +209,14 @@ MoveCascadeWindowToSlot(hwnd, target_x, target_y)
     ]
 
     if !IsCascadeEnabled() || IsCascadeWindowBeingDragged(hwnd)
+        || IsCascadeDisplayTransition() || display_generation != cascade_display_generation
         return false
-    placement_reservations[hwnd] := Map(
+    owned_reservation := Map(
         "monitor", GetMonitorForWindow(hwnd), "x", target_x, "y", target_y
     )
+    placement_reservations[hwnd] := owned_reservation
     try {
-        WinMove(
+        WinMovePixels(
             raw_target[1],
             raw_target[2],
             raw_target[3],
@@ -218,11 +225,15 @@ MoveCascadeWindowToSlot(hwnd, target_x, target_y)
         )
     }
     catch {
-        if placement_reservations.Has(hwnd)
+        if placement_reservations.Has(hwnd) && placement_reservations[hwnd] = owned_reservation
             placement_reservations.Delete(hwnd)
         return false
     }
 
+    if !IsCascadeEnabled() || IsCascadeDisplayTransition()
+        || display_generation != cascade_display_generation
+        || !placement_reservations.Has(hwnd) || placement_reservations[hwnd] != owned_reservation
+        return false
     if !IsCascadeWindowBeingDragged(hwnd)
         SchedulePlacementStabilization(hwnd, target_x, target_y, current_width, current_height)
     return true
@@ -303,7 +314,7 @@ RotateCascadeStackWindows(ordered_windows, direction)
             ; Previous layer: bring the deepest window to the front.
             target_hwnd := ordered_windows[ordered_windows.Length]
 
-            succeeded := DllCall(
+            succeeded := PhysicalDllCall(
                 "SetWindowPos",
                 "ptr", target_hwnd,
                 "ptr", 0, ; HWND_TOP
@@ -322,7 +333,7 @@ RotateCascadeStackWindows(ordered_windows, direction)
         current_hwnd := ordered_windows[1]
         deepest_hwnd := ordered_windows[ordered_windows.Length]
 
-        succeeded := DllCall(
+        succeeded := PhysicalDllCall(
             "SetWindowPos",
             "ptr", current_hwnd,
             "ptr", deepest_hwnd,
@@ -579,7 +590,7 @@ BringCascadeForward(monitor_index)
     while index >= 1 {
         hwnd := visible_windows[index]
 
-        try DllCall(
+        try PhysicalDllCall(
             "SetWindowPos",
             "ptr", hwnd,
             "ptr", -1, ; HWND_TOPMOST
@@ -607,7 +618,7 @@ BringCascadeForward(monitor_index)
             continue
         }
 
-        try DllCall(
+        try PhysicalDllCall(
             "SetWindowPos",
             "ptr", hwnd,
             "ptr", -2, ; HWND_NOTOPMOST
@@ -954,7 +965,7 @@ WatchNewWindowFocus()
 
         if DllCall("GetForegroundWindow", "ptr") = hwnd {
             ; An already-active window is not necessarily foremost in Z-order.
-            DllCall("SetWindowPos", "ptr", hwnd, "ptr", 0,
+            PhysicalDllCall("SetWindowPos", "ptr", hwnd, "ptr", 0,
                 "int", 0, "int", 0, "int", 0, "int", 0,
                 "uint", 0x4213, "int") ; ASYNC | NOOWNERZORDER | NOACTIVATE | NOMOVE | NOSIZE
             QueueFocusCornerUpdate()

@@ -20,6 +20,8 @@ launch `../window-cascade.ahk`, not the files in this directory. the launcher ow
 | `focus-corners.ahk` | one visible tab per slot, overlay lifetime and position, representative handoff, and active-slot coloring. |
 | `focus-tab-clicks.ahk` | instant press-to-focus/cycle, live target validation, mouse-release pairing, and missed-release recovery. |
 | `windows.ahk` | window filtering, visible/raw frame geometry, monitor lookup, and monitor-selection policy. |
+| `dpi.ahk` | scoped physical-pixel API calls, per-monitor DPI probes, and display snapshots. |
+| `display.ahk` | coalesced live display refresh, runtime slot preservation, and deferred geometry updates without reload. |
 | `interface.ahk` | tray menu, help and its custom icon, startup shortcut, rotate-key and focus-tab color persistence, and compatibility checks. |
 | `debug.ahk` | logging, log-reset messages, error reporting, and diagnostic window descriptions. |
 
@@ -57,7 +59,7 @@ focus-tab colors are selected separately for the active and inactive slots from 
 
 ### appearance diagnostics
 
-focus-tab GUIs use `-DPIScale` because their dimensions already come from native pixel bounds. cloaked target windows are excluded from rendering and live click activation, without discarding their managed membership. an overlay pass with no visible slot candidates skips the global Z-order enumeration.
+focus-tab GUIs are created per-monitor DPI-aware with `-DPIScale`. their anchor coordinates and full-height bounds use physical pixels; thickness, overlap, and short-marker height are 96-DPI UI dimensions scaled once for the target monitor. cloaked target windows are excluded from rendering and live click activation, without discarding their managed membership. an overlay pass with no visible slot candidates skips the global Z-order enumeration.
 
 normal tab rendering changes native opacity only when the desired value changes and repaints changed or newly shown overlays. the opacity cache is updated only after a successful native operation. overlay operations use pure HWNDs so hidden-window lookup does not depend on `DetectHiddenWindows`. the configured opacity values remain unchanged, and deeper tabs do not contribute additional opacity.
 
@@ -123,6 +125,22 @@ ordinary lifecycle/error logging stays enabled and writes to `%LOCALAPPDATA%\Win
 
 `SetWinDelay 0` yields without AutoHotkey's default per-window 100 ms sleep; restore/placement watchers still decide readiness explicitly. a focus-tab pass uses one observed rectangle per candidate and one canonical geometry calculation per monitor. minimized overlays are cached/hidden rather than repeatedly destroyed, and unchanged opacity/Z-order operations are skipped. per-window placement requests retain object identity through retries so stale callbacks cannot target a later request for a recycled handle. placement confirmation stops after `placement_stabilize_confirmation_limit` (3) final checks instead of polling forever. no Windows desktop timing benchmark is implied by these source-level optimizations.
 
+## physical pixels and live display changes
+
+all monitor/work-area bounds, cursor positions, raw window rectangles, and external geometry changes use a short per-monitor DPI-aware context through `dpi.ahk`. DWM visible-frame bounds are already physical pixels. each wrapper restores the caller's previous DPI context in `finally`, including the native error code. this is not a process-wide awareness change: the normal help GUI stays system-DPI-aware. the DPI path requires Windows 10 version 1607 or later.
+
+there are no per-percentage presets. window width/height remain the configured fraction of the physical work area. slot offsets, edge margins, minimum sizes, and the 56-pixel drop tolerance keep their existing physical-pixel meaning. only the focus-tab UI dimensions use `Round(value * dpi / 96)`. tab repaint caching includes DPI, even when the target rectangle has not changed.
+
+a hidden, control-free per-monitor-aware probe on each monitor supplies that monitor's effective DPI. querying an external app's HWND directly would return 96 for an unaware app or the system DPI for a system-aware app, so it cannot reliably size our overlays. the same monitor-based reading distinguishes cross-DPI drag resizing from an ordinary edge resize. probes never adopt windows, receive focus deliberately, or appear in the taskbar.
+
+`WM_DISPLAYCHANGE`, `WM_SETTINGCHANGE`, our own probes' `WM_DPICHANGED`, and resume notifications coalesce a refresh. messages sent to foreign applications are not received through our `OnMessage` handlers. the existing one-second discovery fallback checks the monitor snapshot too; there is no additional permanent fast display timer. live monitor checks before membership pruning also protect against a late notification.
+
+**changing display scaling does not reload Window Cascade.** a DPI-only refresh leaves the history map and its arrays in place. a runtime HWND/PID slot record remembers each member's last intended slot while Windows is resizing applications. affected visible normal windows are moved asynchronously with no activation or Z-order change. minimized, hidden, or cloaked members retain their destination until they become visible again; the script does not restore them just to update geometry. disabled cascades keep their saved restore set and defer moves until resumed. drags and unfinished focus-tab clicks also defer reflow, and manual dragging takes ownership of its target.
+
+monitor indices are remapped using the display device names in the current session. if a display disappears, its managed members use the current primary display; if fewer canonical slots fit, an old slot is clamped to the last available slot. this is not persistent monitor/EDID matching, and reconnecting a display does not automatically send windows back to their former screen. stale monitor-index batch gates are cleared on a topology remap, not on an ordinary DPI-only refresh.
+
+cross-DPI placement can still be followed by the target application's own DPI resize. the existing generation-checked stabilization path permits up to three prompt corrections, then returns to its original bounded backoff. a DPI transfer needs a second matching check before its reservation is released. display changes invalidate superseded corrections and pending new-window requests resolve their saved monitor device again. no state is written to disk to support this behavior.
+
 ## checking a change
 
 from the repository root, run:
@@ -172,7 +190,12 @@ for Window Cascade changes, check:
 - required CapsLock Layer behavior during startup, quick reloads, and a sustained dependency loss
 - cancel a save prompt after Caps + F4; verify compaction resumes after the close grace period without forcing the window closed
 - overlap close attempts, then disable/resume; an older expiration must not release a newer batch or retain an old gate
-- switch virtual desktops and test tabs at 100%, 125%, and 150% scaling; hidden/cloaked targets must not leave clickable tabs behind
+- switch virtual desktops; hidden/cloaked targets must not leave clickable tabs behind
+- test 100/100, 100/125, and 100/150 monitor pairs: first-window centering, physical 80% sizing, tab alignment, click targets, and cross-monitor keyboard moves/drops
+- launch an app on the 100% display and let Cascade place it on the 125%/150% display; test the reverse direction too, including an app that scales itself after the move
+- change scaling live with existing multi-layer cascades, without reloading; membership, slots, focus, and internal Z-order should survive once the transition settles
+- repeat a live scaling change with an independently minimized member and with Caps + M disabled; neither should be restored merely to update geometry
+- change resolution or disconnect a display; check the documented primary-display fallback and slot clamping, then verify fresh launches still work
 - change Space/Tab from the Cascade tray with the Caps help GUI open, then reload Caps; the selection must stay synchronized
 - hold Caps + Q, add W, release Q while holding W: F13 must release independently of F14; also release Caps first and reload while held
 - tap Caps, hold Q, then press W: only Q consumes the one-shot; W stays ordinary and Q does not leak repeat characters
@@ -189,3 +212,6 @@ avoid close-scope tests with unsaved work. syntax validation does not replace Wi
 - [Script startup and validation switches](https://www.autohotkey.com/docs/v2/Scripts.htm)
 - [WinActivate retries and modifier workaround](https://www.autohotkey.com/docs/v2/lib/WinActivate.htm)
 - [WinClose behavior](https://www.autohotkey.com/docs/v2/lib/WinClose.htm)
+- [AutoHotkey DPI contexts and GUI scaling](https://www.autohotkey.com/docs/v2/misc/DPIScaling.htm)
+- [GetDpiForWindow awareness-dependent results](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getdpiforwindow)
+- [WM_DPICHANGED](https://learn.microsoft.com/en-us/windows/win32/hidpi/wm-dpichanged)

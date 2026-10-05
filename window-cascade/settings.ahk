@@ -67,7 +67,8 @@ edge_margin := 12
 minimum_width := 320
 minimum_height := 220
 
-; Each cascade slot gets at most one visible clickable focus marker.
+; Focus-tab dimensions are 96-DPI UI units; only these are scaled per monitor.
+; Slot spacing, drop tolerance, and cascade rectangles remain physical pixels.
 focus_corner_size := 25
 focus_corner_thickness := 22
 focus_corner_overlap := 2
@@ -166,12 +167,24 @@ new_window_focus_request := 0
 handled_windows := Map()
 placement_reservations := Map()
 placement_stabilization_generations := Map()
+placement_dpi_generations := Map()
 placement_stabilization_generation_counter := 0
 pending_adoption_undo := 0
 startup_windows := Map()
 known_windows := Map()
 missed_window_poll_ms := 1000
 cascade_history := Map()
+; A display snapshot is refreshed by notifications and the existing slow fallback.
+; Logical slots survive a live DPI/work-area change; they are not reload persistence.
+cascade_displays := Map()
+cascade_dpi_probes := Map()
+cascade_display_signature := ""
+cascade_display_change_pending := false
+cascade_display_refreshing := false
+cascade_display_generation := 0
+cascade_display_refresh_delay_ms := 250
+cascade_window_slots := Map()
+cascade_display_reflow := Map()
 cascade_membership_generation := 0
 cascade_minimized_observed := Map()
 cascade_mouse_press := 0

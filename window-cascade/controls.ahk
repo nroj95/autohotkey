@@ -113,7 +113,11 @@ WatchCapsLockLayer()
 ActiveWindowBlocksCascadeCommands()
 {
     ; Do not rotate, gather or reposition windows underneath a native drag.
-    if HasCascadeWindowDrag()
+    if HasCascadeWindowDrag() || IsCascadeDisplayTransition()
+        return true
+    command_monitor := GetCommandMonitor()
+    if command_monitor && (CascadeMonitorNeedsRefresh(command_monitor)
+        || HasPendingCascadeDisplayLayout(command_monitor))
         return true
 
     active_hwnd := WinExist("A")
@@ -126,7 +130,7 @@ ActiveWindowBlocksCascadeCommands()
         if WinGetMinMax("ahk_id " active_hwnd) = 1
             return true
 
-        WinGetPos(
+        WinGetPosPixels(
             &window_x,
             &window_y,
             &window_width,
@@ -144,7 +148,7 @@ ActiveWindowBlocksCascadeCommands()
 
     ; Borderless/exclusive fullscreen normally covers one monitor exactly.
     Loop MonitorGetCount() {
-        MonitorGet(
+        MonitorGetPixels(
             A_Index,
             &monitor_left,
             &monitor_top,

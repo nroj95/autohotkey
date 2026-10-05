@@ -26,7 +26,7 @@ CaptureCascadeMousePress(*)
     if HasFocusTabClick()
         return
 
-    MouseGetPos(&mouse_x, &mouse_y, &hover_hwnd)
+    MouseGetPosPixels(&mouse_x, &mouse_y, &hover_hwnd)
     hwnd := DllCall("GetAncestor", "ptr", hover_hwnd, "uint", 2, "ptr") ; GA_ROOT
     CaptureCascadeLaunchIntent(hwnd)
     cascade_mouse_press := GetCascadeMousePressSnapshot(hwnd)
@@ -38,7 +38,7 @@ GetCascadeMousePressSnapshot(hwnd)
         return 0
 
     try {
-        WinGetPos(&x, &y, &width, &height, hwnd)
+        WinGetPosPixels(&x, &y, &width, &height, hwnd)
         if !GetVisibleWindowBounds(hwnd, &frame_x, &frame_y, &frame_width, &frame_height)
             return 0
 
@@ -50,7 +50,7 @@ GetCascadeMousePressSnapshot(hwnd)
             frame_x: frame_x, frame_y: frame_y,
             monitor: GetMonitorForWindow(hwnd),
             minmax: WinGetMinMax(hwnd),
-            dpi: DllCall("GetDpiForWindow", "ptr", hwnd, "uint"),
+            dpi: GetCascadeWindowMonitorDpi(hwnd),
             resize: !!RegExMatch(A_Cursor, "^Size(NS|WE|NWSE|NESW)$"),
             down_tick: A_TickCount, up_tick: 0, cancelled: false
         }
@@ -133,6 +133,7 @@ BeginCascadeWindowDrag(hwnd, event_time)
     ; Mark it handled so already-bound new-window timers become harmless too.
     CancelPendingAdoptionUndo()
     CancelNewWindowFocus()
+    CancelCascadeDisplayPlacement(hwnd)
     RemoveWindowFromCascadeRestore(hwnd)
     CancelPlacementStabilization(hwnd)
     known_windows[hwnd] := true
@@ -198,7 +199,8 @@ WatchCascadeWindowDrag()
 
         ; Mouse-up alone can precede the final native geometry. The thread query
         ; recovers a missed end event without a timeout that snaps mid-drag.
-        if (!drag.native_ended && IsNativeWindowMoveSizeActive(drag.hwnd) != 0)
+        if IsCascadeDisplayTransition()
+            || (!drag.native_ended && IsNativeWindowMoveSizeActive(drag.hwnd) != 0)
             || (!drag.cancelled && !drag.up_tick && GetKeyState("LButton", "P"))
         {
             SetTimer(WatchCascadeWindowDrag, 50)
@@ -229,6 +231,7 @@ StopCascadeWindowDrag(expected_drag := 0)
     cascade_window_drag := 0
     cascade_drag_generation += 1
     SetTimer(WatchCascadeWindowDrag, 0)
+    SetTimer(ApplyPendingCascadeDisplayLayout, -50)
     QueueFocusCornerUpdate()
     if cascade_compaction_pending.Count
         ScheduleCascadeCompactionFlush()
@@ -249,7 +252,7 @@ CompleteCascadeWindowDrop(drag)
     if drag.cancelled
         return
 
-    WinGetPos(&x, &y, &width, &height, hwnd)
+    WinGetPosPixels(&x, &y, &width, &height, hwnd)
     if x = drag.x && y = drag.y && width = drag.width && height = drag.height
         return
 
@@ -257,7 +260,7 @@ CompleteCascadeWindowDrop(drag)
     ; title-bar drag may change size without being an edge resize.
     resized := drag.resize || (
         drag.minmax = 0
-        && drag.dpi = DllCall("GetDpiForWindow", "ptr", hwnd, "uint")
+        && drag.dpi = GetCascadeWindowMonitorDpi(hwnd)
         && (width != drag.width || height != drag.height)
     )
     if resized || !IsCascadeWindow(hwnd) {
@@ -288,6 +291,9 @@ CompleteCascadeWindowDrop(drag)
                 " | monitor=" monitor_index " | slot=" slot_index)
             return
         }
+        ; A scale change that interrupts the move is not an intentional detach.
+        if IsCascadeDisplayTransition()
+            return
         ; Do not keep a failed snap half-adopted or silently choose another slot.
         DebugLog("Cascade drop snap failed. | hwnd=" hwnd)
     }

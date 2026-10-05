@@ -28,13 +28,15 @@ CanStartFocusTabClick()
 
     if HasFocusTabClick()
         return true
+    if IsCascadeDisplayTransition()
+        return false
 
     ; #HotIf can also run for release matching. Never claim an application drag
     ; just because it finishes over a tab.
     if !GetKeyState("LButton", "P")
         return false
 
-    MouseGetPos(, , &overlay_hwnd)
+    MouseGetPosPixels(, , &overlay_hwnd)
     if !focus_corner_targets.Has(overlay_hwnd)
         return false
 
@@ -91,7 +93,7 @@ BeginFocusTabClick(*)
 
 ActivateFocusTabClick(press)
 {
-    if !IsCascadeEnabled()
+    if !IsCascadeEnabled() || IsCascadeDisplayTransition()
         return
 
     global focus_corner_overlays

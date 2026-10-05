@@ -23,6 +23,7 @@ RecordCascadeWindow(monitor_index, hwnd)
 {
     global cascade_history, cascade_membership_generation
 
+    RememberCascadeSlot(hwnd, monitor_index)
     if !cascade_history.Has(monitor_index)
         cascade_history[monitor_index] := []
 
@@ -39,6 +40,8 @@ RecordCascadeWindow(monitor_index, hwnd)
 RemoveCascadeWindowFromHistory(hwnd)
 {
     global cascade_history, cascade_membership_generation
+
+    ForgetCascadeSlot(hwnd)
 
     for monitor_index, history in cascade_history {
         index := history.Length
@@ -57,10 +60,13 @@ RemoveCascadeWindowFromHistory(hwnd)
 GetLiveCascadeHistory(monitor_index)
 {
     global cascade_history, cascade_restore_batches, cascade_slot_tolerance
-    global cascade_membership_generation, cascade_drag_generation
+    global cascade_membership_generation, cascade_drag_generation, cascade_display_reflow
 
     if !cascade_history.Has(monitor_index)
         return []
+    ; OS resizing/repositioning during a display change is not manual detachment.
+    if CascadeMonitorNeedsRefresh(monitor_index)
+        return cascade_history[monitor_index].Clone()
 
     generation := cascade_membership_generation
     drag_generation := cascade_drag_generation
@@ -70,7 +76,7 @@ GetLiveCascadeHistory(monitor_index)
     for hwnd in history {
         if !DllCall("IsWindow", "ptr", hwnd, "int")
             continue
-        if IsCascadeWindowBeingDragged(hwnd)
+        if IsCascadeWindowBeingDragged(hwnd) || cascade_display_reflow.Has(hwnd)
             || (cascade_restore_batches.Has(monitor_index)
                 && cascade_restore_batches[monitor_index].targets.Has(hwnd))
         {
@@ -108,6 +114,13 @@ GetLiveCascadeHistory(monitor_index)
             || IsCascadeRestoreInProgress(monitor_index)
             return cascade_history.Has(monitor_index) ? cascade_history[monitor_index].Clone() : []
         if live_history.Length != history.Length {
+            retained_windows := Map()
+            for live_hwnd in live_history
+                retained_windows[live_hwnd] := true
+            for old_hwnd in history {
+                if !retained_windows.Has(old_hwnd)
+                    ForgetCascadeSlot(old_hwnd)
+            }
             cascade_history[monitor_index] := live_history
             cascade_membership_generation += 1
             QueueCascadeCompaction(monitor_index)
@@ -137,7 +150,7 @@ IsWindowInCascadeLayout(hwnd)
 
 TryGetCascadeLayoutOrigin(hwnd, &monitor_index, &x, &y)
 {
-    global cascade_window_drag, placement_reservations
+    global cascade_window_drag, placement_reservations, cascade_display_reflow, cascade_displays
 
     if IsCascadeWindowBeingDragged(hwnd) && !cascade_window_drag.completing {
         monitor_index := cascade_window_drag.source_monitor
@@ -154,16 +167,33 @@ TryGetCascadeLayoutOrigin(hwnd, &monitor_index, &x, &y)
         return true
     }
 
+    if cascade_display_reflow.Has(hwnd) {
+        saved := cascade_display_reflow[hwnd]
+        if cascade_displays.Has(saved.monitor) {
+            monitor_index := saved.monitor
+            slot := cascade_displays[monitor_index].geometry.slots[saved.slot]
+            x := slot[1]
+            y := slot[2]
+            return true
+        }
+    }
     monitor_index := GetMonitorForWindow(hwnd)
     return monitor_index && GetVisibleWindowBounds(hwnd, &x, &y, &width, &height)
 }
 
 GetCanonicalCascadeGeometry(monitor_index)
 {
+    global cascade_displays
+    if cascade_displays.Has(monitor_index)
+        return cascade_displays[monitor_index].geometry
+    MonitorGetWorkAreaPixels(monitor_index, &left, &top, &right, &bottom)
+    return BuildCanonicalCascadeGeometry(left, top, right, bottom)
+}
+
+BuildCanonicalCascadeGeometry(left, top, right, bottom)
+{
     global window_width_ratio, window_height_ratio
     global edge_margin, minimum_width, minimum_height
-
-    MonitorGetWorkArea(monitor_index, &left, &top, &right, &bottom)
     width := Min(Max(minimum_width, Floor((right - left) * window_width_ratio)),
         right - left - edge_margin * 2)
     height := Min(Max(minimum_height, Floor((bottom - top) * window_height_ratio)),
@@ -418,7 +448,8 @@ FindNearestCascadeSlot(
 GetCascadeSlotCounts(
     monitor_index,
     slots,
-    tolerance
+    tolerance,
+    excluded_hwnd := 0
 )
 {
     global cascade_history, placement_reservations
@@ -430,7 +461,7 @@ GetCascadeSlotCounts(
 
     if cascade_history.Has(monitor_index) {
         for hwnd in cascade_history[monitor_index] {
-            if !WinExist("ahk_id " hwnd)
+            if hwnd = excluded_hwnd || !WinExist("ahk_id " hwnd)
                 continue
 
             ; A reserved window is counted at its intended slot below instead
@@ -465,7 +496,7 @@ GetCascadeSlotCounts(
     ; Reservations also include windows that have selected a slot but have not
     ; yet been recorded in cascade history.
     for reserved_hwnd, reservation in placement_reservations {
-        if reservation["monitor"] != monitor_index
+        if reserved_hwnd = excluded_hwnd || reservation["monitor"] != monitor_index
             continue
 
         if !WinExist("ahk_id " reserved_hwnd)
@@ -492,7 +523,8 @@ GetNextCascadePosition(
     work_right,
     work_bottom,
     window_width,
-    window_height
+    window_height,
+    excluded_hwnd := 0
 )
 {
     global cascade_slot_tolerance
@@ -509,7 +541,8 @@ GetNextCascadePosition(
     slot_counts := GetCascadeSlotCounts(
         monitor_index,
         slots,
-        cascade_slot_tolerance
+        cascade_slot_tolerance,
+        excluded_hwnd
     )
 
     selected_slot_index := 1
@@ -539,7 +572,8 @@ IsCascadeCompactionDeferred(monitor_index)
 {
     ; Never mutate the layout halfway through a drag or window-state batch.
     return !IsCascadeEnabled() || HasCascadeWindowDrag() || IsCascadeCloseBatchActive(monitor_index)
-        || IsCascadeRestoreInProgress(monitor_index)
+        || IsCascadeRestoreInProgress(monitor_index) || IsCascadeDisplayTransition()
+        || HasPendingCascadeDisplayLayout(monitor_index)
 }
 
 QueueCascadeCompaction(monitor_index, preferred_hwnd := 0)
@@ -731,7 +765,7 @@ CompactCascadeLayout(monitor_index, preferred_hwnd := 0)
             upper_hwnd := stack_windows[A_Index]
             lower_hwnd := stack_windows[A_Index + 1]
 
-            try DllCall(
+            try PhysicalDllCall(
                 "SetWindowPos",
                 "ptr", lower_hwnd,
                 "ptr", upper_hwnd,

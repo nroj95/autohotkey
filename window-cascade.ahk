@@ -73,6 +73,8 @@ BuildTrayMenu()
 
 RegisterIntegrationMessages()
 
+InitializeCascadeDisplays()
+
 SeedStartupWindows()
 
 StartWindowHooks()
@@ -104,6 +106,8 @@ if IsCascadeEnabled() {
 #Include "%A_ScriptDir%\window-cascade\focus-corners.ahk"
 #Include "%A_ScriptDir%\window-cascade\focus-tab-clicks.ahk"
 #Include "%A_ScriptDir%\window-cascade\windows.ahk"
+#Include "%A_ScriptDir%\window-cascade\dpi.ahk"
+#Include "%A_ScriptDir%\window-cascade\display.ahk"
 #Include "%A_ScriptDir%\window-cascade\interface.ahk"
 #Include "%A_ScriptDir%\window-cascade\debug.ahk"
 
@@ -119,6 +123,7 @@ HandleScriptExit(exit_reason, exit_code)
     SetTimer(WatchCapsLockLayer, 0)
     try StopFocusTabClick()
     try StopWindowHooks()
+    try StopCascadeDisplays()
 
     ; Never strand script-hidden windows when their in-memory restore set is lost.
     ; This is a plain restore, not a final cascade layout or focus operation.

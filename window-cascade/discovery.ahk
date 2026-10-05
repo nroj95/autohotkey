@@ -12,7 +12,7 @@ CaptureDesktopMonitorHint()
 
     global desktop_monitor_hint, desktop_monitor_hint_tick
 
-    MouseGetPos(&mouse_x, &mouse_y, &hover_hwnd)
+    MouseGetPosPixels(&mouse_x, &mouse_y, &hover_hwnd)
 
     if !hover_hwnd
         return
@@ -79,11 +79,13 @@ QueueWindowPlacement(hwnd, source_hwnd)
 
     ; Snapshot once here. Readiness retries and settling reuse this monitor
     ; instead of sampling a later mouse position.
-    MouseGetPos(&queue_mouse_x, &queue_mouse_y)
+    MouseGetPosPixels(&queue_mouse_x, &queue_mouse_y)
     queued_monitor := GetMonitorForPoint(
         queue_mouse_x,
         queue_mouse_y
     )
+    ; The device name survives an index reorder while a new window is settling.
+    request.monitor_device := GetCascadeMonitorDevice(queued_monitor)
 
     DebugLog(
         "Queue placement."
@@ -117,6 +119,7 @@ WatchForMissedWindows()
     global pending_windows, handled_windows
     global current_foreground_hwnd, previous_foreground_hwnd
 
+    PollCascadeDisplayEnvironment()
     for hwnd in WinGetList() {
         if known_windows.Has(hwnd)
             continue
@@ -389,7 +392,7 @@ HandleWinEvent(
                 )
 
                 if IsDesktopSurfaceWindow(hwnd) {
-                    MouseGetPos(&mouse_x, &mouse_y)
+                    MouseGetPosPixels(&mouse_x, &mouse_y)
                     monitor_index := GetMonitorForPoint(mouse_x, mouse_y)
 
                     if monitor_index {
@@ -446,6 +449,7 @@ HandleWinEvent(
         if event = EVENT_SYSTEM_MINIMIZEEND {
             CancelPlacementStabilization(hwnd)
             TrackCascadeWindowRestores([hwnd])
+            SetTimer(ApplyPendingCascadeDisplayLayout, -50)
             return
         }
 
@@ -546,8 +550,7 @@ ForgetWindow(hwnd)
     if IsPendingAdoptionUndoFor(hwnd)
         pending_adoption_undo := 0
 
-    if placement_stabilization_generations.Has(hwnd)
-        placement_stabilization_generations.Delete(hwnd)
+    CancelPlacementStabilization(hwnd)
 
     if startup_windows.Has(hwnd)
         startup_windows.Delete(hwnd)

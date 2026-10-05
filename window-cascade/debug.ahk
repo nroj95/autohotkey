@@ -176,7 +176,7 @@ DebugDescribeWindow(hwnd)
     try min_max := WinGetMinMax("ahk_id " hwnd)
 
     try {
-        WinGetPos(
+        WinGetPosPixels(
             &window_x,
             &window_y,
             &window_width,
@@ -258,7 +258,7 @@ DebugFocusCornerAppearance(active_hwnd, active_slot_targets)
             ; also let diagnostics inspect a GUI during a hide/show transition.
             native_alpha := WinGetTransparent(marker_hwnd)
             native_topmost := !!(WinGetExStyle(marker_hwnd) & 0x8)
-            WinGetPos(&x, &y, &width, &height, marker_hwnd)
+            WinGetPosPixels(&x, &y, &width, &height, marker_hwnd)
             preceding_hwnd := DllCall("GetWindow", "ptr", marker_hwnd, "uint", 3, "ptr") ; GW_HWNDPREV
 
             role := active_slot_targets.Has(target_hwnd) ? "active-slot" : "inactive-slot"
@@ -268,6 +268,7 @@ DebugFocusCornerAppearance(active_hwnd, active_slot_targets)
                 . ",hwnd=" marker_hwnd
                 . ",role=" role
                 . ",color=" overlay.gui.BackColor
+                . ",dpi=" overlay.dpi
                 . ",base_alpha=" overlay.alpha
                 . ",native_alpha=" (native_alpha == "" ? "unknown" : native_alpha)
                 . ",shown=" overlay.shown

@@ -254,7 +254,8 @@ ToggleWindowCascadeHelp(*)
         return
     }
 
-    help_gui := Gui("+AlwaysOnTop", "Window Cascade")
+    ; Only control-free focus tabs are per-monitor aware, not the text help GUI.
+    help_gui := CallWithDpiContext(-2, Gui, "+AlwaysOnTop", "Window Cascade")
     help_icons := SetWindowCascadeHelpIcons(help_gui)
     help_gui.SetFont("s10", "Cascadia Mono")
 

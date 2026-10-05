@@ -34,7 +34,7 @@ RunQueuedFocusCornerUpdate()
 
 UpdateFocusCornerOverlays()
 {
-    if !IsCascadeEnabled()
+    if !IsCascadeEnabled() || IsCascadeDisplayTransition()
         return
 
     global focus_corner_overlays, focus_tab_click_generation, cascade_slot_tolerance
@@ -84,8 +84,11 @@ UpdateFocusCornerOverlays()
         monitor_index := GetMonitorForWindow(hwnd)
         if !monitor_index || monitor_index != managed_monitor
             continue
-        if !geometry_by_monitor.Has(monitor_index)
+        if !geometry_by_monitor.Has(monitor_index) {
+            if CascadeMonitorNeedsRefresh(monitor_index)
+                return
             geometry_by_monitor[monitor_index] := GetCanonicalCascadeGeometry(monitor_index)
+        }
         slot_index := FindNearestCascadeSlot(window_x, window_y,
             geometry_by_monitor[monitor_index].slots, cascade_slot_tolerance)
         if !slot_index
@@ -123,7 +126,7 @@ UpdateFocusCornerOverlays()
     Critical "On"
     try {
         ; A newer refresh or tab press may have changed the stack during queries.
-        if !IsCascadeEnabled() || generation != update_generation
+        if !IsCascadeEnabled() || IsCascadeDisplayTransition() || generation != update_generation
             return
         if active_hwnd != DllCall("GetForegroundWindow", "ptr")
             || click_generation != focus_tab_click_generation
@@ -295,6 +298,7 @@ ShowFocusCornerOverlay(
     }
 
     overlay.alpha := marker_alpha
+    dpi := GetCascadeWindowMonitorDpi(hwnd)
 
     if (
         overlay.shown
@@ -303,6 +307,7 @@ ShowFocusCornerOverlay(
         && overlay.window_width = window_width
         && overlay.window_height = window_height
         && overlay.full_height = full_height
+        && overlay.dpi = dpi
     ) {
         SetFocusCornerOpacity(overlay, focus_corner_visible ? marker_alpha : 1)
         if appearance_changed
@@ -312,8 +317,10 @@ ShowFocusCornerOverlay(
         return
     }
 
-    thickness := focus_corner_thickness
-    overlap := focus_corner_overlap
+    ; Scale UI dimensions only. DWM positions and full-height bounds are pixels.
+    thickness := Max(1, ScaleForDpi(focus_corner_thickness, dpi))
+    overlap := Min(thickness - 1, Max(0, ScaleForDpi(focus_corner_overlap, dpi)))
+    marker_size := Max(1, ScaleForDpi(focus_corner_size, dpi))
     outside := thickness - overlap
 
     marker_x := window_x - outside
@@ -325,12 +332,12 @@ ShowFocusCornerOverlay(
         marker_y :=
             window_y
             + window_height
-            - focus_corner_size
+            - marker_size
 
-        marker_height := focus_corner_size
+        marker_height := marker_size
     }
 
-    overlay.gui.Show(
+    ShowPhysicalGui(overlay.gui,
         "NA"
         . " x" marker_x
         . " y" marker_y
@@ -350,6 +357,7 @@ ShowFocusCornerOverlay(
     overlay.window_width := window_width
     overlay.window_height := window_height
     overlay.full_height := full_height
+    overlay.dpi := dpi
     overlay.shown := true
 }
 
@@ -370,7 +378,7 @@ PlaceFocusCornerAboveTarget(hwnd, overlay)
         | SWP_NOMOVE
         | SWP_NOACTIVATE
 
-    DllCall(
+    PhysicalDllCall(
         "SetWindowPos",
         "ptr", overlay.gui.Hwnd,
         "ptr", hwnd,
@@ -405,8 +413,9 @@ CreateFocusCornerOverlay(hwnd, marker_color, marker_alpha)
     global focus_corner_overlays
     global focus_corner_targets
 
-    ; DWM bounds are already pixel dimensions; do not scale the overlay again.
-    marker_gui := Gui(
+    ; Only these borderless, control-free GUIs are per-monitor aware. The help
+    ; window retains normal AHK scaling. Both creation and movement need PM context.
+    marker_gui := CreatePhysicalGui(
         "-Caption -DPIScale"
         . " +ToolWindow"
         . " +E0x08000000",
@@ -427,7 +436,8 @@ CreateFocusCornerOverlay(hwnd, marker_color, marker_alpha)
         window_y: 0,
         window_width: 0,
         window_height: 0,
-        full_height: false
+        full_height: false,
+        dpi: 0
     }
 }
 

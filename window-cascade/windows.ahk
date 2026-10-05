@@ -99,7 +99,7 @@ IsCascadeWindow(hwnd)
         window_class := WinGetClass("ahk_id " hwnd)
         title := WinGetTitle("ahk_id " hwnd)
 
-        WinGetPos(
+        WinGetPosPixels(
             &x,
             &y,
             &width,
@@ -232,7 +232,7 @@ TryGetVisibleFrameRect(
         return false
 
     try {
-        WinGetPos(
+        WinGetPosPixels(
             &raw_x,
             &raw_y,
             &raw_width,
@@ -419,7 +419,7 @@ GetCommandMonitor()
             return monitor_index
     }
 
-    MouseGetPos(&mouse_x, &mouse_y)
+    MouseGetPosPixels(&mouse_x, &mouse_y)
     return GetMonitorForPoint(mouse_x, mouse_y)
 }
 
@@ -474,7 +474,7 @@ GetTargetMonitor(hwnd, source_hwnd, queued_monitor := 0)
     }
 
     ; Final live-input fallback when no launch snapshot was available.
-    MouseGetPos(&mouse_x, &mouse_y)
+    MouseGetPosPixels(&mouse_x, &mouse_y)
     monitor_index := GetMonitorForPoint(mouse_x, mouse_y)
 
     if monitor_index {
@@ -496,7 +496,7 @@ GetTargetMonitor(hwnd, source_hwnd, queued_monitor := 0)
 GetMonitorForWindow(hwnd)
 {
     try {
-        WinGetPos(
+        WinGetPosPixels(
             &x,
             &y,
             &width,
@@ -522,7 +522,7 @@ GetMonitorForPoint(x, y)
     monitor_count := MonitorGetCount()
 
     Loop monitor_count {
-        MonitorGet(
+        MonitorGetPixels(
             A_Index,
             &left,
             &top,
@@ -542,7 +542,7 @@ GetAdjacentMonitor(source_monitor, direction)
     if direction != "Left" && direction != "Right"
         return 0
 
-    try MonitorGet(
+    try MonitorGetPixels(
         source_monitor,
         &source_left,
         &source_top,
@@ -564,7 +564,7 @@ GetAdjacentMonitor(source_monitor, direction)
         if monitor_index = source_monitor
             continue
 
-        try MonitorGet(
+        try MonitorGetPixels(
             monitor_index,
             &candidate_left,
             &candidate_top,

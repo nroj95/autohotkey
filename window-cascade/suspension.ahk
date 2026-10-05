@@ -92,6 +92,7 @@ ResumeWindowCascade()
     global cascade_disabled, cascade_disabled_windows, cascade_membership_generation
     global current_foreground_hwnd, previous_foreground_hwnd
 
+    RefreshCascadeDisplays()
     RememberWindowsOpenedWhileDisabled()
     windows_to_restore := []
     for target in cascade_disabled_windows.Clone() {
@@ -188,7 +189,7 @@ ForgetDisabledCascadeWindow(hwnd)
 StopCascadeActivity()
 {
     global pending_windows, startup_windows, known_windows, handled_windows
-    global placement_reservations, placement_stabilization_generations
+    global placement_reservations, placement_stabilization_generations, placement_dpi_generations
     global cascade_restore_batches, cascade_close_batches, cascade_compaction_timer_pending
     global focus_corner_update_pending, focus_corner_overlays, focus_tab_click_generation
     global cascade_mouse_press, desktop_monitor_hint, desktop_monitor_hint_tick
@@ -204,7 +205,7 @@ StopCascadeActivity()
 
     for callback in [WatchForMissedWindows, UpdateFocusCornerOverlays,
         RunQueuedFocusCornerUpdate, WatchCascadeWindowRestores,
-        FlushCascadeCompactions, CheckCompatibilitySettings]
+        FlushCascadeCompactions, CheckCompatibilitySettings, ApplyPendingCascadeDisplayLayout]
     {
         SetTimer(callback, 0)
     }
@@ -221,6 +222,7 @@ StopCascadeActivity()
     pending_windows.Clear()
     placement_reservations.Clear()
     placement_stabilization_generations.Clear()
+    placement_dpi_generations.Clear()
     cascade_restore_batches.Clear()
     ; Closed/cancelled requests must not preserve an old compaction gate on resume.
     cascade_close_batches.Clear()
@@ -238,6 +240,7 @@ StartCascadeActivity()
     global missed_window_poll_ms, focus_corner_fallback_ms, cascade_history
     global cascade_restore_batches, cascade_restore_poll_ms
 
+    SetTimer(ApplyPendingCascadeDisplayLayout, -50)
     SetTimer(WatchForMissedWindows, missed_window_poll_ms)
     SetTimer(UpdateFocusCornerOverlays, focus_corner_fallback_ms)
     if cascade_restore_batches.Count
