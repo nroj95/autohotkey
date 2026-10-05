@@ -1,81 +1,57 @@
 # AutoHotkey
 
-personal AutoHotkey v2 scripts for keyboard layers, window management, and small Windows utilities.
+small Windows 11 tools for window management, scratch notes, keyboard layers, and other things Windows should do better.
 
-## scripts
+**AutoHotkey v2** · **Windows 11** · [latest release](https://github.com/nroj95/autohotkey/releases/latest)
 
-### `capslock-layer.ahk`
+## start here
 
-turns CapsLock into an extra left-hand modifier layer.
+| tool | what it does |
+|---|---|
+| **Scratchpad** | a fast top-edge scratch drawer for temporary notes and code, backed by Notepad3 |
+| **Window Cascade** | automatically arranges ordinary windows into a layered cascade with clickable focus tabs and drag-and-drop placement |
+| **Win Key Overhaul** | replaces selected Windows window-management shortcuts with predictable layouts, focus movement, swapping, stretching, and borderless fullscreen |
 
-- `Caps + Q/W/E/R` → F13–F16
-- `Caps + A/S/D/F` → F17–F20
-- `Caps + Z/X/C/V` → F21–F24
-- `Caps + 0–9` → Numpad 0–9
-- tap CapsLock to arm the layer for one keypress
-- the one-shot layer expires after 1.4 seconds
-- double-tap Left Shift to toggle normal CapsLock
-- owns the companion-command namespace used by Window Cascade
+## Scratchpad
 
-open the tray menu and choose **How to use** for the CapsLock Layer help page.
+`scratchpad.ahk`
 
-registered commands can override a base layer key in a specific context. in Windows Terminal, the layer includes commands for clearing the terminal buffer and copying the full buffer as a Markdown code block.
+a persistent scratch drawer that slides down from the top of the current monitor when you need it and gets out of the way when you do not.
 
-the one-shot indicator appears where the mouse pointer was when the layer was armed and stays fixed until the layer is consumed or expires. it is hidden in maximized and fullscreen windows.
+- `Win+F12` toggles it by default
+- pages are plain files in `D:\toolbox\scratch\`
+- autosaves while visible and performs stricter checked saves before hiding, switching, reloading, or exiting
+- remembers the current page, caret, selection, and scroll position
+- supports quick page creation and keyboard page navigation
+- tracks native **Save As** renames inside the scratch folder
+- protects the active page from accidental external deletion or replacement
+- uses normal Z-order by default, but can temporarily rise above fullscreen applications
+- file-operation and error dialogs are allowed above the drawer
+- includes first-run setup, tray controls, startup support, and built-in help
 
-### `scratchpad.ahk`
+Scratchpad uses its own Notepad3 configuration, separate from your normal Notepad3 setup. if Notepad3 is missing, setup can install it with WinGet or let you select an installed or portable copy.
 
-turns a dedicated Notepad3 window into a persistent, top-edge scratch drawer for temporary notes and code.
-
-Scratchpad is standalone. run `scratchpad.ahk` directly or enable **Run at startup** from its tray menu. it requires **64-bit AutoHotkey v2** and Notepad3. if Notepad3 cannot be located automatically, setup offers to install it with WinGet or lets you select an installed or portable `Notepad3.exe`. the first page on a fresh installation includes a short welcome guide when the scratch folder has no supported pages.
-
-#### controls
+<details>
+<summary><strong>controls and settings</strong></summary>
 
 | shortcut | action |
 |---|---|
-| Win+F12 | show or hide the scratchpad (default global toggle) |
-| Escape, inside the editor | hide the scratchpad |
-| Ctrl+N, inside the editor | create a new scratch page |
-| Ctrl+S, inside the editor | save the current page |
-| Win+Left / Win+PgDn or Win+Right / Win+PgUp, inside the editor | previous / next page |
+| `Win+F12` | show or hide Scratchpad |
+| `Escape` | hide Scratchpad |
+| `Ctrl+N` | create a new page |
+| `Ctrl+S` | save the current page |
+| `Win+Left` / `Win+PgDn` | previous page |
+| `Win+Right` / `Win+PgUp` | next page |
 
-holding the toggle key opens or hides the drawer only once; release it before toggling again. the global toggle is configurable from the Scratchpad tray menu. presets include `Win+F12`, `F12`, several F12 modifier combinations, `Win+F10` and `Ctrl+Alt+Space`; **Custom...** accepts another keyboard combination, and **Disabled** turns the global toggle off. non-F-key custom shortcuts require at least one modifier.
+the global toggle is configurable from the tray menu, including several presets, a custom shortcut, or fully disabled.
 
-#### window behavior
-
-by default, the drawer uses 75% of the selected monitor's work-area width and 40% of its height, centered horizontally at the top. the monitor is selected from the window active when the drawer is opened.
-
-the default motion is a 180 ms eased slide down/up. Windows' disabled-animation setting is respected. the drawer uses normal window Z-order by default: opening it brings it forward, but other windows can cover it normally. when opened from a fullscreen or borderless-fullscreen window, Scratchpad temporarily becomes topmost so the drawer can appear over that application; the temporary state ends when the drawer is hidden, the source leaves fullscreen, or focus moves to an unrelated ordinary window. hiding attempts to restore focus to the previous application.
-
-Scratchpad marks its editor with `nroj.WindowCascade.Ignore`, so Window Cascade leaves the drawer alone.
-
-hiding does not close Notepad3. **Reload** keeps the editor and reattaches immediately, including restoring page protection while the drawer is hidden. **Exit** saves the current page, closes the owned Notepad3 window and exits Scratchpad.
-
-#### pages and saving
-
-pages live directly inside `D:\toolbox\scratch\` by default. the remembered page is reopened on the next scratch command, or the newest existing page when that path no longer exists.
-
-new pages are named `scratch-yyyyMMdd-HHmmss.md`, use UTF-8 without BOM and LF line endings, and never overwrite an existing file. same-second collisions receive `-02`, `-03`, and so on.
-
-page rotation is ordered by file creation time, with filename breaking ties. subdirectories are not scanned. common text, code and configuration extensions are accepted, including `.md`, `.txt`, `.ps1`, `.py`, `.ahk`, `.lua`, `.json` and `.ini`; see `allowed_extensions` in the script for the full list.
-
-visible pages are autosaved every 10 seconds by default and explicitly saved before hiding, switching, reloading or exiting. failed saves or detected disk conflicts stop the operation instead of overwriting uncertain data. autosave verifies the submitted snapshot without waiting for newer typing to stop; commands that hide or replace the page use the stricter save path.
-
-page switching reuses the same Notepad3 window. **undo history survives hiding and Scratchpad reloads, but not switching pages**. caret, selection and scroll position are remembered during the script session.
-
-use Notepad3's **File > Save As** to give an open page a useful name inside the scratch folder. closed pages can be renamed normally in Explorer. while Scratchpad is running and attached, it holds a handle that blocks external deletion, renaming and replacement of the active page, even while the drawer is hidden. the handle follows native Save As within the scratch folder on the next eligible filename check (normally within 250 ms).
-
-this protection still permits ordinary reads and in-place writes by other applications; it is not an exclusive-write lock. detected changes on disk pause automatic saving until the conflict is resolved. avoid editing the same page in two applications at once.
-
-#### isolation and settings
-
-Scratchpad uses a dedicated Notepad3 configuration file, so ordinary Notepad3 settings are not reused.
-
-controller configuration is created at:
+controller settings live at:
 
 ```text
 %LOCALAPPDATA%\Scratchpad\settings.ini
 ```
+
+defaults:
 
 ```ini
 [Paths]
@@ -95,88 +71,39 @@ AutosaveIntervalMs=10000
 ToggleHotkey=Win+F12
 ```
 
-leave `Notepad3Executable` blank for automatic detection, or enter the full path without surrounding quotes. `ToggleHotkey` stores the friendly shortcut name, for example `Win+F12` or `Ctrl+Shift+Space`. edit the settings through the tray menu, then reload. existing window-size and autosave settings are preserved. the topmost setting is migrated once from the old `AlwaysOnTop=1` default to `0`; after that, an explicit `AlwaysOnTop=1` choice is preserved and pins Scratchpad above ordinary windows. modal, error and file-operation dialogs are still allowed above the drawer so prompts are not hidden. `AnimationDurationMs=0` disables motion.
+Scratchpad requires **64-bit AutoHotkey v2** and Notepad3.
 
-the current-page record is stored in `%LOCALAPPDATA%\Scratchpad\state.ini`, the dedicated editor configuration is stored in `%LOCALAPPDATA%\Scratchpad\Notepad3.ini`, and errors are logged to `%LOCALAPPDATA%\Scratchpad\errors.log`.
+</details>
 
-#### recovery and implementation
+## Window Cascade
 
-if a command reports a save conflict, timeout or editor dialog, resolve it in Notepad3 before retrying. after resolving an autosave error, choose **Reload** from the Scratchpad tray menu to retry the checked save and resume automatic saving. Scratchpad does not automatically confirm overwrite prompts or kill editor processes.
+`window-cascade.ahk` + `window-cascade/`
 
-automatic content comparison supports UTF-8 (with or without BOM) and UTF-16 LE with BOM. comparison is limited to files of 32 MiB and editor text of 16,777,216 UTF-16 code units; unsupported encodings, embedded NUL characters and larger documents require manual recovery in Notepad3.
+turns ordinary desktop windows into a compact cascading workspace instead of letting them pile up randomly.
 
-the bridge uses standard Windows messages, Notepad3's `WM_COPYDATA` file-loading path and integer-only Scintilla messages. it does not swap the clipboard, inject save keystrokes or allocate memory inside Notepad3. the bridge targets Notepad3 7.26.602.1 source-level interfaces rather than a stable plugin API, so test editor upgrades before relying on them.
+- automatically places new windows into cascade slots
+- stacks multiple windows per slot without losing access to deeper layers
+- shows small clickable focus tabs for exposed windows
+- lets you drag windows between slots or monitors to re-slot or adopt them
+- supports keyboard focus movement, layer rotation, gathering, closing, and monitor moves
+- preserves minimized windows and handles multi-monitor cascades
+- ignores dialogs, transient prompts, Scratchpad, and other windows that should not become cascade members
+- can be disabled and resumed globally with `Caps + M`
 
-filename checks run at most four times per second while visible and do not overlap Scratchpad commands or autosave. Notepad3 is still asked to perform its native Save command even when Scintilla's text-dirty flag is clear, so encoding-only changes are not skipped.
+Window Cascade runs as its own process and uses `capslock-layer.ahk` for its keyboard command bindings.
 
-### `pause-command-mode.ahk`
+for implementation details and the full behavior reference, see [`window-cascade/README.md`](window-cascade/README.md).
 
-uses Pause as a second command layer for text and utility shortcuts.
+## Win Key Overhaul
 
-it supports both held chords and the same 1.4-second one-shot behavior as the CapsLock layer.
+`win-key-overhaul.ahk` + `win-key-overhaul/`
 
-`Pause + H` toggles the Pause Command Mode help page.
+replaces selected native Win-key window shortcuts with a system built around predictable geometry instead of Windows' inconsistent snap behavior.
 
-included commands cover:
-
-- text characters and snippets
-- timestamps
-- speaker wake
-- system sleep
-- built-in help
-
-the CapsLock and Pause one-shot layers are mutually exclusive, so arming one automatically disarms the other.
-
-### `shell-folders.ahk`
-
-a small tray utility for opening useful Windows shell and hidden folders without remembering their paths.
-
-it provides quick access to locations such as:
-
-- Startup
-- SendTo
-- AppData
-- ProgramData
-- Temp
-- Recycle Bin
-
-### `window-cascade.ahk`
-
-automatically arranges ordinary windows into a cascading layout.
-
-it includes controls for:
-
-- moving through cascade windows
-- adopting and re-slotting existing windows, including drag-and-drop
-- rotating stacked windows and cycling slot layers
-- moving managed windows across monitors
-- minimizing/restoring all cascades across monitors and disabling/resuming cascade activity with `Caps + M`
-- closing all layers on the current monitor with `Caps + F4`
-- checking for conflicting Windows or PowerToys settings
-
-focus tabs show at most one clickable marker per slot. clicking an inactive slot focuses its exposed window; clicking the active slot cycles to the next layer in that stack. holding, dragging, or releasing a focus tab adds no extra action.
-
-windows can also be dragged near an existing cascade slot to snap or adopt them. dragging a managed window away from the cascade releases it on mouse-up.
-
-new-window placement includes guarded foreground recovery for taskbar launches where Windows briefly hands focus back to the shell, including Shift + taskbar launches.
-
-focus-tab colors can be configured from the tray separately for the active and inactive slots.
-
-`Caps + H` toggles the Window Cascade help page, which uses the custom cascade icon. while the cascade is disabled, `Caps + M` remains available to resume; windows opened during the disabled period stay unmanaged.
-
-Window Cascade runs as its own process but requires `capslock-layer.ahk` for its keyboard command bindings.
-
-### `win-key-overhaul.ahk`
-
-replaces selected native Win-key shortcuts with predictable custom window management.
-
-features include:
-
-- quarter- and half-width side and corner layout cycles
-- centered and offset top/bottom layouts
+- side and corner layout cycles
+- centered and offset layouts
 - restore-to-normal and minimize shortcuts
-- collision-aware horizontal stretching
-- full-height vertical stretching
+- horizontal and vertical stretching
 - borderless fullscreen
 - clockwise and counter-clockwise window swapping
 - spatial focus navigation
@@ -186,25 +113,52 @@ features include:
 - optional FancyZones compatibility
 - optional ScreenGrid recommendation
 
-`Ctrl + Win + H` toggles the Win Key Overhaul help page.
+`Ctrl + Win + H` opens its built-in help.
 
-Win Key Overhaul is fully standalone and does not depend on the other root-level AutoHotkey scripts in this repository.
+Win Key Overhaul is standalone. for the full behavior reference, see [`win-key-overhaul/README.md`](win-key-overhaul/README.md).
 
-## requirements
+## smaller utilities
 
-- Windows 11
-- AutoHotkey v2
-- `scratchpad.ahk`: 64-bit AutoHotkey v2 and Notepad3
+| script | purpose |
+|---|---|
+| `capslock-layer.ahk` | turns CapsLock into an extra left-hand modifier layer with F13–F24, numpad mappings, one-shot mode, and companion commands |
+| `pause-command-mode.ahk` | uses Pause as a second command layer for text snippets, timestamps, speaker wake, system sleep, and other utility actions |
+| `shell-folders.ahk` | tray shortcuts for useful Windows shell and hidden folders such as Startup, SendTo, AppData, ProgramData, Temp, and Recycle Bin |
 
-## usage
+CapsLock Layer and Pause Command Mode share the same 1.4-second one-shot idea. arming one disarms the other.
 
-run root-level `.ahk` launchers rather than module files inside `window-cascade/` or `win-key-overhaul/`.
+## install
 
-start `capslock-layer.ahk` before `window-cascade.ahk`. Scratchpad, Win Key Overhaul and the other utilities run independently unless their own documentation says otherwise.
+grab the newest files from [Releases](https://github.com/nroj95/autohotkey/releases/latest).
 
-each main script provides a tray menu with its own controls and a **Run at startup** option where applicable.
+the standalone scripts can be run directly with AutoHotkey v2:
 
-from the repository root, run `./validate.ps1` after changes to validate the root scripts and their include trees.
+- `capslock-layer.ahk`
+- `pause-command-mode.ahk`
+- `scratchpad.ahk`
+- `shell-folders.ahk`
+
+extract these before running their root launcher:
+
+- `window-cascade.zip`
+- `win-key-overhaul.zip`
+
+most main scripts provide a tray menu with **Run at startup**.
+
+Window Cascade expects CapsLock Layer to be running first. Scratchpad additionally requires 64-bit AutoHotkey v2 and Notepad3.
+
+## development
+
+root-level `.ahk` files are the launchers. do not run module files inside `window-cascade/` or `win-key-overhaul/` directly.
+
+after changes:
+
+```powershell
+./validate.ps1
+git diff --check
+```
+
+`validate.ps1` loads every root script and its include tree through AutoHotkey v2.
 
 ## icon attribution
 
