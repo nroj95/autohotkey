@@ -7,12 +7,12 @@
 
 InitializeDebugLogging(reason := "started")
 {
-    global debug_enabled, user_preferences_directory
+    global debug_enabled, debug_data_directory
 
     if !debug_enabled
         return
 
-    try DirCreate(user_preferences_directory)
+    try DirCreate(debug_data_directory)
     OnError(LogWinKeyOverhaulUnhandledError)
     DebugLogSession(reason)
 }

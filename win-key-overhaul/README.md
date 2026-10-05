@@ -16,7 +16,7 @@ the canonical startup shortcut is `Win Key Overhaul.lnk`. startup can migrate th
 
 the preference file now lives at `%APPDATA%\WinKeyOverhaul\preferences.ini`. when the new file does not exist, startup copies the previous `%APPDATA%\WindowsKeyOverhaul\preferences.ini` once so the ScreenGrid recommendation state is preserved.
 
-debug logging is off by default and can be toggled for the current run from the tray menu. it is not persisted across script restarts. when enabled, the log is `%APPDATA%\WinKeyOverhaul\win-key-overhaul-debug.log`.
+debug logging is off by default and can be toggled for the current run from the tray menu. it is not persisted across script restarts. when enabled, the machine-local log is `%LOCALAPPDATA%\WinKeyOverhaul\win-key-overhaul-debug.log`.
 
 ## shortcuts
 

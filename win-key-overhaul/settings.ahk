@@ -54,4 +54,5 @@ fancyzones_check_in_progress := false
 ; =============================================================================
 
 debug_enabled := false
-debug_log_path := user_preferences_directory "\win-key-overhaul-debug.log"
+debug_data_directory := EnvGet("LOCALAPPDATA") "\WinKeyOverhaul"
+debug_log_path := debug_data_directory "\win-key-overhaul-debug.log"
