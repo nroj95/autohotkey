@@ -101,7 +101,7 @@ ShowDebugActionTip(text)
 
     ; Use a separate tooltip slot so this never replaces CapsLock Layer's mode tip.
     ToolTip text, mouse_x + 14, mouse_y + 18, 3
-    SetTimer HideDebugActionTip, -900
+    SetTimer HideDebugActionTip, -1400
 }
 
 HideDebugActionTip()
