@@ -109,6 +109,142 @@ QueueWindowPlacement(hwnd, source_hwnd)
     )
 }
 
+TryQueueHandledWindowReshow(hwnd)
+{
+    global handled_windows, cascade_launch_hint
+    global handled_reshow_hint_max_age_ms, placement_delay_ms
+    global current_foreground_hwnd, previous_foreground_hwnd
+
+    if !handled_windows.Has(hwnd) || !IsObject(cascade_launch_hint)
+        return false
+
+    source_monitor := GetManagedCascadeMonitor(hwnd)
+    if !source_monitor
+        return false
+
+    hint := cascade_launch_hint
+    hint_age := (A_TickCount - hint.tick) & 0xFFFFFFFF
+    if hint_age > handled_reshow_hint_max_age_ms
+        return false
+
+    ; SHOW and FOREGROUND can arrive in either order. Require the current native
+    ; foreground or one side of our foreground handoff to still be a taskbar.
+    native_foreground := DllCall("GetForegroundWindow", "ptr")
+    if !IsTaskbarSurfaceWindow(native_foreground)
+        && !IsTaskbarSurfaceWindow(current_foreground_hwnd)
+        && !IsTaskbarSurfaceWindow(previous_foreground_hwnd)
+        return false
+
+    target_monitor := 0
+    monitor_device := ""
+    try target_monitor := hint.monitor
+    try monitor_device := hint.monitor_device
+    if monitor_device != "" {
+        resolved_monitor := FindCascadeMonitorDevice(monitor_device)
+        if resolved_monitor
+            target_monitor := resolved_monitor
+    }
+    if !target_monitor
+        return false
+
+    ; A taskbar click on the window's existing monitor consumes the hint but
+    ; preserves its current slot and avoids an unnecessary re-slot.
+    if target_monitor = source_monitor {
+        if cascade_launch_hint = hint
+            cascade_launch_hint := 0
+        return true
+    }
+
+    try pid := WinGetPID(hwnd)
+    catch
+        return false
+
+    if hint.HasOwnProp("reshow_hwnd") && hint.reshow_hwnd = hwnd
+        return true
+    hint.reshow_hwnd := hwnd
+
+    request := {
+        hwnd: hwnd,
+        pid: pid,
+        source_monitor: source_monitor,
+        target_monitor: target_monitor,
+        monitor_device: monitor_device,
+        hint: hint
+    }
+
+    DebugLog(
+        "Handled window taskbar re-show queued."
+        . " | from-monitor=" source_monitor
+        . " | target-monitor=" target_monitor
+        . " | target=" DebugDescribeWindow(hwnd)
+    )
+
+    SetTimer(
+        PlaceHandledWindowReshow.Bind(request),
+        -placement_delay_ms
+    )
+    return true
+}
+
+PlaceHandledWindowReshow(request)
+{
+    global cascade_launch_hint, handled_windows
+
+    try {
+        if !IsCascadeEnabled()
+            || !IsObject(cascade_launch_hint)
+            || cascade_launch_hint != request.hint
+            return
+
+        hwnd := request.hwnd
+        if !handled_windows.Has(hwnd)
+            || !WinExist("ahk_id " hwnd)
+            || WinGetPID(hwnd) != request.pid
+            return
+
+        source_monitor := GetManagedCascadeMonitor(hwnd)
+        if !source_monitor
+            return
+
+        target_monitor := request.target_monitor
+        if request.monitor_device != "" {
+            resolved_monitor := FindCascadeMonitorDevice(request.monitor_device)
+            if resolved_monitor
+                target_monitor := resolved_monitor
+        }
+        if !target_monitor || target_monitor = source_monitor
+            return
+
+        DebugLog(
+            "Handled window taskbar re-show placement begin."
+            . " | from-monitor=" source_monitor
+            . " | target-monitor=" target_monitor
+            . " | target=" DebugDescribeWindow(hwnd)
+        )
+
+        if PlaceCascadeWindowOnMonitor(hwnd, target_monitor) {
+            DebugLog(
+                "Handled window taskbar re-show placement complete."
+                . " | monitor=" target_monitor
+                . " | " DebugDescribeWindow(hwnd)
+            )
+        } else {
+            DebugLog(
+                "Handled window taskbar re-show placement skipped."
+                . " | target-monitor=" target_monitor
+                . " | " DebugDescribeWindow(hwnd)
+            )
+        }
+    }
+    catch Error as err {
+        DebugError("Handled window taskbar re-show", err)
+    }
+    finally {
+        if IsObject(cascade_launch_hint) && cascade_launch_hint = request.hint
+            cascade_launch_hint := 0
+    }
+}
+
 WatchForMissedWindows()
 {
     if !IsCascadeEnabled()
@@ -478,6 +614,11 @@ HandleWinEvent(
                 . " | " DebugDescribeWindow(hwnd)
             )
         }
+
+        ; An already-managed tray app can re-show the same HWND rather than
+        ; create a new one. Only a fresh taskbar hint may retarget that window.
+        if handled_windows.Has(hwnd) && TryQueueHandledWindowReshow(hwnd)
+            return
 
         ; EVENT_OBJECT_SHOW also fires when some existing minimized windows are
         ; restored. Only windows absent from the startup snapshot are new.

@@ -649,10 +649,7 @@ CaptureCascadeLaunchIntent(hwnd)
     global cascade_launch_hint, current_foreground_hwnd, previous_foreground_hwnd
 
     CancelNewWindowFocus()
-    try window_class := WinGetClass(hwnd)
-    catch
-        return
-    if window_class = "Shell_TrayWnd" || window_class = "Shell_SecondaryTrayWnd" {
+    if IsTaskbarSurfaceWindow(hwnd) {
         foreground := DllCall("GetForegroundWindow", "ptr")
         if IsShellSurfaceWindow(foreground) {
             if current_foreground_hwnd && !IsShellSurfaceWindow(current_foreground_hwnd)
@@ -660,9 +657,12 @@ CaptureCascadeLaunchIntent(hwnd)
             else if previous_foreground_hwnd && !IsShellSurfaceWindow(previous_foreground_hwnd)
                 foreground := previous_foreground_hwnd
         }
+        monitor := GetMonitorForWindow(hwnd)
         cascade_launch_hint := {
             tick: A_TickCount,
-            foreground: foreground
+            foreground: foreground,
+            monitor: monitor,
+            monitor_device: monitor ? GetCascadeMonitorDevice(monitor) : ""
         }
     }
 }

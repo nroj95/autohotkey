@@ -176,6 +176,22 @@ IsDesktopSurfaceWindow(hwnd)
     return window_class = "Progman" || window_class = "WorkerW"
 }
 
+IsTaskbarSurfaceWindow(hwnd)
+{
+    if !hwnd || !WinExist("ahk_id " hwnd)
+        return false
+
+    try window_class := WinGetClass("ahk_id " hwnd)
+    catch
+        return false
+
+    return (
+        window_class = "Shell_TrayWnd"
+        || window_class = "Shell_SecondaryTrayWnd"
+    )
+}
+
+
 IsShellSurfaceWindow(hwnd)
 {
     if !hwnd || !WinExist("ahk_id " hwnd)

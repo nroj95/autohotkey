@@ -21,6 +21,11 @@ cascade_slot_tolerance := 56
 
 placement_delay_ms := 20
 
+; Existing managed windows may be shown again by an already-running tray app.
+; Keep this much shorter than the ordinary launch-focus hint so unrelated later
+; taskbar activity cannot retarget an old managed window.
+handled_reshow_hint_max_age_ms := 1000
+
 ; Recent taskbar hints and ordinary focus requests use this timeout.
 new_window_focus_timeout_ms := 3000
 new_window_focus_poll_ms := 100
