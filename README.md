@@ -27,7 +27,7 @@ the one-shot indicator appears where the mouse pointer was when the layer was ar
 
 turns a dedicated Notepad3 window into a persistent, top-edge scratch drawer for temporary notes and code.
 
-Scratchpad is standalone. run `scratchpad.ahk` directly or enable **Run at startup** from its tray menu. it requires **64-bit AutoHotkey v2** and Notepad3. if Notepad3 cannot be located automatically, select its `Notepad3.exe` when prompted.
+Scratchpad is standalone. run `scratchpad.ahk` directly or enable **Run at startup** from its tray menu. it requires **64-bit AutoHotkey v2** and Notepad3. if Notepad3 cannot be located automatically, setup offers to install it with WinGet or lets you select an installed or portable `Notepad3.exe`. the first page on a fresh installation includes a short welcome guide when the scratch folder has no supported pages.
 
 #### controls
 
@@ -39,17 +39,17 @@ Scratchpad is standalone. run `scratchpad.ahk` directly or enable **Run at start
 | Ctrl+S, inside the editor | save the current page |
 | Win+Left / Win+PgDn or Win+Right / Win+PgUp, inside the editor | previous / next page |
 
-the global toggle is configurable from the Scratchpad tray menu. presets include `Win+F12`, `F12`, several F12 modifier combinations, `Win+F10` and `Ctrl+Alt+Space`; **Custom...** accepts another keyboard combination, and **Disabled** turns the global toggle off. non-F-key custom shortcuts require at least one modifier.
+holding the toggle key opens or hides the drawer only once; release it before toggling again. the global toggle is configurable from the Scratchpad tray menu. presets include `Win+F12`, `F12`, several F12 modifier combinations, `Win+F10` and `Ctrl+Alt+Space`; **Custom...** accepts another keyboard combination, and **Disabled** turns the global toggle off. non-F-key custom shortcuts require at least one modifier.
 
 #### window behavior
 
-the drawer uses 75% of the selected monitor's work-area width and 60% of its height, centered horizontally at the top. the monitor is selected from the window active when the drawer is opened.
+by default, the drawer uses 75% of the selected monitor's work-area width and 40% of its height, centered horizontally at the top. the monitor is selected from the window active when the drawer is opened.
 
 the default motion is a 180 ms eased slide down/up. Windows' disabled-animation setting is respected. the drawer stays on top by default, and hiding it attempts to restore focus to the previous application.
 
 Scratchpad marks its editor with `nroj.WindowCascade.Ignore`, so Window Cascade leaves the drawer alone.
 
-hiding does not close Notepad3. **Reload** keeps the editor and reattaches to it. **Exit** saves the current page, closes the owned Notepad3 window and exits Scratchpad.
+hiding does not close Notepad3. **Reload** keeps the editor and reattaches immediately, including restoring page protection while the drawer is hidden. **Exit** saves the current page, closes the owned Notepad3 window and exits Scratchpad.
 
 #### pages and saving
 
@@ -59,11 +59,13 @@ new pages are named `scratch-yyyyMMdd-HHmmss.md`, use UTF-8 without BOM and LF l
 
 page rotation is ordered by file creation time, with filename breaking ties. subdirectories are not scanned. common text, code and configuration extensions are accepted, including `.md`, `.txt`, `.ps1`, `.py`, `.ahk`, `.lua`, `.json` and `.ini`; see `allowed_extensions` in the script for the full list.
 
-visible pages are autosaved every 10 seconds and explicitly saved before hiding, switching or exiting. failed saves or detected disk conflicts stop the operation instead of overwriting uncertain data.
+visible pages are autosaved every 10 seconds by default and explicitly saved before hiding, switching, reloading or exiting. failed saves or detected disk conflicts stop the operation instead of overwriting uncertain data. autosave verifies the submitted snapshot without waiting for newer typing to stop; commands that hide or replace the page use the stricter save path.
 
 page switching reuses the same Notepad3 window. **undo history survives hiding and Scratchpad reloads, but not switching pages**. caret, selection and scroll position are remembered during the script session.
 
-use Notepad3's **File > Save As** to give an open page a useful name inside the scratch folder. closed pages can be renamed normally in Explorer. externally moving, renaming or deleting the open page, or changing it concurrently on disk, pauses automatic saving until the conflict is resolved.
+use Notepad3's **File > Save As** to give an open page a useful name inside the scratch folder. closed pages can be renamed normally in Explorer. while Scratchpad is running and attached, it holds a handle that blocks external deletion, renaming and replacement of the active page, even while the drawer is hidden. the handle follows native Save As within the scratch folder on the next eligible filename check (normally within 250 ms).
+
+this protection still permits ordinary reads and in-place writes by other applications; it is not an exclusive-write lock. detected changes on disk pause automatic saving until the conflict is resolved. avoid editing the same page in two applications at once.
 
 #### isolation and settings
 
@@ -82,7 +84,7 @@ Notepad3Executable=
 
 [Window]
 WidthPercent=75
-HeightPercent=60
+HeightPercent=40
 AnimationDurationMs=180
 AlwaysOnTop=1
 
@@ -93,15 +95,19 @@ AutosaveIntervalMs=10000
 ToggleHotkey=Win+F12
 ```
 
-leave `Notepad3Executable` blank for automatic detection, or enter the full path without surrounding quotes. `ToggleHotkey` stores the friendly shortcut name, for example `Win+F12` or `Ctrl+Shift+Space`. edit the settings through the tray menu, then reload. `AnimationDurationMs=0` disables motion and `AlwaysOnTop=0` allows ordinary windows to cover the drawer.
+leave `Notepad3Executable` blank for automatic detection, or enter the full path without surrounding quotes. `ToggleHotkey` stores the friendly shortcut name, for example `Win+F12` or `Ctrl+Shift+Space`. edit the settings through the tray menu, then reload. existing window-size and autosave settings are preserved; the values above are defaults, not forced migrations. `AnimationDurationMs=0` disables motion and `AlwaysOnTop=0` allows ordinary windows to cover the drawer.
 
 the current-page record is stored in `%LOCALAPPDATA%\Scratchpad\state.ini`, the dedicated editor configuration is stored in `%LOCALAPPDATA%\Scratchpad\Notepad3.ini`, and errors are logged to `%LOCALAPPDATA%\Scratchpad\errors.log`.
 
 #### recovery and implementation
 
-if a command reports a save conflict, timeout or editor dialog, resolve it in Notepad3 before retrying. Scratchpad does not automatically confirm overwrite prompts or kill editor processes.
+if a command reports a save conflict, timeout or editor dialog, resolve it in Notepad3 before retrying. after resolving an autosave error, choose **Reload** from the Scratchpad tray menu to retry the checked save and resume automatic saving. Scratchpad does not automatically confirm overwrite prompts or kill editor processes.
 
-the bridge uses standard Windows messages, Notepad3's `WM_COPYDATA` file-loading path and integer-only Scintilla messages. it does not swap the clipboard, inject save keystrokes, allocate memory inside Notepad3 or interfere with normal Notepad++ instances.
+automatic content comparison supports UTF-8 (with or without BOM) and UTF-16 LE with BOM. comparison is limited to files of 32 MiB and editor text of 16,777,216 UTF-16 code units; unsupported encodings, embedded NUL characters and larger documents require manual recovery in Notepad3.
+
+the bridge uses standard Windows messages, Notepad3's `WM_COPYDATA` file-loading path and integer-only Scintilla messages. it does not swap the clipboard, inject save keystrokes or allocate memory inside Notepad3. the bridge targets Notepad3 7.26.602.1 source-level interfaces rather than a stable plugin API, so test editor upgrades before relying on them.
+
+filename checks run at most four times per second while visible and do not overlap Scratchpad commands or autosave. Notepad3 is still asked to perform its native Save command even when Scintilla's text-dirty flag is clear, so encoding-only changes are not skipped.
 
 ### `pause-command-mode.ahk`
 

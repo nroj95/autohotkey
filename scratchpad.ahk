@@ -185,7 +185,7 @@ class ScratchpadController
         ; Resolve . and .. before enforcing the direct-child page boundary.
         this.scratch_directory := RTrim(ScratchpadFullPath(this.scratch_directory), "\/")
         this.width_percent := this.ReadNumber("Window", "WidthPercent", 75, 30, 100)
-        this.height_percent := this.ReadNumber("Window", "HeightPercent", 60, 20, 100)
+        this.height_percent := this.ReadNumber("Window", "HeightPercent", 40, 20, 100)
         this.animation_ms := this.ReadNumber("Window", "AnimationDurationMs", 180, 0, 1000)
         this.always_on_top := this.ReadNumber("Window", "AlwaysOnTop", 1, 0, 1)
         this.autosave_ms := this.ReadNumber("Saving", "AutosaveIntervalMs", 10000, 500, 60000)
@@ -204,8 +204,17 @@ class ScratchpadController
         this.BuildTrayMenu()
         configured_hotkey := IniRead(this.settings_path, "Controls", "ToggleHotkey", "Win+F12")
         this.SetToggleHotkey(configured_hotkey, false)
+
+        ; Reacquire the retained editor's page lock immediately after Reload,
+        ; even while hidden. A fresh controller must not wait for the next hotkey.
+        try this.AttachExistingWindow()
+        catch as failure {
+            this.autosave_paused := true
+            A_IconTip := "Scratchpad - autosave paused"
+            this.ReportError(failure, true)
+        }
         SetTimer this.autosave_callback, this.autosave_ms
-        SetTimer this.page_lock_sync_callback, 50
+        SetTimer this.page_lock_sync_callback, 250
     }
 
     CreateDefaultSettings()
@@ -221,24 +230,28 @@ class ScratchpadController
             legacy_f12 := this.ReadNumber("Controls", "EnableF12", 0, 0, 1)
             IniWrite legacy_f12 ? "F12" : "Win+F12", this.settings_path, "Controls", "ToggleHotkey"
         }
-        try IniDelete this.settings_path, "Controls", "EnableF12"
+        if IniRead(this.settings_path, "Controls", "EnableF12", "<missing>") != "<missing>"
+            IniDelete this.settings_path, "Controls", "EnableF12"
         ; Do not reuse the old Notepad++ path. Remove that legacy key and ensure
         ; the dedicated Notepad3 setting exists instead.
-        try IniDelete this.settings_path, "Paths", "NotepadExecutable"
+        if IniRead(this.settings_path, "Paths", "NotepadExecutable", "<missing>") != "<missing>"
+            IniDelete this.settings_path, "Paths", "NotepadExecutable"
         if IniRead(this.settings_path, "Paths", "Notepad3Executable", "<missing>") = "<missing>"
             IniWrite "", this.settings_path, "Paths", "Notepad3Executable"
 
         ; Windows INI writes use CRLF. Normalize the controller settings after
         ; migrations so Notepad3 never sees a mixture of LF and CRLF lines.
-        settings := FileRead(this.settings_path, "UTF-16")
-        settings := StrReplace(settings, "`r`n", "`n")
+        original_settings := FileRead(this.settings_path, "UTF-16")
+        settings := StrReplace(original_settings, "`r`n", "`n")
         settings := StrReplace(settings, "`r", "`n")
         settings := StrReplace(settings, "`n", "`r`n")
-        settings_file := FileOpen(this.settings_path, "w", "UTF-16")
-        if !settings_file
-            throw Error("Could not normalize settings.ini.")
-        settings_file.Write(settings)
-        settings_file.Close()
+        if settings != original_settings {
+            settings_file := FileOpen(this.settings_path, "w", "UTF-16")
+            if !settings_file
+                throw Error("Could not normalize settings.ini.")
+            try settings_file.Write(settings)
+            finally settings_file.Close()
+        }
 
         ; Notepad3 owns this UTF-8 INI. Never rewrite its existing preferences.
         if !FileExist(this.editor_profile)
@@ -255,17 +268,12 @@ class ScratchpadController
 
     HandleToggleHotkey(*)
     {
-        source_window := WinExist("A")
-
-        if this.command_queue.Length >= 8
-            return
-
-        this.command_queue.Push({
-            name: "toggle",
-            source_window: source_window
-        })
-
-        SetTimer this.process_commands_callback, -1
+        ; Keep this hotkey thread alive until release, just like the editor
+        ; shortcuts. Holding the key must not queue repeated open/close cycles.
+        key := this.toggle_hotkey_key
+        this.QueueCommand("toggle")
+        if key != ""
+            KeyWait key
     }
 
     SetToggleHotkey(name, persist := true)
@@ -281,21 +289,23 @@ class ScratchpadController
         try {
             if parsed.ahk != ""
                 Hotkey parsed.ahk, this.toggle_hotkey_callback, "On"
+            if persist
+                IniWrite parsed.name, this.settings_path, "Controls", "ToggleHotkey"
         }
         catch as failure {
+            if parsed.ahk != ""
+                try Hotkey parsed.ahk, "Off"
             if old_hotkey != ""
                 try Hotkey old_hotkey, this.toggle_hotkey_callback, "On"
             this.toggle_hotkey_name := old_name
             this.toggle_hotkey_ahk := old_hotkey
             this.toggle_hotkey_key := old_key
-            throw Error("Could not register the toggle shortcut " parsed.name ".`n`n" failure.Message)
+            throw Error("Could not apply the toggle shortcut " parsed.name ".`n`n" failure.Message)
         }
 
         this.toggle_hotkey_name := parsed.name
         this.toggle_hotkey_ahk := parsed.ahk
         this.toggle_hotkey_key := parsed.key
-        if persist
-            IniWrite parsed.name, this.settings_path, "Controls", "ToggleHotkey"
         this.UpdateToggleHotkeyMenu()
     }
 
@@ -406,6 +416,7 @@ class ScratchpadController
                 catch as failure {
                     this.command_queue := []
                     this.autosave_paused := true
+                    A_IconTip := "Scratchpad - autosave paused"
                     this.RevealAfterError(request.source_window)
                     this.ReportError(failure)
                 }
@@ -453,12 +464,12 @@ class ScratchpadController
         this.ShowWindow(request.source_window)
         switch request.name {
             case "new":
-                if !page_was_created {
-                    this.SaveCurrentPage()
-                    this.SwitchPage(this.CreatePage(), true)
-                }
+                if !page_was_created
+                    this.SwitchPage("", true)
             case "previous", "next":
-                this.SaveCurrentPage()
+                ; Resolve native Save As/Open before finding our place in the
+                ; list. SwitchPage owns the one checked save before loading.
+                this.CheckCurrentPage()
                 pages := this.ListPages()
                 current_index := 0
                 for index, path in pages {
@@ -567,7 +578,8 @@ class ScratchpadController
             "0"
         ) = "1"
 
-        if !this.IsScratchPath(initial_path) || !FileExist(initial_path) {
+        initial_attributes := initial_path != "" ? FileExist(initial_path) : ""
+        if !this.IsScratchPath(initial_path) || !initial_attributes || InStr(initial_attributes, "D") {
             pages := this.ListPages()
 
             if pages.Length
@@ -691,8 +703,8 @@ class ScratchpadController
         }
 
         ; The installer can optionally launch an ordinary Notepad3 window.
-        ; Close only windows that appeared during this installation; anything
-        ; that existed beforehand is left completely alone.
+        ; Consider only new, empty, unmodified main windows for cleanup. Never
+        ; close a document just because it appeared during this installation.
         this.CloseInstallerNotepad3Windows(existing_notepad3_windows)
         Sleep 200
         this.CloseInstallerNotepad3Windows(existing_notepad3_windows)
@@ -764,7 +776,7 @@ class ScratchpadController
 
     CloseInstallerNotepad3Windows(known_windows)
     {
-        for hwnd in WinGetList("ahk_exe Notepad3.exe") {
+        for hwnd in WinGetList("ahk_class Notepad3 ahk_exe Notepad3.exe") {
             if known_windows.Has(hwnd)
                 continue
 
@@ -777,8 +789,19 @@ class ScratchpadController
             )
                 continue
 
-            ; Ask only the newly launched ordinary window to close normally.
-            try PostMessage 0x0010, 0, 0, , "ahk_id " hwnd ; WM_CLOSE
+            try {
+                candidate := Notepad3Bridge(hwnd)
+                candidate.CheckReady()
+                if candidate.CurrentPath() != "" || candidate.IsDirty()
+                    || candidate.Scintilla(2006) != 0 ; SCI_GETLENGTH
+                    continue
+                ; WM_CLOSE still lets Notepad3 prompt if typing starts after
+                ; the checks. No dialog is confirmed and no process is killed.
+                PostMessage 0x0010, 0, 0, , "ahk_id " hwnd ; WM_CLOSE
+            }
+            catch {
+                ; An uncertain or busy ordinary editor is not ours to close.
+            }
         }
     }
 
@@ -906,6 +929,7 @@ class ScratchpadController
         ; Native Save As happens outside Scratchpad's command path. While the
         ; drawer is visible, cheaply watch Notepad3's current filename so the
         ; delete-denying handle follows it without waiting for autosave.
+        ; Four checks per second are enough here; this is not an animation loop.
         if this.busy || !this.IsVisible()
             return
         if !this.bridge || this.bridge.tainted
@@ -913,6 +937,9 @@ class ScratchpadController
         if !ScratchpadWindowIdle(this.window_hwnd)
             return
 
+        ; Serialize this timer too: a queued command must not switch documents
+        ; halfway through acquiring the handle for a native Save As.
+        this.busy := true
         try {
             path := this.bridge.CurrentPath()
 
@@ -929,6 +956,11 @@ class ScratchpadController
         catch {
             ; Native dialogs and transient filename changes are retried on the
             ; next tick. Normal Scratchpad commands still report real failures.
+        }
+        finally {
+            this.busy := false
+            if this.command_queue.Length
+                SetTimer this.process_commands_callback, -1
         }
     }
 
@@ -1010,7 +1042,16 @@ class ScratchpadController
 
         loop save_passes {
             before_save_stamp := ScratchpadFileStamp(path)
+            if before_save_stamp != this.disk_stamp
+                throw Error("The page changed on disk before saving. No automatic overwrite was attempted.")
             save_snapshot := this.bridge.DocumentText()
+
+            ; Recheck after the cross-process text read, and on every retry.
+            ; A conflict discovered here must not be overwritten by File > Save.
+            if this.bridge.CurrentPath() != path
+                throw Error("The active page changed before saving. Inspect Notepad3 before retrying.")
+            if ScratchpadFileStamp(path) != before_save_stamp
+                throw Error("The page changed on disk while preparing to save. No automatic overwrite was attempted.")
 
             ; Always ask the native editor to save: encoding-only changes may not
             ; set Scintilla's text-dirty flag.
@@ -1030,14 +1071,14 @@ class ScratchpadController
                     if ScratchpadFileStamp(path) != clean_stamp
                         throw Error("The file changed again while the completed save was being verified.")
 
-                    this.disk_stamp := clean_stamp
-                    this.PersistCurrentState()
-                    this.autosave_paused := false
-                    A_IconTip := "Scratchpad"
+                    this.AcceptSave(path, clean_stamp)
                     return
                 }
 
-                if A_TickCount >= save_deadline
+                ; Save's native handler has already returned. Autosave can
+                ; verify its completed snapshot now instead of waiting two
+                ; seconds for ongoing typing to stop making the editor dirty.
+                if !require_clean || A_TickCount >= save_deadline
                     break
 
                 Sleep 10
@@ -1045,13 +1086,12 @@ class ScratchpadController
 
             after_save_stamp := ScratchpadFileStamp(path)
 
-            ; A changed timestamp alone does not prove that Notepad3 performed
-            ; the write: another program could have touched the file meanwhile.
-            ; Accept a new baseline only when the stamp changed and disk contains
-            ; the exact editor snapshot that was submitted to Save.
-            if after_save_stamp != before_save_stamp
-                && this.bridge.MatchesDiskText(path, save_snapshot)
-            {
+            ; Content, not a timestamp change, proves the submitted snapshot
+            ; is on disk. An unchanged stamp is valid for a no-op Save followed
+            ; by new typing, or Notepad3's preserve-modification-time option.
+            if this.bridge.MatchesDiskText(path, save_snapshot) {
+                if this.bridge.CurrentPath() != path
+                    throw Error("The active page changed while the saved snapshot was being verified.")
                 if ScratchpadFileStamp(path) != after_save_stamp
                     throw Error("The file changed again while the completed save was being verified.")
 
@@ -1059,16 +1099,16 @@ class ScratchpadController
                 this.PersistCurrentState()
 
                 if !require_clean {
-                    this.autosave_paused := false
-                    A_IconTip := "Scratchpad"
+                    this.AcceptSave(path, after_save_stamp)
                     return
                 }
 
                 ; If disk and the current editor also agree, only the dirty flag
                 ; lagged. Otherwise newer edits need another strict save pass.
                 if this.bridge.MatchesDisk(path) {
-                    this.autosave_paused := false
-                    A_IconTip := "Scratchpad"
+                    if ScratchpadFileStamp(path) != after_save_stamp
+                        throw Error("The file changed again while the current editor text was being verified.")
+                    this.AcceptSave(path, after_save_stamp)
                     return
                 }
 
@@ -1082,6 +1122,21 @@ class ScratchpadController
         }
 
         throw Error("The page kept changing while Scratchpad tried to save it. Stop editing briefly and retry.")
+    }
+
+    AcceptSave(path, stamp)
+    {
+        ; File comparisons may take time. Do not record success for a document
+        ; that was replaced, or a disk version that changed during verification.
+        this.bridge.CheckReady()
+        if this.bridge.CurrentPath() != path
+            throw Error("The active page changed while the completed save was being verified.")
+        if ScratchpadFileStamp(path) != stamp
+            throw Error("The file changed again before the verified save could be recorded.")
+        this.disk_stamp := stamp
+        this.PersistCurrentState()
+        this.autosave_paused := false
+        A_IconTip := "Scratchpad"
     }
 
     ConfigureNewPage()
@@ -1098,11 +1153,14 @@ class ScratchpadController
 
     SwitchPage(next_path, new_page := false)
     {
-        if next_path = this.current_path
-            return
         this.SaveCurrentPage()
+        if new_page
+            next_path := this.CreatePage()
+        else if next_path = this.current_path
+            return
         next_path := ScratchpadFullPath(next_path)
-        if !this.IsScratchPath(next_path) || !FileExist(next_path)
+        attributes := FileExist(next_path)
+        if !this.IsScratchPath(next_path) || !attributes || InStr(attributes, "D")
             throw Error("The next scratch page is no longer available:`n" next_path)
         this.RememberPageView(this.current_path)
         before_load_stamp := ScratchpadFileStamp(next_path)
@@ -1252,11 +1310,17 @@ class ScratchpadController
                 DllCall("ShowWindow", "ptr", this.window_hwnd, "int", 4) ; SW_SHOWNOACTIVATE
             }
             started := ScratchpadClockMs()
+            last_frame_y := start_y
             loop {
                 progress := duration ? Min(1, (ScratchpadClockMs() - started) / duration) : 1
                 eased := 1 - (1 - progress) ** 3
                 current_y := Round(start_y + (end_y - start_y) * eased)
-                this.PlaceAnimationFrame(bounds, current_y)
+                ; Easing often rounds several final frames to the same pixel.
+                ; Do not allocate another region and repaint an identical frame.
+                if current_y != last_frame_y {
+                    this.PlaceAnimationFrame(bounds, current_y)
+                    last_frame_y := current_y
+                }
                 if progress >= 1
                     break
                 ; Frame pacing follows desktop composition, without a permanent
@@ -1825,10 +1889,15 @@ class Notepad3Bridge
 
     MatchesDiskText(path, expected_text)
     {
-        if FileGetSize(path) > 32 * 1024 * 1024
+        limit := 32 * 1024 * 1024
+        if FileGetSize(path) > limit
             throw Error("This file is too large for automatic conflict comparison. Preserve both versions before continuing.")
-        bytes := FileRead(path, "RAW")
+        ; Bound the read itself too: a concurrently growing file must not bypass
+        ; the limit checked above. One extra byte detects a truncated read.
+        bytes := FileRead(path, "RAW m" (limit + 1))
         size := bytes.Size
+        if size > limit
+            throw Error("This file grew beyond the automatic comparison limit. Preserve both versions before continuing.")
         if !size
             disk_text := ""
         else if size >= 2 && NumGet(bytes, 0, "ushort") = 0xFEFF {
