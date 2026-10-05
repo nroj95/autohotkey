@@ -38,10 +38,12 @@ A_TrayMenu.Add("Recommended setup", ShowRecommendedSetup)
 A_TrayMenu.Add("ScreenGrid on GitHub", OpenScreenGridReleases)
 A_TrayMenu.Add()
 A_TrayMenu.Add("Run at startup", ToggleStartup)
+A_TrayMenu.Add("Debug logging", ToggleDebugLogging)
 A_TrayMenu.Add()
 A_TrayMenu.AddStandard()
 
 UpdateStartupMenu()
+UpdateDebugMenu()
 SetTimer(InitializeDesktopIntegration, -500)
 
 HandleWinKeyOverhaulExit(exit_reason, exit_code)

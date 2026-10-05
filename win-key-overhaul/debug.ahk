@@ -5,15 +5,42 @@
 ; logging
 ; =============================================================================
 
-InitializeDebugLogging()
+InitializeDebugLogging(reason := "started")
 {
-    global debug_enabled
+    global debug_enabled, user_preferences_directory
 
     if !debug_enabled
         return
 
+    try DirCreate(user_preferences_directory)
     OnError(LogWinKeyOverhaulUnhandledError)
-    DebugLogSession("started")
+    DebugLogSession(reason)
+}
+
+ToggleDebugLogging(*)
+{
+    global debug_enabled
+
+    if debug_enabled {
+        DebugLogSession("disabled")
+        OnError(LogWinKeyOverhaulUnhandledError, 0)
+        debug_enabled := false
+    } else {
+        debug_enabled := true
+        InitializeDebugLogging("enabled")
+    }
+
+    UpdateDebugMenu()
+}
+
+UpdateDebugMenu()
+{
+    global debug_enabled
+
+    if debug_enabled
+        A_TrayMenu.Check("Debug logging")
+    else
+        A_TrayMenu.Uncheck("Debug logging")
 }
 
 DebugLogSession(reason)
@@ -59,6 +86,11 @@ DebugLog(message)
 
 DebugError(context, err)
 {
+    global debug_enabled
+
+    if !debug_enabled
+        return
+
     DebugLog(
         "ERROR in " context
         . " | message=" err.Message
@@ -90,6 +122,11 @@ LogWinKeyOverhaulUnhandledError(err, mode)
 
 DebugDescribeWindow(hwnd)
 {
+    global debug_enabled
+
+    if !debug_enabled
+        return ""
+
     if !hwnd
         return "hwnd=0"
 
@@ -177,9 +214,13 @@ DebugDescribeWindow(hwnd)
 
 DebugSteamGameState(label)
 {
+    global debug_enabled
     global steam_game_cycle
     global last_steam_game_hwnd
     global steam_return_hwnd
+
+    if !debug_enabled
+        return
 
     DebugLog(
         label

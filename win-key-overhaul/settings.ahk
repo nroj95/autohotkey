@@ -53,5 +53,5 @@ fancyzones_check_in_progress := false
 ; debug settings
 ; =============================================================================
 
-debug_enabled := true
-debug_log_path := A_ScriptDir "\win-key-overhaul-debug.log"
+debug_enabled := false
+debug_log_path := user_preferences_directory "\win-key-overhaul-debug.log"
