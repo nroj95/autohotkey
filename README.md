@@ -1,22 +1,18 @@
 # AutoHotkey
 
-small Windows 11 tools for window management, scratch notes, keyboard layers, and other things Windows should do better.
+personal AutoHotkey v2 scripts I use to make Windows behave more the way I like.
 
-**AutoHotkey v2** · **Windows 11** · [latest release](https://github.com/nroj95/autohotkey/releases/latest)
+most of these started as small annoyances or ideas and gradually turned into proper tools. if you find any of them useful, feel free to use or change them.
 
-## start here
+**Windows 11** · **AutoHotkey v2** · [releases](https://github.com/nroj95/autohotkey/releases)
 
-| tool | what it does |
-|---|---|
-| **Scratchpad** | a fast top-edge scratch drawer for temporary notes and code, backed by Notepad3 |
-| **Window Cascade** | automatically arranges ordinary windows into a layered cascade with clickable focus tabs and drag-and-drop placement |
-| **Win Key Overhaul** | replaces selected Windows window-management shortcuts with predictable layouts, focus movement, swapping, stretching, and borderless fullscreen |
+## main projects
 
-## Scratchpad
+### Scratchpad
 
 `scratchpad.ahk`
 
-a persistent scratch drawer that slides down from the top of the current monitor when you need it and gets out of the way when you do not.
+a top-edge scratch drawer for temporary notes and code, using Notepad3 as the editor.
 
 - `Win+F12` toggles it by default
 - pages are plain files in `D:\toolbox\scratch\`
@@ -75,16 +71,16 @@ Scratchpad requires **64-bit AutoHotkey v2** and Notepad3.
 
 </details>
 
-## Window Cascade
+### Window Cascade
 
 `window-cascade.ahk` + `window-cascade/`
 
-turns ordinary desktop windows into a compact cascading workspace instead of letting them pile up randomly.
+automatically arranges ordinary desktop windows into a cascading layout.
 
-- automatically places new windows into cascade slots
-- stacks multiple windows per slot without losing access to deeper layers
+- places new windows into cascade slots
+- stacks multiple windows per slot while keeping deeper layers accessible
 - shows small clickable focus tabs for exposed windows
-- lets you drag windows between slots or monitors to re-slot or adopt them
+- lets windows be dragged between slots or monitors to re-slot or adopt them
 - supports keyboard focus movement, layer rotation, gathering, closing, and monitor moves
 - preserves minimized windows and handles multi-monitor cascades
 - ignores dialogs, transient prompts, Scratchpad, and other windows that should not become cascade members
@@ -92,13 +88,13 @@ turns ordinary desktop windows into a compact cascading workspace instead of let
 
 Window Cascade runs as its own process and uses `capslock-layer.ahk` for its keyboard command bindings.
 
-for implementation details and the full behavior reference, see [`window-cascade/README.md`](window-cascade/README.md).
+the full behavior and implementation notes are in [`window-cascade/README.md`](window-cascade/README.md).
 
-## Win Key Overhaul
+### Win Key Overhaul
 
 `win-key-overhaul.ahk` + `win-key-overhaul/`
 
-replaces selected native Win-key window shortcuts with a system built around predictable geometry instead of Windows' inconsistent snap behavior.
+my replacement for parts of Windows' built-in window-management shortcuts.
 
 - side and corner layout cycles
 - centered and offset layouts
@@ -115,9 +111,9 @@ replaces selected native Win-key window shortcuts with a system built around pre
 
 `Ctrl + Win + H` opens its built-in help.
 
-Win Key Overhaul is standalone. for the full behavior reference, see [`win-key-overhaul/README.md`](win-key-overhaul/README.md).
+Win Key Overhaul is standalone. the full behavior and implementation notes are in [`win-key-overhaul/README.md`](win-key-overhaul/README.md).
 
-## smaller utilities
+## other scripts
 
 | script | purpose |
 |---|---|
@@ -129,7 +125,7 @@ CapsLock Layer and Pause Command Mode share the same 1.4-second one-shot idea. a
 
 ## install
 
-grab the newest files from [Releases](https://github.com/nroj95/autohotkey/releases/latest).
+downloads are available from [Releases](https://github.com/nroj95/autohotkey/releases).
 
 the standalone scripts can be run directly with AutoHotkey v2:
 
