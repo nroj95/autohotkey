@@ -189,6 +189,11 @@ class ScratchpadController
         ]
         this.toggle_hotkey_menu := 0
         this.custom_hotkey_gui := 0
+        this.window_size_menu := 0
+        this.window_width_menu := 0
+        this.window_height_menu := 0
+        this.window_width_presets := [35, 45, 55, 65, 75]
+        this.window_height_presets := [25, 35, 45, 55, 65]
         this.mutex_handle := 0
 
         this.mutex_handle := DllCall("CreateMutexW", "ptr", 0, "int", false,
@@ -1729,6 +1734,27 @@ class ScratchpadController
         this.toggle_hotkey_menu.Add("Disabled", ObjBindMethod(this, "ChooseToggleHotkey", "Disabled"))
         A_TrayMenu.Add("Toggle shortcut", this.toggle_hotkey_menu)
 
+        this.window_width_menu := Menu()
+        for percent in this.window_width_presets {
+            this.window_width_menu.Add(
+                percent "%",
+                ObjBindMethod(this, "SetWindowSizePercent", "width", percent)
+            )
+        }
+
+        this.window_height_menu := Menu()
+        for percent in this.window_height_presets {
+            this.window_height_menu.Add(
+                percent "%",
+                ObjBindMethod(this, "SetWindowSizePercent", "height", percent)
+            )
+        }
+
+        this.window_size_menu := Menu()
+        this.window_size_menu.Add("Width", this.window_width_menu)
+        this.window_size_menu.Add("Height", this.window_height_menu)
+        A_TrayMenu.Add("Window size", this.window_size_menu)
+
         A_TrayMenu.Add()
         A_TrayMenu.Add("Open scratch folder", (*) => Run('explorer.exe "' this.scratch_directory '"'))
         A_TrayMenu.Add("Open settings", (*) => Run('notepad.exe "' this.settings_path '"'))
@@ -1739,6 +1765,110 @@ class ScratchpadController
         A_TrayMenu.Add("Reload", ObjBindMethod(this, "QueueCommand", "reload"))
         A_TrayMenu.Add("Exit", ObjBindMethod(this, "QueueCommand", "exit"))
         this.UpdateTrayChecks()
+    }
+
+    SetWindowSizePercent(dimension, percent, *)
+    {
+        if dimension != "width" && dimension != "height"
+            return
+
+        setting_name := dimension = "width"
+            ? "WidthPercent"
+            : "HeightPercent"
+
+        try {
+            IniWrite percent, this.settings_path, "Window", setting_name
+        }
+        catch as failure {
+            MsgBox(
+                failure.Message,
+                "Scratchpad window size",
+                "Iconx 4096"
+            )
+            return
+        }
+
+        if dimension = "width"
+            this.width_percent := percent
+        else
+            this.height_percent := percent
+
+        this.UpdateWindowSizeMenu()
+
+        if !this.IsVisible()
+            return
+
+        previous_dpi_context := DllCall(
+            "SetThreadDpiAwarenessContext",
+            "ptr", -4,
+            "ptr"
+        )
+
+        try {
+            bounds := this.GetBounds(this.window_hwnd)
+
+            WinMove(
+                bounds.x,
+                bounds.y,
+                bounds.w,
+                bounds.h,
+                "ahk_id " this.window_hwnd
+            )
+
+            WinGetPos(
+                &actual_x,
+                &actual_y,
+                &actual_width,
+                &actual_height,
+                "ahk_id " this.window_hwnd
+            )
+
+            this.last_bounds := {
+                x: actual_x,
+                y: actual_y,
+                w: actual_width,
+                h: actual_height
+            }
+        }
+        catch as failure {
+            MsgBox(
+                "The size was saved, but the current window could not be resized.`n`n"
+                    . failure.Message,
+                "Scratchpad window size",
+                "Iconx 4096"
+            )
+        }
+        finally {
+            if previous_dpi_context {
+                DllCall(
+                    "SetThreadDpiAwarenessContext",
+                    "ptr", previous_dpi_context,
+                    "ptr"
+                )
+            }
+        }
+    }
+
+    UpdateWindowSizeMenu()
+    {
+        if !this.window_width_menu || !this.window_height_menu
+            return
+
+        for percent in this.window_width_presets {
+            item := percent "%"
+            this.window_width_menu.Uncheck(item)
+
+            if percent = this.width_percent
+                this.window_width_menu.Check(item)
+        }
+
+        for percent in this.window_height_presets {
+            item := percent "%"
+            this.window_height_menu.Uncheck(item)
+
+            if percent = this.height_percent
+                this.window_height_menu.Check(item)
+        }
     }
 
     DisplayHotkeyName(name)
@@ -1833,6 +1963,8 @@ class ScratchpadController
     UpdateTrayChecks()
     {
         this.UpdateToggleHotkeyMenu()
+        this.UpdateWindowSizeMenu()
+
         if FileExist(this.startup_shortcut)
             A_TrayMenu.Check("Run at startup")
         else
@@ -1876,10 +2008,10 @@ class ScratchpadController
         "Undo history survives hiding, but not switching pages.`n"
         "`n"
         "SETTINGS`n"
-        "Use Open settings in the tray menu to edit settings.ini.`n"
-        "You can change the scratch folder, Notepad3 path, window size, animation,`n"
-        "autosave interval, and toggle shortcut.`n"
-        "Reload Scratchpad after changing settings.`n"
+        "Choose common window sizes from Window size in the tray menu.`n"
+        "Use Open settings for exact percentages, scratch folder, Notepad3 path,`n"
+        "animation, autosave interval, and toggle shortcut.`n"
+        "Reload Scratchpad after editing settings.ini directly.`n"
         "`n"
         "SCRATCH FOLDER`n"
         )
