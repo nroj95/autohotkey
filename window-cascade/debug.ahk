@@ -19,11 +19,22 @@ InitializeDebugLogging()
         "str", "WindowDebug.ResetLogs",
         "uint"
     )
+    copy_message := DllCall(
+        "RegisterWindowMessage",
+        "str", "WindowCascade.CopyDebugLog",
+        "uint"
+    )
 
     if reset_message {
         OnMessage(
             reset_message,
             HandleDebugResetLogsMessage
+        )
+    }
+    if copy_message {
+        OnMessage(
+            copy_message,
+            HandleDebugCopyLogMessage
         )
     }
 
@@ -52,6 +63,32 @@ HandleDebugResetLogsMessage(command_id, parameter, message_id, target_hwnd)
     if target_hwnd != A_ScriptHwnd || !IsCascadeEnabled()
         return
     ResetDebugLog()
+}
+
+HandleDebugCopyLogMessage(command_id, parameter, message_id, target_hwnd)
+{
+    ; Copying is observational: do not cancel focus recovery, activate a window,
+    ; clear the log, or emit another log entry that would contaminate the snapshot.
+    if target_hwnd != A_ScriptHwnd
+        return
+    CopyDebugLogToClipboard()
+}
+
+CopyDebugLogToClipboard()
+{
+    global debug_log_path
+
+    try {
+        log_text := ""
+        if FileExist(debug_log_path)
+            log_text := FileRead(debug_log_path, "UTF-8")
+        A_Clipboard := log_text != "" ? log_text : "Window Cascade debug log is empty."
+    }
+    catch Error as err {
+        ; Report through the clipboard rather than the log so the captured history
+        ; remains unchanged even when the read fails.
+        A_Clipboard := "Could not copy Window Cascade debug log: " err.Message
+    }
 }
 
 ResetDebugLog()

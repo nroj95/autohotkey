@@ -280,6 +280,8 @@ ToggleWindowCascadeHelp(*)
     "Alt + Caps + Space / Tab      Previous layer`n"
     "`n"
     "Caps + F4                     Close all layers on this monitor`n"
+    "Caps + F5                     Clear debug log`n"
+    "Caps + F6                     Copy debug log to clipboard`n"
     "Caps + Delete                 Close active window`n"
     "Caps + Home                   Bring this monitor's cascade to front`n"
     "Caps + F7                     Gather other monitors' cascades here`n"

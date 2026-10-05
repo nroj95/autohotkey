@@ -73,6 +73,11 @@ debug_reset_logs_message := DllCall(
     "str", "WindowDebug.ResetLogs",
     "uint"
 )
+window_cascade_copy_debug_log_message := DllCall(
+    "RegisterWindowMessage",
+    "str", "WindowCascade.CopyDebugLog",
+    "uint"
+)
 
 
 caps_layer_disarm_message := DllCall(
@@ -276,6 +281,7 @@ CapsLock & h::PostPlainWindowCascadeCommandOnce(cascade_command_show_help, "h")
 
 ; Diagnostics.
 CapsLock & F5::PostRegisteredCommand(debug_reset_logs_message)
+CapsLock & F6::PostRegisteredCommand(window_cascade_copy_debug_log_message)
 
 
 ; =============================================================================
@@ -351,6 +357,7 @@ h::UseArmedWindowCascadeCommand(cascade_command_show_help, "h")
 
 ; Diagnostics.
 F5::UseArmedRegisteredCommand(debug_reset_logs_message, "F5")
+F6::UseArmedRegisteredCommand(window_cascade_copy_debug_log_message, "F6")
 
 #HotIf
 
