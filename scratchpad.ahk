@@ -162,6 +162,7 @@ class ScratchpadController
         this.previous_window := 0
         this.last_external_window := 0
         this.fullscreen_source_window := 0
+        this.opening_topmost := false
         this.system_text_input_escape_pending := false
         this.last_bounds := 0
         this.page_lock_handle := 0
@@ -1380,13 +1381,17 @@ class ScratchpadController
         bounds.w := actual_width
         bounds.h := actual_height
 
-        ; Normal desktop use stays in ordinary Z-order. When the drawer is opened
-        ; from a fullscreen/borderless window, temporarily enter the topmost band
-        ; so the drawer can actually appear over that source window.
+        ; Enter the topmost band before the first visible frame so the drawer
+        ; never begins its animation behind the currently focused application.
         this.fullscreen_source_window := ScratchpadIsFullscreenWindow(source_window) ? source_window : 0
-        this.SetDrawerTopmost(this.WantsTopmost())
+        this.opening_topmost := true
+        this.SetDrawerTopmost(true)
         this.AnimateWindow(true, bounds, animate)
         this.FocusEditor()
+
+        ; Opening-only topmost ends once Scratchpad owns foreground focus.
+        ; Fullscreen-source and persistent topmost policies still apply.
+        this.FinishOpeningTopmost()
     }
 
     HideWindow()
@@ -1404,6 +1409,7 @@ class ScratchpadController
         this.last_bounds := bounds
         this.AnimateWindow(false, bounds)
         this.fullscreen_source_window := 0
+        this.opening_topmost := false
         this.SetDrawerTopmost(false)
         if was_active && this.previous_window
             && DllCall("IsWindowVisible", "ptr", this.previous_window, "int")
@@ -1415,7 +1421,23 @@ class ScratchpadController
 
     WantsTopmost()
     {
-        return !!this.always_on_top || !!this.fullscreen_source_window
+        return !!this.always_on_top
+            || !!this.opening_topmost
+            || !!this.fullscreen_source_window
+    }
+
+    FinishOpeningTopmost()
+    {
+        if !this.opening_topmost
+            return
+
+        if DllCall("GetForegroundWindow", "ptr") != this.window_hwnd
+            return
+
+        ; Ordinary openings return to normal Z-order after focus. A fullscreen
+        ; source keeps the temporary topmost state while it remains fullscreen.
+        this.opening_topmost := false
+        this.SetDrawerTopmost(this.WantsTopmost())
     }
 
     SetDrawerTopmost(enabled)
@@ -1438,6 +1460,12 @@ class ScratchpadController
             return
 
         foreground := DllCall("GetForegroundWindow", "ptr")
+
+        ; Focus normally lands synchronously after ShowWindow, but keep this as a
+        ; low-frequency fallback if Windows delays the foreground transition.
+        if this.opening_topmost && foreground = this.window_hwnd
+            this.opening_topmost := false
+
         if foreground && foreground != this.window_hwnd
             && !ScratchpadIsDialogWindow(foreground)
         {
