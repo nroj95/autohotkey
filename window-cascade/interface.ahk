@@ -245,19 +245,30 @@ UpdateTrayMenu()
 ; help
 ; =============================================================================
 
+GetWindowCascadeHelpState()
+{
+    static state := {
+        help_gui: 0,
+        help_icons: [],
+        more_help_gui: 0,
+        more_help_icons: []
+    }
+    return state
+}
+
+
 ToggleWindowCascadeHelp(*)
 {
-    static help_gui := 0
-    static help_icons := []
+    state := GetWindowCascadeHelpState()
 
-    if help_gui {
-        CloseHelp()
+    if state.help_gui || state.more_help_gui {
+        CloseWindowCascadeHelp()
         return
     }
 
-    help_gui := CallWithDpiContext(-2, Gui, "+AlwaysOnTop", "Window Cascade")
-    help_icons := SetWindowCascadeHelpIcons(help_gui)
-    help_gui.SetFont("s10", "Cascadia Mono")
+    state.help_gui := CallWithDpiContext(-2, Gui, "+AlwaysOnTop", "Window Cascade")
+    state.help_icons := SetWindowCascadeHelpIcons(state.help_gui)
+    state.help_gui.SetFont("s10", "Cascadia Mono")
 
     help_text :=
     (
@@ -294,38 +305,31 @@ ToggleWindowCascadeHelp(*)
     "Release near a cascade slot to snap/adopt; release away to leave the cascade."
     )
 
-    help_gui.AddText("w780", help_text)
-    more_help_button := help_gui.AddButton("xm+660 w120", "More help")
+    state.help_gui.AddText("w780", help_text)
+    more_help_button := state.help_gui.AddButton("xm+660 w120", "More help")
     more_help_button.OnEvent("Click", ShowWindowCascadeMoreHelp)
 
-    help_gui.OnEvent("Close", CloseHelp)
-    help_gui.OnEvent("Escape", CloseHelp)
-    help_gui.Show()
-
-    CloseHelp(*) {
-        try help_gui.Destroy()
-        help_gui := 0
-        ; Destroy the GUI before releasing the HICONs it was displaying.
-        for icon_handle in help_icons
-            DllCall("DestroyIcon", "ptr", icon_handle, "int")
-        help_icons := []
-    }
+    state.help_gui.OnEvent("Close", CloseWindowCascadeHelp)
+    state.help_gui.OnEvent("Escape", CloseWindowCascadeHelp)
+    state.help_gui.Show()
 }
 
 
 ShowWindowCascadeMoreHelp(*)
 {
-    static more_help_gui := 0
-    static more_help_icons := []
+    state := GetWindowCascadeHelpState()
+    if !state.help_gui
+        return
 
-    if more_help_gui {
-        more_help_gui.Show()
+    if state.more_help_gui {
+        state.help_gui.Hide()
+        state.more_help_gui.Show()
         return
     }
 
-    more_help_gui := CallWithDpiContext(-2, Gui, "+AlwaysOnTop", "Window Cascade - More help")
-    more_help_icons := SetWindowCascadeHelpIcons(more_help_gui)
-    more_help_gui.SetFont("s10", "Cascadia Mono")
+    state.more_help_gui := CallWithDpiContext(-2, Gui, "+AlwaysOnTop", "Window Cascade - More help")
+    state.more_help_icons := SetWindowCascadeHelpIcons(state.more_help_gui)
+    state.more_help_gui.SetFont("s10", "Cascadia Mono")
 
     more_help_text :=
     (
@@ -358,21 +362,56 @@ ShowWindowCascadeMoreHelp(*)
     "Verbose debug logging      Toggle detailed diagnostics for this run"
     )
 
-    more_help_gui.AddText("w780", more_help_text)
+    state.more_help_gui.AddText("w780", more_help_text)
+    back_button := state.more_help_gui.AddButton("xm+680 w100", "Back")
+    back_button.OnEvent("Click", ReturnToWindowCascadeHelp)
 
-    more_help_gui.OnEvent("Close", CloseMoreHelp)
-    more_help_gui.OnEvent("Escape", CloseMoreHelp)
-    more_help_gui.Show()
+    state.more_help_gui.OnEvent("Close", ReturnToWindowCascadeHelp)
+    state.more_help_gui.OnEvent("Escape", ReturnToWindowCascadeHelp)
 
-    CloseMoreHelp(*) {
-        try more_help_gui.Destroy()
-        more_help_gui := 0
-        for icon_handle in more_help_icons
-            DllCall("DestroyIcon", "ptr", icon_handle, "int")
-        more_help_icons := []
-    }
+    state.help_gui.Hide()
+    state.more_help_gui.Show()
 }
 
+
+ReturnToWindowCascadeHelp(*)
+{
+    state := GetWindowCascadeHelpState()
+
+    if state.more_help_gui {
+        try state.more_help_gui.Destroy()
+        state.more_help_gui := 0
+        for icon_handle in state.more_help_icons
+            DllCall("DestroyIcon", "ptr", icon_handle, "int")
+        state.more_help_icons := []
+    }
+
+    if state.help_gui
+        state.help_gui.Show()
+}
+
+
+CloseWindowCascadeHelp(*)
+{
+    state := GetWindowCascadeHelpState()
+
+    if state.more_help_gui {
+        try state.more_help_gui.Destroy()
+        state.more_help_gui := 0
+        for icon_handle in state.more_help_icons
+            DllCall("DestroyIcon", "ptr", icon_handle, "int")
+        state.more_help_icons := []
+    }
+
+    if state.help_gui {
+        try state.help_gui.Destroy()
+        state.help_gui := 0
+        ; Destroy the GUI before releasing the HICONs it was displaying.
+        for icon_handle in state.help_icons
+            DllCall("DestroyIcon", "ptr", icon_handle, "int")
+        state.help_icons := []
+    }
+}
 
 ShowWindowCascadeDebugHelp(*)
 {
