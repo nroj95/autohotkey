@@ -6,11 +6,13 @@
 
 CheckFancyZonesStartup(*)
 {
-    static previous_process_id := 0
+    global fancyzones_process_id, fancyzones_integration_state
     process_id := ProcessExist("PowerToys.FancyZones.exe")
-    if process_id = previous_process_id
+    if process_id = fancyzones_process_id
         return
-    previous_process_id := process_id
+    fancyzones_process_id := process_id
+    ; A restarted process must not use the previous instance's readiness state.
+    fancyzones_integration_state := false
     if !process_id
         return
 
@@ -113,8 +115,12 @@ IsDesiredFancyZonesHotkey(hotkey, code)
 
 MoveWindowThroughFancyZones(direction)
 {
-    global fancyzones_integration_state
+    global fancyzones_process_id, fancyzones_integration_state
     if !FancyZonesArrowsReady(fancyzones_integration_state)
+        return
+    ; Recheck only an invoked command, not every #HotIf evaluation. The watcher
+    ; will detect a later process restart and run its compatibility check again.
+    if ProcessExist("PowerToys.FancyZones.exe") != fancyzones_process_id
         return
 
     hwnd := GetWindowControlTarget()
@@ -122,7 +128,7 @@ MoveWindowThroughFancyZones(direction)
         return
 
     try {
-        PrepareWindowForPlacement(hwnd)
+        RunWindowCommand(PrepareWindowForPlacement, hwnd)
         ForgetWindowLayoutCycle(hwnd)
 
         ; FancyZones interprets Alt+Win+Arrow as zone extension. Temporarily

@@ -2,6 +2,9 @@
 #SingleInstance Force
 #Warn
 
+; Keep a short settling delay instead of the default 100 ms per window command.
+SetWinDelay 10
+
 ; =============================================================================
 ; Win Key Overhaul
 ; =============================================================================
@@ -49,9 +52,10 @@ SetTimer(InitializeDesktopIntegration, -500)
 HandleWinKeyOverhaulExit(exit_reason, exit_code)
 {
     try EndFocusNavigationSession()
-    try RestoreAllVerticalStretches()
-    try RestoreAllHorizontalStretches()
-    try RestoreAllBorderlessWindows(exit_reason, exit_code)
+    try ClearFocusHighlight(true)
+    try RunWindowCommand(RestoreAllVerticalStretches)
+    try RunWindowCommand(RestoreAllHorizontalStretches)
+    try RunWindowCommand(RestoreAllBorderlessWindows, exit_reason, exit_code)
 }
 
 ; =============================================================================

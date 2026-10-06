@@ -64,10 +64,13 @@ StretchWindowVertically()
         )
 
         if !vertical_stretch_windows.Has(hwnd)
-            || vertical_stretch_windows[hwnd]["monitor"] != monitor_handle
+            || !IsStretchStateCurrent(hwnd, vertical_stretch_windows[hwnd], monitor_handle,
+                [work_left, work_top, work_right, work_bottom])
         {
             vertical_stretch_windows[hwnd] := Map(
+                "pid", WinGetPID(hwnd),
                 "monitor", monitor_handle,
+                "work_area", [work_left, work_top, work_right, work_bottom],
                 "original_top", visible_top,
                 "original_bottom", visible_bottom
             )
@@ -111,11 +114,9 @@ ResetWindowStretch()
     if vertical_stretch_windows.Has(hwnd) {
         vertical_state := vertical_stretch_windows[hwnd]
 
-        if current_monitor != vertical_state["monitor"] {
-            DebugLog(
-                "Vertical stretch reset skipped after monitor change; "
-                . "preserving state. hwnd=" . hwnd
-            )
+        if !IsStretchStateCurrent(hwnd, vertical_state, current_monitor) {
+            ForgetVerticalStretch(hwnd)
+            DebugLog("Discarded stale vertical stretch state. hwnd=" hwnd)
         } else if MoveWindowToVisibleVerticalBounds(
             hwnd,
             vertical_state["original_top"],
@@ -135,11 +136,9 @@ ResetWindowStretch()
 
     horizontal_state := horizontal_stretch_windows[hwnd]
 
-    if current_monitor != horizontal_state["monitor"] {
-        DebugLog(
-            "Horizontal stretch reset skipped after monitor change; "
-            . "preserving state. hwnd=" . hwnd
-        )
+    if !IsStretchStateCurrent(hwnd, horizontal_state, current_monitor) {
+        ForgetHorizontalStretch(hwnd)
+        DebugLog("Discarded stale horizontal stretch state. hwnd=" hwnd)
         return
     }
 
@@ -253,12 +252,15 @@ ToggleHorizontalStretch(side)
         )
 
         if !horizontal_stretch_windows.Has(hwnd)
-            || horizontal_stretch_windows[hwnd]["monitor"] != monitor_handle
+            || !IsStretchStateCurrent(hwnd, horizontal_stretch_windows[hwnd], monitor_handle,
+                [work_left, work_top, work_right, work_bottom])
         {
             ; Save visible frame edges, not the raw HWND bounds. Windows 11's
             ; invisible resize border can extend beyond what the user sees.
             horizontal_stretch_windows[hwnd] := Map(
+                "pid", WinGetPID(hwnd),
                 "monitor", monitor_handle,
+                "work_area", [work_left, work_top, work_right, work_bottom],
                 "original_left", visible_left,
                 "original_right", visible_right,
                 "left_stretched", false,
@@ -267,11 +269,15 @@ ToggleHorizontalStretch(side)
         }
 
         state := horizontal_stretch_windows[hwnd]
-        obstacles := GetHorizontalStretchObstacles(hwnd, monitor_handle)
-        active_rect := GetWindowLayoutRectangle(hwnd)
-        collision_edge := GetCollisionLimitedEdge(
-            side, active_rect, obstacles, side = "left" ? work_left : work_right
-        )
+        collision_edge := 0
+        ; Restoring a saved edge does not need a desktop-wide obstacle scan.
+        if !state[side "_stretched"] {
+            obstacles := GetHorizontalStretchObstacles(hwnd, monitor_handle)
+            active_rect := GetWindowLayoutRectangle(hwnd)
+            collision_edge := GetCollisionLimitedEdge(
+                side, active_rect, obstacles, side = "left" ? work_left : work_right
+            )
+        }
 
         if side = "left" {
             next_stretched := !state["left_stretched"]
@@ -534,110 +540,57 @@ MoveWindowToVisibleVerticalBounds(
     render_overscan := 0
 )
 {
-    effective_visible_top :=
-        target_visible_top - render_overscan
-
-    effective_visible_bottom :=
-        target_visible_bottom + render_overscan
-
-    effective_visible_height :=
-        effective_visible_bottom - effective_visible_top
-
-    if effective_visible_height <= 0
+    effective_top := target_visible_top - render_overscan
+    effective_bottom := target_visible_bottom + render_overscan
+    if effective_bottom <= effective_top
         return false
 
     if !GetVerticalStretchGeometry(
-        hwnd,
-        &raw_x,
-        &raw_y,
-        &raw_width,
-        &raw_height,
-        &visible_top,
-        &visible_bottom,
-        &inset_top,
-        &inset_bottom
+        hwnd, &raw_x, &raw_y, &raw_width, &raw_height,
+        &visible_top, &visible_bottom, &inset_top, &inset_bottom
     ) {
         return false
     }
 
-    raw_target_y := effective_visible_top - inset_top
-    raw_target_height := (
-        effective_visible_height
-        + inset_top
-        + inset_bottom
-    )
-
-    if raw_target_height <= 0
+    target_height := effective_bottom - effective_top + inset_top + inset_bottom
+    if target_height <= 0
         return false
 
-    try WinMove(
-        raw_x,
-        raw_target_y,
-        raw_width,
-        raw_target_height,
-        "ahk_id " hwnd
-    )
-    catch {
-        return false
-    }
+    try {
+        WinMove(raw_x, effective_top - inset_top, raw_width, target_height, hwnd)
 
-    ; The active full-height stretch deliberately overscans one rendered pixel
-    ; beyond each work-area edge. Restore calls use the default zero overscan.
-    Loop 3 {
-        Sleep 10
+        ; Keep the existing one-pixel overscan, but check the final correction too.
+        ; A resizable app can still impose a minimum or maximum height.
+        Loop 4 {
+            Sleep 10
+            if !GetVerticalStretchGeometry(
+                hwnd, &check_x, &check_y, &check_width, &check_height,
+                &check_top, &check_bottom, &check_inset_top, &check_inset_bottom
+            ) {
+                break
+            }
 
-        if !GetVisibleWindowBounds(
-            hwnd,
-            &visible_x,
-            &visible_y,
-            &visible_width,
-            &visible_height
-        ) {
-            return true
-        }
+            top_error := effective_top - check_top
+            bottom_error := effective_bottom - check_bottom
+            if top_error = 0 && bottom_error = 0
+                return true
+            if A_Index = 4
+                break
 
-        actual_visible_top := visible_y
-        actual_visible_bottom := visible_y + visible_height
-
-        top_error :=
-            effective_visible_top - actual_visible_top
-
-        bottom_error :=
-            effective_visible_bottom - actual_visible_bottom
-
-        if top_error = 0 && bottom_error = 0
-            return true
-
-        try WinGetPos(
-            &current_raw_x,
-            &current_raw_y,
-            &current_raw_width,
-            &current_raw_height,
-            "ahk_id " hwnd
-        )
-        catch {
-            return false
-        }
-
-        corrected_raw_height :=
-            current_raw_height + bottom_error - top_error
-
-        if corrected_raw_height <= 0
-            return false
-
-        try WinMove(
-            current_raw_x,
-            current_raw_y + top_error,
-            current_raw_width,
-            corrected_raw_height,
-            "ahk_id " hwnd
-        )
-        catch {
-            return false
+            corrected_height := check_height + bottom_error - top_error
+            if corrected_height <= 0
+                break
+            WinMove(check_x, check_y + top_error, check_width, corrected_height, hwnd)
         }
     }
+    catch Error as err {
+        DebugError("Move vertical stretch bounds", err)
+    }
 
-    return true
+    ; Match horizontal stretch: roll back a partial resize instead of reporting
+    ; success and discarding the only restore state for a rejected rectangle.
+    try WinMove(raw_x, raw_y, raw_width, raw_height, hwnd)
+    return false
 }
 
 
@@ -654,8 +607,8 @@ PruneVerticalStretchWindows()
 
     stale_hwnds := []
 
-    for hwnd in vertical_stretch_windows {
-        if !DllCall("IsWindow", "ptr", hwnd, "int")
+    for hwnd, saved in vertical_stretch_windows {
+        if !WindowStateMatchesProcess(hwnd, saved)
             stale_hwnds.Push(hwnd)
     }
 
@@ -685,7 +638,7 @@ RestoreAllVerticalStretches()
             "ptr"
         )
 
-        if current_monitor != state["monitor"]
+        if !IsStretchStateCurrent(hwnd, state, current_monitor)
             continue
 
         original_visible_height :=
@@ -716,8 +669,8 @@ PruneHorizontalStretchWindows()
 
     stale_hwnds := []
 
-    for hwnd in horizontal_stretch_windows {
-        if !DllCall("IsWindow", "ptr", hwnd, "int")
+    for hwnd, saved in horizontal_stretch_windows {
+        if !WindowStateMatchesProcess(hwnd, saved)
             stale_hwnds.Push(hwnd)
     }
 
@@ -749,7 +702,7 @@ RestoreAllHorizontalStretches()
 
         ; If another action already moved the window to another monitor, do not
         ; pull it back across monitors during script cleanup.
-        if current_monitor != state["monitor"]
+        if !IsStretchStateCurrent(hwnd, state, current_monitor)
             continue
 
         try {
@@ -767,15 +720,12 @@ RestoreAllHorizontalStretches()
                 continue
             }
 
-            original_visible_width :=
-                state["original_right"] - state["original_left"]
-
-            if original_visible_width > 0
-                MoveWindowToVisibleHorizontalBounds(
-                    hwnd,
-                    state["original_left"],
-                    state["original_right"]
-                )
+            ; Cleanup owns only the edges this script actually stretched. Keep a
+            ; manual change to the opposite edge, just like Shift+Win+Down does.
+            restore_left := state["left_stretched"] ? state["original_left"] : visible_left
+            restore_right := state["right_stretched"] ? state["original_right"] : visible_right
+            if restore_right > restore_left
+                MoveWindowToVisibleHorizontalBounds(hwnd, restore_left, restore_right)
         }
     }
 
@@ -1017,4 +967,21 @@ PrepareWindowForPlacement(hwnd)
     }
     if WinGetMinMax(hwnd) != 0
         WinRestore(hwnd)
+}
+
+IsStretchStateCurrent(hwnd, saved, monitor_handle := 0, work_area := 0)
+{
+    if !WindowStateMatchesProcess(hwnd, saved)
+        return false
+    try {
+        if !monitor_handle
+            monitor_handle := DllCall("MonitorFromWindow", "ptr", hwnd, "uint", 2, "ptr")
+        if !work_area
+            work_area := GetLayoutWorkArea(hwnd)
+        return saved["monitor"] = monitor_handle
+            && RectanglesMatch(saved["work_area"], work_area, 0)
+    }
+    catch {
+        return false
+    }
 }

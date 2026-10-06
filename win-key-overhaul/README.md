@@ -37,14 +37,14 @@ debug logging is off by default and can be toggled for the current run from the 
 | `Win + Home/End` | top-center / bottom-center, alternating centered 50% and offset 25%. |
 | `Win + Enter` | swap with the next eligible window clockwise on the current monitor. |
 | `Shift + Win + Enter` | swap with the next eligible window counter-clockwise. |
-| `Ctrl + Win + Arrow` | start a spatial-focus session on the active window; subsequent presses move focus. |
+| `Ctrl + Alt + Arrow` | start a spatial-focus session on the active window; subsequent presses move focus. |
 | `Shift + Win + G` | cycle running Steam games, retaining the single-game toggle and return-window behavior. |
 | `Alt + Win + Arrow` | optional FancyZones zone navigation. |
 | `Alt + Win + PgUp/PgDn` | optional FancyZones previous / next window in the current zone. |
 
 when the marked Scratchpad window is active, Win Key Overhaul yields `Win + Left/Right` and `Win + PgUp/PgDn` so Scratchpad can use them for page navigation. this is optional coordination through a window property; Win Key Overhaul remains standalone.
 
-spatial focus and Steam cycling are direct standalone shortcuts. the original Steam executable exclusion list is retained, including `aseprite.exe`.
+spatial focus and Steam cycling are direct standalone shortcuts. the focus outline reuses four non-activating GUI windows during the script run; expiry hides them and exit destroys them. Steam process-path lookups are shared only within each discovery scan, so no cross-scan PID cache can outlive its process. the original Steam executable exclusion list is retained, including `aseprite.exe`.
 
 ## exact layout geometry
 
@@ -68,13 +68,15 @@ centered 50% -> near-left 25% -> centered 50% -> near-right 25% -> repeat
 
 top and bottom remember separate next-narrow-side choices for each window. those choices survive switching shortcuts during the same script run, but are not persisted across script restarts. a fresh center entry starts at centered 50%.
 
-shared pixel boundaries are rounded consistently, including odd resolutions and negative monitor coordinates. placement accounts for invisible window-frame borders. application-enforced minimum sizes can still exceed a requested tile; the cycle records actual geometry so it can keep advancing.
+shared pixel boundaries are rounded consistently, including odd resolutions and negative monitor coordinates. window commands use a scoped per-monitor DPI context so native geometry and DWM frame bounds agree. placement accounts for invisible window-frame borders. application-enforced minimum sizes can still exceed a requested tile; the cycle records actual geometry so it can keep advancing.
 
 ## collision stretch and normal restore
 
 horizontal stretch considers other visible, non-minimized, eligible top-level windows on the current monitor whose vertical spans overlap the active window. it stops at the nearest facing edge. already-overlapping windows are ignored rather than causing the active window to shrink; shell, tool, cloaked, and hidden windows are excluded. if nothing blocks the extension, the work-area edge is used.
 
-each edge has an independent restore position. repeating its shortcut restores that edge while retaining the opposite live edge. an already-touching edge is a no-op. the move is checked before committing stretch state; a rejected resize is rolled back.
+each edge has an independent restore position. repeating its shortcut restores that edge while retaining the opposite live edge, including during exit cleanup. an already-touching edge is a no-op. restoring an edge skips the collision scan. both stretch axes verify the resulting bounds and attempt to roll back rejected resizes. stretch snapshots are discarded if the owning process, monitor, or work area no longer matches.
+
+swaps exchange visible frames and verify both results. when an app clamps a requested size or a move fails, the script attempts to restore both original rectangles rather than accepting a partial swap.
 
 `Win + Down` uses a saved pre-placement/pre-stretch normal rectangle when available. this is more than just calling `WinRestore` on an already-normal tiled window. saved rectangles are discarded rather than carried across a changed monitor work area. `Shift + Win + Down` remains the stretch-only reset. ordinary layout placements are not undone just because the script exits; existing stretch and borderless exit cleanup is retained.
 
@@ -88,12 +90,12 @@ ScreenGrid is recommended once per user profile unless already running. acceptin
 
 ### FancyZones
 
-FancyZones remains optional. the script detects it on startup and when its process starts later. compatibility setup requires confirmation and configures only:
+FancyZones remains optional. the script detects it on startup and when its process starts later, using the existing five-second watcher. keyboard-hook conditions use that watcher's cached PID; an invoked forwarding command rechecks the process before sending keys. compatibility setup requires confirmation and configures only:
 
 - **Override Windows Snap hotkeys**, **Relative position**, and **Switch between windows in the current zone**;
 - previous window as **Alt + Win + PgUp**, and next window as **Alt + Win + PgDn**.
 
-native Windows Snap may remain disabled; the FancyZones override setting is a separate feature. close the PowerToys Settings window before applying the change so it does not write stale settings back. the helper preserves unrelated setting values and makes an exact timestamped `.bak` beside `settings.json` using an atomic replacement. unfamiliar/incomplete settings are rejected instead of guessed. JSON formatting may change.
+native Windows Snap may remain disabled; the FancyZones override setting is a separate feature. close the PowerToys Settings window before applying the change so it does not write stale settings back. the helper preserves unrelated setting values and makes an exact timestamped `.bak` beside `settings.json` using an atomic replacement. unfamiliar/incomplete settings, non-boolean toggles/modifiers, and invalid virtual-key codes are rejected instead of guessed. JSON formatting may change.
 
 FancyZones owns the two page-key shortcuts itself. the script forwards the arrow shortcuts with Alt temporarily released so FancyZones moves instead of extending across zones. forwarding sends one step per arrow press and restores still-physically-held Alt keys on release. the keyboard hook is reasserted after FancyZones starts so the script retains bare `Win + Arrow`.
 
@@ -119,7 +121,7 @@ use **Check FancyZones compatibility** from the **Recommended setup** GUI after 
 | `startup.ahk` | old-instance guard, startup migration, Snap prompt, and ScreenGrid recommendation. |
 | `debug.ahk` | logging, error handling, and diagnostics. |
 
-all includes are explicit in the root launcher. the modules communicate only within this one script process.
+all includes are explicit in the root launcher. the modules communicate only within this one script process. window commands use a 10 ms default settling delay instead of AutoHotkey's 100 ms default, while retaining bounded geometry and activation retries. this reduces deliberate waiting; it is not a measured latency guarantee.
 
 ## validation
 

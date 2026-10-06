@@ -48,7 +48,7 @@ ToggleWinKeyOverhaulHelp(*)
     "WINDOW ARRANGEMENT`n"
     "Win + Enter          Swap clockwise`n"
     "Shift + Win + Enter  Swap counter-clockwise`n"
-    "Ctrl + Alt + Arrow    Start / move spatial focus`n"
+    "Ctrl + Alt + Arrow   Start / move spatial focus`n"
     "Shift + Win + G      Cycle running Steam games"
     )
 

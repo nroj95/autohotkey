@@ -52,6 +52,26 @@ try {
         }
     }
 
+    # Presence alone is not enough: [bool] 'false' is true in PowerShell.
+    # Reject unfamiliar value types rather than declaring that integration ready.
+    foreach ($propertyName in $requiredNames[0..2]) {
+        if ($properties.$propertyName.value -isnot [bool]) {
+            throw "Unsupported FancyZones boolean: $propertyName"
+        }
+    }
+    foreach ($hotkeyName in @('fancyzones_prevTab_hotkey', 'fancyzones_nextTab_hotkey')) {
+        $hotkey = $properties.$hotkeyName.value
+        foreach ($fieldName in @('win', 'ctrl', 'alt', 'shift')) {
+            if ($hotkey.$fieldName -isnot [bool]) {
+                throw "Unsupported FancyZones shortcut boolean: $hotkeyName.$fieldName"
+            }
+        }
+        $code = $hotkey.code
+        if (($code -isnot [int] -and $code -isnot [long]) -or $code -lt 0 -or $code -gt 255) {
+            throw "Unsupported FancyZones virtual-key code: $hotkeyName.code"
+        }
+    }
+
     $backupPath = ''
     if ($Mode -eq 'Apply') {
         $properties.fancyzones_overrideSnapHotkeys.value = $true

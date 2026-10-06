@@ -69,7 +69,8 @@ SwapWindow(direction := "clockwise")
         target_hwnd := windows[next_index]["hwnd"]
 
         RememberNormalWindowPlacement(target_hwnd)
-        SwapWindowRectangles(hwnd, target_hwnd)
+        if !SwapWindowRectangles(hwnd, target_hwnd)
+            return
         ForgetHorizontalStretch(target_hwnd)
         ForgetVerticalStretch(target_hwnd)
         ForgetWindowLayoutCycle(hwnd)
@@ -227,53 +228,32 @@ IsWindowSwapCandidate(hwnd, monitor_handle)
 
 SwapWindowRectangles(first_hwnd, second_hwnd)
 {
-    first_window := "ahk_id " first_hwnd
-    second_window := "ahk_id " second_hwnd
-
-    WinGetPos(
-        &first_x,
-        &first_y,
-        &first_width,
-        &first_height,
-        first_window
-    )
-
-    WinGetPos(
-        &second_x,
-        &second_y,
-        &second_width,
-        &second_height,
-        second_window
-    )
-
-    WinMove(
-        second_x,
-        second_y,
-        second_width,
-        second_height,
-        first_window
-    )
+    WinGetPos(&first_x, &first_y, &first_width, &first_height, first_hwnd)
+    WinGetPos(&second_x, &second_y, &second_width, &second_height, second_hwnd)
+    first_visible := GetWindowLayoutRectangle(first_hwnd)
+    second_visible := GetWindowLayoutRectangle(second_hwnd)
 
     try {
-        WinMove(
-            first_x,
-            first_y,
-            first_width,
-            first_height,
-            second_window
-        )
+        ; Swap visible frames, not mismatched invisible resize-border widths.
+        if !MoveWindowToVisibleRectangle(first_hwnd, second_visible)
+            || !WindowMatchesVisibleRectangle(first_hwnd, second_visible)
+        {
+            throw Error("The first window did not accept the swap rectangle.")
+        }
+        if !MoveWindowToVisibleRectangle(second_hwnd, first_visible)
+            || !WindowMatchesVisibleRectangle(second_hwnd, first_visible)
+            || !WindowMatchesVisibleRectangle(first_hwnd, second_visible)
+        {
+            throw Error("The second window did not accept the swap rectangle.")
+        }
+        return true
     }
-    catch {
-        ; Do not leave the active window displaced if the other window cannot
-        ; be controlled, such as an elevated application.
-        try WinMove(
-            first_x,
-            first_y,
-            first_width,
-            first_height,
-            first_window
-        )
-
-        throw
+    catch Error as err {
+        ; WinMove can return normally after an app clamps its size. Roll both
+        ; windows back on a mismatch, not only when the second move throws.
+        try WinMove(first_x, first_y, first_width, first_height, first_hwnd)
+        try WinMove(second_x, second_y, second_width, second_height, second_hwnd)
+        DebugError("Swap window rectangles", err)
+        return false
     }
 }

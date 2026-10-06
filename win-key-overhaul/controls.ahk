@@ -5,50 +5,52 @@
 ; =============================================================================
 
 ; The $ prefixes keep forwarded FancyZones keystrokes out of our handlers.
-$#Up::MaximizeWindowTarget()
-$#Down::RestoreWindowTarget()
+$#Up::RunWindowCommand(MaximizeWindowTarget)
+$#Down::RunWindowCommand(RestoreWindowTarget)
 
 #HotIf !IsScratchpadWindowActive()
-$#Left::CycleWindowSnap("left")
-$#Right::CycleWindowSnap("right")
+$#Left::RunWindowCommand(CycleWindowSnap, "left")
+$#Right::RunWindowCommand(CycleWindowSnap, "right")
 #HotIf
 
-$+#Up::StretchWindowVertically()
-$+#Down::ResetWindowStretch()
-$+#Left::ToggleHorizontalStretch("left")
-$+#Right::ToggleHorizontalStretch("right")
+$+#Up::RunWindowCommand(StretchWindowVertically)
+$+#Down::RunWindowCommand(ResetWindowStretch)
+$+#Left::RunWindowCommand(ToggleHorizontalStretch, "left")
+$+#Right::RunWindowCommand(ToggleHorizontalStretch, "right")
 
 ^#h::ToggleWinKeyOverhaulHelp()
-#Backspace::MinimizeActiveWindow()
-+#Home::ToggleOtherWindows()
-#m::ToggleAllWindows()
+#Backspace::RunWindowCommand(MinimizeActiveWindow)
++#Home::RunWindowCommand(ToggleOtherWindows)
+#m::RunWindowCommand(ToggleAllWindows)
 
-#Insert::PlaceCornerTile("top-left")
-#Delete::PlaceCornerTile("bottom-left")
+#Insert::RunWindowCommand(PlaceCornerTile, "top-left")
+#Delete::RunWindowCommand(PlaceCornerTile, "bottom-left")
 
 #HotIf !IsScratchpadWindowActive()
-$#PgUp::PlaceCornerTile("top-right")
-$#PgDn::PlaceCornerTile("bottom-right")
+$#PgUp::RunWindowCommand(PlaceCornerTile, "top-right")
+$#PgDn::RunWindowCommand(PlaceCornerTile, "bottom-right")
 #HotIf
 
-#Home::PlaceCenterTile("top")
-#End::PlaceCenterTile("bottom")
+#Home::RunWindowCommand(PlaceCenterTile, "top")
+#End::RunWindowCommand(PlaceCenterTile, "bottom")
 
-#Enter::SwapWindow("clockwise")
-+#Enter::SwapWindow("counter-clockwise")
+#Enter::RunWindowCommand(SwapWindow, "clockwise")
++#Enter::RunWindowCommand(SwapWindow, "counter-clockwise")
 
 ; Standalone spatial focus and Steam cycling.
-$^!Left::FocusNearestWindow("left")
-$^!Right::FocusNearestWindow("right")
-$^!Up::FocusNearestWindow("up")
-$^!Down::FocusNearestWindow("down")
-+#g::CycleSteamGames()
+$^!Left::RunWindowCommand(FocusNearestWindow, "left")
+$^!Right::RunWindowCommand(FocusNearestWindow, "right")
+$^!Up::RunWindowCommand(FocusNearestWindow, "up")
+$^!Down::RunWindowCommand(FocusNearestWindow, "down")
++#g::RunWindowCommand(CycleSteamGames)
 
 ; =============================================================================
 ; optional FancyZones navigation
 ; =============================================================================
 
-#HotIf IsFancyZonesRunning()
+; The existing process watcher updates this cache; do not enumerate processes
+; while Windows is waiting for a keyboard-hook condition.
+#HotIf fancyzones_process_id
 
 $!#Left::MoveWindowThroughFancyZones("Left")
 $!#Right::MoveWindowThroughFancyZones("Right")

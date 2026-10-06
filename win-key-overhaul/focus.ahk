@@ -141,7 +141,8 @@ FocusAfterMinimize(minimized_hwnd)
     ; Prefer the foreground window Windows naturally selects after minimization.
     ; Wait briefly because shell focus transitions are not always immediate.
     Loop 8 {
-        Sleep 25
+        if A_Index > 1
+            Sleep 25
 
         foreground_hwnd := DllCall(
             "GetForegroundWindow",
@@ -201,9 +202,8 @@ HighlightFocusedWindow(hwnd)
     global focus_highlight_thickness
     global focus_highlight_overlap
 
-    ; Refresh the focus-navigation session timeout on every focused window.
+    ; Refresh the session without destroying/recreating four HWNDs on every key.
     SetTimer EndFocusNavigationSession, 0
-    ClearFocusHighlight()
 
     if !hwnd || !WinExist("ahk_id " hwnd) {
         EndFocusNavigationSession()
@@ -263,22 +263,32 @@ HighlightFocusedWindow(hwnd)
         ]
     ]
 
-    for rect in border_rects {
-        highlight_gui := Gui(
-            "+AlwaysOnTop -Caption +ToolWindow +E0x20 +E0x08000000"
-        )
+    try {
+        if focus_highlight_guis.Length != 4 {
+            ClearFocusHighlight(true)
+            Loop 4 {
+                highlight_gui := Gui(
+                    "+AlwaysOnTop -Caption +ToolWindow -DPIScale +E0x20 +E0x08000000"
+                )
+                focus_highlight_guis.Push(highlight_gui)
+            }
+        }
 
-        highlight_gui.BackColor := accent_color
-
-        show_options :=
-            "NA"
-            . " x" rect[1]
-            . " y" rect[2]
-            . " w" rect[3]
-            . " h" rect[4]
-
-        highlight_gui.Show(show_options)
-        focus_highlight_guis.Push(highlight_gui)
+        for index, rect in border_rects {
+            highlight_gui := focus_highlight_guis[index]
+            if highlight_gui.BackColor != accent_color
+                highlight_gui.BackColor := accent_color
+            highlight_gui.Show(
+                "NA x" rect[1] " y" rect[2] " w" rect[3] " h" rect[4]
+            )
+        }
+    }
+    catch Error as err {
+        ; A partial outline must not remain topmost after a GUI failure.
+        ClearFocusHighlight(true)
+        EndFocusNavigationSession()
+        DebugError("Show focus highlight", err)
+        return
     }
 
     SetTimer(
@@ -291,20 +301,35 @@ EndFocusNavigationSession()
 {
     global focus_navigation_active, focus_navigation_hwnd
 
-    focus_navigation_active := false
-    focus_navigation_hwnd := 0
-    ClearFocusHighlight()
+    ; An expiring timer must not resume halfway through hiding a newly reused
+    ; outline after a directional hotkey refreshes the session.
+    previous_critical := A_IsCritical
+    Critical "On"
+    try {
+        SetTimer EndFocusNavigationSession, 0
+        focus_navigation_active := false
+        focus_navigation_hwnd := 0
+        ClearFocusHighlight()
+    }
+    finally {
+        Critical previous_critical
+    }
 }
 
-ClearFocusHighlight()
+ClearFocusHighlight(destroy := false)
 {
     global focus_highlight_guis
 
     for highlight_gui in focus_highlight_guis {
-        try highlight_gui.Destroy()
+        if destroy {
+            try highlight_gui.Destroy()
+        } else {
+            try highlight_gui.Hide()
+        }
     }
 
-    focus_highlight_guis := []
+    if destroy
+        focus_highlight_guis := []
 }
 
 ; =============================================================================

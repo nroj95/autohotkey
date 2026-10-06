@@ -46,6 +46,7 @@ EnterBorderlessFullscreen(hwnd)
     was_topmost := !!(WinGetExStyle(window) & 0x8)
 
     borderless_windows[hwnd] := Map(
+        "pid", WinGetPID(hwnd),
         "style", original_style,
         "placement", placement,
         "was_topmost", was_topmost
@@ -101,7 +102,7 @@ RestoreBorderlessWindow(
     saved := borderless_windows[hwnd]
     window := "ahk_id " hwnd
 
-    if !WinExist(window) {
+    if !WindowStateMatchesProcess(hwnd, saved) {
         borderless_windows.Delete(hwnd)
         return
     }
@@ -158,7 +159,7 @@ SuspendBorderlessSteamWindow(hwnd)
     if !borderless_windows.Has(hwnd)
         return true
 
-    if !DllCall("IsWindow", "ptr", hwnd, "int") {
+    if !WindowStateMatchesProcess(hwnd, borderless_windows[hwnd]) {
         borderless_windows.Delete(hwnd)
         return true
     }
@@ -401,8 +402,10 @@ RestoreAllBorderlessWindows(exit_reason, exit_code)
         windows.Push(hwnd)
 
     for hwnd in windows {
-        if !DllCall("IsWindow", "ptr", hwnd, "int")
+        if !WindowStateMatchesProcess(hwnd, borderless_windows[hwnd]) {
+            borderless_windows.Delete(hwnd)
             continue
+        }
 
         was_iconic := DllCall(
             "IsIconic",
@@ -483,4 +486,16 @@ RestoreAllBorderlessWindows(exit_reason, exit_code)
             )
         }
     }
+}
+
+PruneBorderlessWindows()
+{
+    global borderless_windows
+    stale_hwnds := []
+    for hwnd, saved in borderless_windows {
+        if !WindowStateMatchesProcess(hwnd, saved)
+            stale_hwnds.Push(hwnd)
+    }
+    for hwnd in stale_hwnds
+        borderless_windows.Delete(hwnd)
 }

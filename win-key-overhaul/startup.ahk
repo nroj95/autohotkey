@@ -168,7 +168,7 @@ PromptToDisableNativeWindowsSnap()
     if !succeeded || GetNativeWindowsSnapState() != 0 {
         MsgBox(
             "Windows Snap could not be disabled automatically.`n`n"
-            . "Use the tray menu's Windows Snap settings command and turn off Snap windows.",
+            . "Open Recommended setup from the tray, choose Windows Snap settings, and turn off Snap windows.",
             "Win Key Overhaul", "Icon!"
         )
     }

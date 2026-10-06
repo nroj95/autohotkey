@@ -45,6 +45,7 @@ user_preferences_directory := A_AppData "\WinKeyOverhaul"
 user_preferences_path := user_preferences_directory "\preferences.ini"
 previous_user_preferences_path := A_AppData "\WindowsKeyOverhaul\preferences.ini"
 screengrid_releases_url := "https://github.com/TtesseractT/ScreenGrid/releases/latest"
+fancyzones_process_id := 0
 fancyzones_integration_state := false
 fancyzones_check_in_progress := false
 

@@ -294,7 +294,7 @@ RestoreNormalWindowPlacement(hwnd)
 
     saved := normal_window_placements[hwnd]
 
-    if saved["pid"] != WinGetPID(hwnd)
+    if !WindowStateMatchesProcess(hwnd, saved)
         || !RectanglesMatch(saved["work_area"], GetLayoutWorkArea(hwnd), 0)
     {
         ; Do not pull a manually moved window back to an old monitor or restore

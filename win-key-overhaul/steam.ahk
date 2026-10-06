@@ -72,6 +72,9 @@ CycleSteamGames()
                 )
             )
 
+            if !minimize_succeeded
+                return
+
             if steam_return_hwnd {
                 activation_succeeded :=
                     ActivateWindowReliably(
@@ -107,7 +110,8 @@ CycleSteamGames()
             . " | to=" DebugDescribeWindow(next_hwnd)
         )
 
-        MinimizeSteamGameWindow(active_hwnd)
+        if !MinimizeSteamGameWindow(active_hwnd)
+            return
 
         if ActivateSteamGameWindow(next_hwnd)
             last_steam_game_hwnd := next_hwnd
@@ -210,12 +214,13 @@ RefreshSteamGameCycle()
 GetSteamGameWindows()
 {
     windows := []
+    process_paths := Map()
 
     previous_setting := DetectHiddenWindows(true)
 
     try {
         for hwnd in WinGetList() {
-            if IsSteamGameWindow(hwnd)
+            if IsSteamGameWindow(hwnd, process_paths)
                 windows.Push(hwnd)
         }
     }
@@ -226,7 +231,7 @@ GetSteamGameWindows()
     return windows
 }
 
-IsSteamGameWindow(hwnd)
+IsSteamGameWindow(hwnd, process_paths := 0)
 {
     global steam_game_excluded_executables
 
@@ -251,8 +256,6 @@ IsSteamGameWindow(hwnd)
         ex_style := WinGetExStyle(hwnd)
         title := WinGetTitle(hwnd)
         class_name := WinGetClass(hwnd)
-        process_path := WinGetProcessPath(hwnd)
-        process_name := StrLower(WinGetProcessName(hwnd))
 
         WinGetPos(
             &window_x,
@@ -286,6 +289,25 @@ IsSteamGameWindow(hwnd)
 
     if width < 1 || height < 1
         return false
+
+    ; Reject cheap window-only filters before opening its process. Several main
+    ; windows can belong to one process; never retain this cache across scans.
+    process_id := GetWindowProcessId(hwnd)
+    if !process_id
+        return false
+    if !process_paths
+        process_paths := Map()
+    if process_paths.Has(process_id) {
+        process_path := process_paths[process_id]
+    } else {
+        process_path := ""
+        try process_path := WinGetProcessPath(hwnd)
+        process_paths[process_id] := process_path
+    }
+    if process_path = ""
+        return false
+    SplitPath(process_path, &process_name)
+    process_name := StrLower(process_name)
 
     if steam_game_excluded_executables.Has(process_name) {
         DebugLog(
@@ -530,6 +552,15 @@ ActivateSteamGameWindow(hwnd)
             "int"
         )
 
+        ; Do not add another fixed wait when the restore/activation already
+        ; completed. Keep the existing bounded retry path for slow game windows.
+        if resume_borderless_succeeded && WinActive(hwnd)
+            && !DllCall("IsIconic", "ptr", hwnd, "int")
+            && (!restore_maximized || DllCall("IsZoomed", "ptr", hwnd, "int"))
+        {
+            DebugLog("Game activation completed without another wait.")
+            return true
+        }
         Sleep 50
 
         foreground_hwnd :=
@@ -586,7 +617,7 @@ ActivateSteamGameWindow(hwnd)
 ; returning to a non-game window
 ; =============================================================================
 
-IsSteamReturnWindow(hwnd, excluded_game_hwnd)
+IsSteamReturnWindow(hwnd, excluded_game_hwnd, process_paths := 0)
 {
     if !hwnd || hwnd = excluded_game_hwnd
         return false
@@ -594,14 +625,15 @@ IsSteamReturnWindow(hwnd, excluded_game_hwnd)
     if !DllCall("IsWindow", "ptr", hwnd, "int")
         return false
 
-    if IsSteamGameWindow(hwnd)
+    if !IsWindowToggleCandidate(hwnd)
         return false
 
-    return IsWindowToggleCandidate(hwnd)
+    return !IsSteamGameWindow(hwnd, process_paths)
 }
 
 FindSteamReturnWindow(excluded_game_hwnd)
 {
+    process_paths := Map()
     DebugLog(
         "Searching Z-order for return window."
         . " | excluded="
@@ -615,7 +647,8 @@ FindSteamReturnWindow(excluded_game_hwnd)
         accepted :=
             IsSteamReturnWindow(
                 hwnd,
-                excluded_game_hwnd
+                excluded_game_hwnd,
+                process_paths
             )
 
         DebugLog(

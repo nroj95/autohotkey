@@ -2,6 +2,44 @@
 ; Included into the same script; functions share the existing global state.
 
 ; =============================================================================
+; serialized window commands and native identity checks
+; =============================================================================
+
+RunWindowCommand(command, arguments*)
+{
+    previous_critical := A_IsCritical
+    previous_dpi_context := 0
+    Critical "On"
+    try {
+        ; DWM frame bounds are physical pixels. Match WinGetPos/WinMove to them
+        ; for the whole operation, including WINDOWPLACEMENT capture/restore.
+        ; Scope this per entry point: a tray/menu thread can start in another context.
+        try previous_dpi_context := DllCall("SetThreadDpiAwarenessContext", "ptr", -4, "ptr")
+        PruneBorderlessWindows()
+        return command(arguments*)
+    }
+    finally {
+        if previous_dpi_context
+            DllCall("SetThreadDpiAwarenessContext", "ptr", previous_dpi_context, "ptr")
+        Critical previous_critical
+    }
+}
+
+GetWindowProcessId(hwnd)
+{
+    process_id := 0
+    if !hwnd || !DllCall("GetWindowThreadProcessId", "ptr", hwnd, "uint*", &process_id, "uint")
+        return 0
+    return process_id
+}
+
+WindowStateMatchesProcess(hwnd, saved)
+{
+    process_id := GetWindowProcessId(hwnd)
+    return process_id && saved.Has("pid") && process_id = saved["pid"]
+}
+
+; =============================================================================
 ; window filtering
 ; =============================================================================
 
@@ -266,6 +304,9 @@ ActivateWindowReliably(hwnd)
     if !hwnd || !DllCall("IsWindow", "ptr", hwnd, "int")
         return false
 
+    if WinActive(hwnd) && !DllCall("IsIconic", "ptr", hwnd, "int")
+        return true
+
     DebugLog(
         "ActivateWindowReliably begin."
         . " | target=" DebugDescribeWindow(hwnd)
@@ -280,6 +321,8 @@ ActivateWindowReliably(hwnd)
         attempt := A_Index
 
         try WinActivate(hwnd)
+        if WinActive(hwnd)
+            return true
 
         set_foreground_result := DllCall(
             "SetForegroundWindow",
@@ -360,4 +403,21 @@ MoveWindowToVisibleRectangle(hwnd, target)
         DebugError("Move visible window rectangle", err)
         return false
     }
+}
+
+; Confirm the visible result, not merely that WinMove accepted the request.
+WindowMatchesVisibleRectangle(hwnd, target, tolerance := 2)
+{
+    Loop 4 {
+        try {
+            if RectanglesMatch(GetWindowLayoutRectangle(hwnd), target, tolerance)
+                return true
+        }
+        catch {
+            return false
+        }
+        if A_Index < 4
+            Sleep 10
+    }
+    return false
 }
