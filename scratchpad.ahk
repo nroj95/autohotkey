@@ -496,6 +496,14 @@ class ScratchpadController
         if command = "hide" || command = "toggle"
             this.ConsumeSystemTextInputEscape()
 
+        ; Size settings are already stored; one pending resize applies the latest
+        ; width and height without interrupting a show/hide animation.
+        if command = "resize" {
+            for request in this.command_queue {
+                if request.name = "resize"
+                    return
+            }
+        }
         if this.command_queue.Length >= 8
             return
         this.command_queue.Push({name: command, source_window: WinExist("A")})
@@ -550,6 +558,10 @@ class ScratchpadController
         if request.name = "save" {
             if this.HasWindow()
                 this.SaveCurrentPage()
+            return
+        }
+        if request.name = "resize" {
+            this.ApplyWindowSize()
             return
         }
 
@@ -739,6 +751,10 @@ class ScratchpadController
         this.PersistCurrentState()
         if new_page
             this.ConfigureNewPage()
+        ; A newly launched editor starts a new save session. A failure in a
+        ; previously closed editor must not leave this one silently paused.
+        this.autosave_paused := false
+        A_IconTip := "Scratchpad"
         return new_page
     }
 
@@ -1030,30 +1046,25 @@ class ScratchpadController
         if this.busy || !this.IsVisible()
             return
 
-        ; Reuse the existing low-frequency watcher for Z-order too. This keeps
-        ; dialogs visible above a topmost drawer without another permanent timer.
-        try this.SyncZOrder()
-
-        ; Native Save As happens outside Scratchpad's command path. While the
-        ; drawer is visible, cheaply watch Notepad3's current filename so the
-        ; delete-denying handle follows it without waiting for autosave.
-        ; Four checks per second are enough here; this is not an animation loop.
-        if !this.bridge || this.bridge.tainted
-            return
-        if !ScratchpadWindowIdle(this.window_hwnd)
-            return
-
-        ; Serialize this timer too: a queued command must not switch documents
-        ; halfway through acquiring the handle for a native Save As.
+        ; Serialize the whole watcher, including Z-order. A hotkey must not hide
+        ; or replace the editor halfway through this timer's window operations.
         this.busy := true
         try {
-            path := this.bridge.CurrentPath()
+            ; Reuse this watcher for Z-order without another permanent timer.
+            try this.SyncZOrder()
 
+            ; Native Save As happens outside Scratchpad's command path. Watch its
+            ; filename so the delete-denying handle follows it before autosave.
+            if !this.bridge || this.bridge.tainted
+                return
+            if !ScratchpadWindowIdle(this.window_hwnd)
+                return
+
+            path := this.bridge.CurrentPath()
             if path = this.page_lock_path
                 return
 
             attributes := path != "" ? FileExist(path) : ""
-
             if this.IsScratchPath(path) && attributes && !InStr(attributes, "D")
                 this.ProtectPage(path)
             else
@@ -1142,89 +1153,58 @@ class ScratchpadController
             this.disk_stamp := current_stamp
         }
 
-        ; Autosave needs only one completed disk snapshot. Commands that hide,
-        ; switch, reload or exit require the editor itself to become fully clean.
+        ; Autosave needs one verified disk snapshot. Hide/switch/reload/exit also
+        ; require a clean editor after verification, with bounded save retries.
         save_passes := require_clean ? 3 : 1
-
         loop save_passes {
             before_save_stamp := ScratchpadFileStamp(path)
             if before_save_stamp != this.disk_stamp
                 throw Error("The page changed on disk before saving. No automatic overwrite was attempted.")
-            save_snapshot := this.bridge.DocumentText()
+
+            try save_snapshot := this.bridge.DocumentText()
+            catch ScratchpadTextChangedError as failure {
+                ; No Save has been sent on this autosave pass. Ordinary typing
+                ; can safely defer it to the next interval without pausing saves.
+                ; Never suppress a timeout, embedded NUL or post-save failure.
+                if require_clean
+                    throw failure
+                return false
+            }
 
             ; Recheck after the cross-process text read, and on every retry.
-            ; A conflict discovered here must not be overwritten by File > Save.
             if this.bridge.CurrentPath() != path
                 throw Error("The active page changed before saving. Inspect Notepad3 before retrying.")
             if ScratchpadFileStamp(path) != before_save_stamp
                 throw Error("The page changed on disk while preparing to save. No automatic overwrite was attempted.")
 
             ; Always ask the native editor to save: encoding-only changes may not
-            ; set Scintilla's text-dirty flag.
+            ; set Scintilla's text-dirty flag. Its Save handler is synchronous.
             this.bridge.Save()
-
-            save_deadline := A_TickCount + 2000
-            loop {
-                if this.bridge.CurrentPath() != path || !FileExist(path)
-                    throw Error("The save target changed or disappeared. Inspect the editor before retrying.")
-
-                if !this.bridge.IsDirty() {
-                    clean_stamp := ScratchpadFileStamp(path)
-
-                    if !this.bridge.MatchesDiskText(path, save_snapshot)
-                        throw Error("The page changed on disk while Scratchpad was saving. No new save baseline was accepted.")
-
-                    if ScratchpadFileStamp(path) != clean_stamp
-                        throw Error("The file changed again while the completed save was being verified.")
-
-                    this.AcceptSave(path, clean_stamp)
-                    return
-                }
-
-                ; Save's native handler has already returned. Autosave can
-                ; verify its completed snapshot now instead of waiting two
-                ; seconds for ongoing typing to stop making the editor dirty.
-                if !require_clean || A_TickCount >= save_deadline
-                    break
-
-                Sleep 10
-            }
+            if this.bridge.CurrentPath() != path || !FileExist(path)
+                throw Error("The save target changed or disappeared. Inspect the editor before retrying.")
 
             after_save_stamp := ScratchpadFileStamp(path)
-
-            ; Content, not a timestamp change, proves the submitted snapshot
-            ; is on disk. An unchanged stamp is valid for a no-op Save followed
-            ; by new typing, or Notepad3's preserve-modification-time option.
-            if this.bridge.MatchesDiskText(path, save_snapshot) {
-                if this.bridge.CurrentPath() != path
-                    throw Error("The active page changed while the saved snapshot was being verified.")
-                if ScratchpadFileStamp(path) != after_save_stamp
-                    throw Error("The file changed again while the completed save was being verified.")
-
-                this.disk_stamp := after_save_stamp
-                this.PersistCurrentState()
-
-                if !require_clean {
-                    this.AcceptSave(path, after_save_stamp)
-                    return
+            if !this.bridge.MatchesDiskText(path, save_snapshot) {
+                ; Notepad3 may trim trailing blanks during Save, or typing may
+                ; reach it between our snapshot and its native Save handler.
+                ; Accept that newer result only when the current editor is clean
+                ; and independently matches disk. A timestamp alone is not proof.
+                if this.bridge.IsDirty() || !this.bridge.MatchesDisk(path)
+                    || this.bridge.IsDirty()
+                {
+                    throw Error("The completed save could not be verified against either the submitted snapshot or the clean editor. No new save baseline was accepted. Stop editing briefly and retry, or preserve the editor text with File > Save As.")
                 }
-
-                ; If disk and the current editor also agree, only the dirty flag
-                ; lagged. Otherwise newer edits need another strict save pass.
-                if this.bridge.MatchesDisk(path) {
-                    if ScratchpadFileStamp(path) != after_save_stamp
-                        throw Error("The file changed again while the current editor text was being verified.")
-                    this.AcceptSave(path, after_save_stamp)
-                    return
-                }
-
-                continue
             }
+            if ScratchpadFileStamp(path) != after_save_stamp
+                throw Error("The file changed again while the completed save was being verified.")
 
-            if after_save_stamp != before_save_stamp
-                throw Error("The page changed on disk while Scratchpad was saving, but the disk version does not match the editor snapshot that was submitted to Notepad3. No new save baseline was accepted.")
+            this.AcceptSave(path, after_save_stamp)
+            if !require_clean || !this.bridge.IsDirty()
+                return true
 
-            throw Error("Notepad3 still has unsaved changes and no completed disk write could be verified. Saving/hiding/switching has been stopped.")
+            ; The native Save already returned; a dirty editor now has newer
+            ; edits. Save those on the next pass instead of polling for up to
+            ; two seconds for a dirty flag that typing can keep setting.
         }
 
         throw Error("The page kept changing while Scratchpad tried to save it. Stop editing briefly and retry.")
@@ -1527,10 +1507,16 @@ class ScratchpadController
 
         context_pid := context ? ScratchpadWindowProcessId(context) : 0
 
-        ; WinGetList follows top-level Z-order and, with DetectHiddenWindows off,
-        ; only returns visible windows. OperationStatusWindow is specific enough to
-        ; yield globally; broader dialog forms must belong to the current context.
-        for candidate in WinGetList() {
+        ; Keep hidden-window detection enabled elsewhere for the retained editor,
+        ; but exclude hidden/cloaked windows from this frequent dialog scan.
+        ; Cloaked dialogs on another virtual desktop must not lower this drawer.
+        previous_hidden := DetectHiddenWindows(false)
+        try candidates := WinGetList()
+        finally DetectHiddenWindows previous_hidden
+
+        ; The list follows top-level Z-order. OperationStatusWindow is specific
+        ; enough to yield globally; broader dialogs need the current context.
+        for candidate in candidates {
             if candidate = this.window_hwnd || !ScratchpadIsDialogWindow(candidate)
                 continue
 
@@ -1820,7 +1806,11 @@ class ScratchpadController
             this.height_percent := percent
 
         this.UpdateWindowSizeMenu()
+        this.QueueCommand("resize")
+    }
 
+    ApplyWindowSize()
+    {
         if !this.IsVisible()
             return
 
@@ -2125,6 +2115,12 @@ class ScratchpadController
 ; integers only. There is no VirtualAllocEx, WriteProcessMemory or pointer injection.
 ; =============================================================================
 
+; A changing text length is retryable before Save; corrupt/unsupported text and
+; failed message transport remain ordinary hard errors.
+class ScratchpadTextChangedError extends Error
+{
+}
+
 class Notepad3Bridge
 {
 
@@ -2139,6 +2135,11 @@ class Notepad3Bridge
     {
         this.hwnd := hwnd
         this.tainted := false
+        ; One bounded WM_GETTEXT reads the filename atomically. Keep an extra
+        ; character beyond the path limit so truncation is never accepted.
+        this.filename_buffer := Buffer((32767 + 2) * 2, 0)
+        this.cached_filename := ""
+        this.cached_full_path := ""
         this.pid := WinGetPID("ahk_id " hwnd)
         this.editor_hwnd := DllCall("GetDlgItem", "ptr", hwnd, "int", 0xFB03, "ptr")
         this.filename_hwnd := DllCall("GetDlgItem", "ptr", hwnd, "int", 0xFB05, "ptr")
@@ -2179,24 +2180,43 @@ class Notepad3Bridge
 
     CurrentPath()
     {
-        path := this.ReadWindowText(this.filename_hwnd, 32767)
-        return path = "" ? "" : ScratchpadFullPath(path)
+        capacity := this.filename_buffer.Size // 2
+        copied := this.Send(0x000D, capacity, this.filename_buffer.Ptr, this.filename_hwnd) ; WM_GETTEXT
+        if copied < 0 || copied > 32767
+            throw Error("Notepad3's current filename exceeds the supported path length.")
+        path := copied ? StrGet(this.filename_buffer, copied, "UTF-16") : ""
+        if StrLen(path) != copied
+            throw Error("Notepad3 returned an invalid current filename.")
+
+        ; The visible watcher reads this four times per second. Avoid two path
+        ; normalization calls whenever the actual filename has not changed.
+        if !(path == this.cached_filename) {
+            full_path := path = "" ? "" : ScratchpadFullPath(path)
+            this.cached_filename := path
+            this.cached_full_path := full_path
+        }
+        return this.cached_full_path
     }
 
     ReadWindowText(hwnd, limit := 16777216)
     {
-        ; Standard Unicode WM_GETTEXT works on both the hidden filename STATIC
-        ; control and Scintilla; Windows handles the cross-process text buffer.
-        length := this.Send(0x000E, 0, 0, hwnd) ; WM_GETTEXTLENGTH
-        if length < 0 || length > limit
-            throw Error("The editor text is too large to verify automatically. Save it manually in Notepad3.")
-        text_buffer := Buffer((length + 1) * 2, 0)
-        copied := this.Send(0x000D, length + 1, text_buffer.Ptr, hwnd) ; WM_GETTEXT
-        text := StrGet(text_buffer, "UTF-16")
-        if copied != length || StrLen(text) != length
-            || this.Send(0x000E, 0, 0, hwnd) != length
-            throw Error("The editor changed while its text was being read, or contains embedded NUL characters. Retry after editing stops.")
-        return text
+        ; Standard Unicode WM_GETTEXT is marshaled by Windows. Retry a changing
+        ; length briefly; a short read caused by typing is not a disk conflict.
+        loop 3 {
+            length := this.Send(0x000E, 0, 0, hwnd) ; WM_GETTEXTLENGTH
+            if length < 0 || length > limit
+                throw Error("The editor text is too large to verify automatically. Save it manually in Notepad3.")
+            text_buffer := Buffer((length + 1) * 2, 0)
+            copied := this.Send(0x000D, length + 1, text_buffer.Ptr, hwnd) ; WM_GETTEXT
+            if copied < 0 || copied > length
+                throw Error("Notepad3 returned an invalid editor text length.")
+            text := copied ? StrGet(text_buffer, copied, "UTF-16") : ""
+            if StrLen(text) != copied
+                throw Error("The editor contains embedded NUL characters. Save it manually in Notepad3.")
+            if this.Send(0x000E, 0, 0, hwnd) = length && copied = length
+                return text
+        }
+        throw ScratchpadTextChangedError("The editor kept changing while its text was being read. Retry after editing stops.")
     }
 
     Scintilla(message, w_param := 0, l_param := 0)
