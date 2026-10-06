@@ -272,9 +272,6 @@ ToggleWindowCascadeHelp(*)
 
     help_text :=
     (
-    "CAPSLOCK LAYER REQUIRED`n"
-    "Keep capslock-layer.ahk running with Window Cascade.`n"
-    "`n"
     "Caps + H             Toggle this help`n"
     "Caps + M             Minimize all / disable; restore all / resume`n"
     "`n"
@@ -302,7 +299,10 @@ ToggleWindowCascadeHelp(*)
     "Click an inactive slot's tab to focus it; click the active slot's tab to cycle layers.`n"
     "`n"
     "WINDOW DRAGS`n"
-    "Release near a cascade slot to snap/adopt; release away to leave the cascade."
+    "Release near a cascade slot to snap/adopt; release away to leave the cascade.`n"
+    "`n"
+    "CAPSLOCK LAYER REQUIRED`n"
+    "Keep capslock-layer.ahk running with Window Cascade."
     )
 
     state.help_gui.AddText("w780", help_text)
