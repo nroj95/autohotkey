@@ -15,7 +15,7 @@ most of these started as small annoyances or ideas and gradually turned into pro
 a top-edge scratch drawer for temporary notes and code, using Notepad3 as the editor.
 
 - `Win+F12` toggles it by default
-- pages are plain files in `D:\toolbox\scratch\`
+- pages are plain files in `%USERPROFILE%\Scratchpad\` by default
 - autosaves while visible and performs stricter checked saves before hiding, switching, reloading, or exiting
 - remembers the current page, caret, selection, and scroll position
 - supports quick page creation, deletion, and keyboard page navigation
@@ -48,16 +48,16 @@ controller settings live at:
 %LOCALAPPDATA%\Scratchpad\settings.ini
 ```
 
-defaults:
+example defaults on a typical Windows installation:
 
 ```ini
 [Paths]
-ScratchDirectory=D:\toolbox\scratch
+ScratchDirectory=C:\Users\<username>\Scratchpad
 Notepad3Executable=
 
 [Window]
-WidthPercent=75
-HeightPercent=40
+WidthPercent=45
+HeightPercent=35
 AnimationDurationMs=180
 
 [Saving]

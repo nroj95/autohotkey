@@ -212,9 +212,10 @@ class ScratchpadController
         }
 
         DirCreate this.data_directory
-        this.CreateDefaultSettings()
+        default_scratch_directory := EnvGet("USERPROFILE") "\Scratchpad"
+        this.CreateDefaultSettings(default_scratch_directory)
         this.scratch_directory := RTrim(IniRead(this.settings_path, "Paths",
-            "ScratchDirectory", "D:\toolbox\scratch"), "\/")
+            "ScratchDirectory", default_scratch_directory), "\/")
         if !RegExMatch(this.scratch_directory, "i)^(?:[a-z]:\\|\\\\)")
             throw Error("ScratchDirectory must be an absolute Windows path.")
         DirCreate this.scratch_directory
@@ -252,10 +253,11 @@ class ScratchpadController
         SetTimer this.page_lock_sync_callback, 250
     }
 
-    CreateDefaultSettings()
+    CreateDefaultSettings(default_scratch_directory)
     {
         if !FileExist(this.settings_path) {
-            settings := "[Paths]`nScratchDirectory=D:\toolbox\scratch`nNotepad3Executable=`n"
+            settings := "[Paths]`nScratchDirectory=" default_scratch_directory
+                . "`nNotepad3Executable=`n"
                 . "`n[Window]`nWidthPercent=45`nHeightPercent=35`nAnimationDurationMs=180`n"
                 . "`n[Saving]`nAutosaveIntervalMs=10000`n`n[Controls]`nToggleHotkey=Win+F12`n"
                 . "`n[Setup]`nWelcomePending=1`n"
