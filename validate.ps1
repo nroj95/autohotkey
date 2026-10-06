@@ -25,7 +25,34 @@ if (-not $scripts) {
     throw 'No root-level AutoHotkey scripts were found.'
 }
 
-Write-Host "-- AutoHotkey --"
+function Invoke-AutoHotkeyValidation {
+    param(
+        [Parameter(Mandatory)]
+        [System.IO.FileInfo] $Script
+    )
+
+    # AutoHotkey is a GUI-subsystem executable. Putting it in a pipeline makes
+    # PowerShell wait for completion so $LASTEXITCODE is the real process result.
+    $output = @(
+        & $autoHotkeyPath `
+            /ErrorStdOut=UTF-8 `
+            /Validate `
+            $Script.FullName 2>&1 |
+            ForEach-Object { $_ }
+    )
+
+    $exitCode = $LASTEXITCODE
+
+    if ($output.Count -gt 0) {
+        foreach ($line in $output) {
+            Write-Host $line
+        }
+    }
+
+    return $exitCode
+}
+
+Write-Host '-- AutoHotkey --'
 Write-Host $autoHotkeyPath
 
 Write-Host "`n-- validation --"
@@ -33,12 +60,9 @@ Write-Host "`n-- validation --"
 $failedScripts = @()
 
 foreach ($script in $scripts) {
-    & $autoHotkeyPath `
-        /ErrorStdOut=UTF-8 `
-        /Validate `
-        $script.FullName
+    $exitCode = Invoke-AutoHotkeyValidation $script
 
-    if ($LASTEXITCODE -eq 0) {
+    if ($exitCode -eq 0) {
         Write-Host "ok:   $($script.Name)"
         continue
     }
@@ -53,4 +77,4 @@ if ($failedScripts.Count -gt 0) {
     throw "Validation failed: $($failedScripts -join ', ')"
 }
 
-Write-Host "all scripts validated"
+Write-Host 'all scripts validated'
