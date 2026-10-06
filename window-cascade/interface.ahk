@@ -287,6 +287,48 @@ ToggleWindowCascadeHelp(*)
     "Caps + F7                     Gather other monitors' cascades here`n"
     "Alt + Caps + Left / Right     Move to adjacent monitor + smart sort`n"
     "`n"
+    "FOCUS TABS`n"
+    "Click an inactive slot's tab to focus it; click the active slot's tab to cycle layers.`n"
+    "`n"
+    "WINDOW DRAGS`n"
+    "Release near a cascade slot to snap/adopt; release away to leave the cascade."
+    )
+
+    help_gui.AddText("w780", help_text)
+    more_help_button := help_gui.AddButton("xm+660 w120", "More help")
+    more_help_button.OnEvent("Click", ShowWindowCascadeMoreHelp)
+
+    help_gui.OnEvent("Close", CloseHelp)
+    help_gui.OnEvent("Escape", CloseHelp)
+    help_gui.Show()
+
+    CloseHelp(*) {
+        try help_gui.Destroy()
+        help_gui := 0
+        ; Destroy the GUI before releasing the HICONs it was displaying.
+        for icon_handle in help_icons
+            DllCall("DestroyIcon", "ptr", icon_handle, "int")
+        help_icons := []
+    }
+}
+
+
+ShowWindowCascadeMoreHelp(*)
+{
+    static more_help_gui := 0
+    static more_help_icons := []
+
+    if more_help_gui {
+        more_help_gui.Show()
+        return
+    }
+
+    more_help_gui := CallWithDpiContext(-2, Gui, "+AlwaysOnTop", "Window Cascade - More help")
+    more_help_icons := SetWindowCascadeHelpIcons(more_help_gui)
+    more_help_gui.SetFont("s10", "Cascadia Mono")
+
+    more_help_text :=
+    (
     "NOTES`n"
     "Alt commands require held Caps.`n"
     "Space / Tab for layer rotation is selected from the tray menu.`n"
@@ -303,7 +345,6 @@ ToggleWindowCascadeHelp(*)
     "Use Show focus tabs in the tray to show or hide them.`n"
     "`n"
     "WINDOW DRAGS`n"
-    "Release near a cascade slot to snap/adopt; release away to leave the cascade.`n"
     "Slot matching uses the window's visible top-left corner, not the mouse pointer or focus tab.`n"
     "The decision is made on release, never while holding. Caps + Insert still works.`n"
     "Dropped windows keep their slot; a cascade smaller than one full layer may compact inward.`n"
@@ -317,19 +358,18 @@ ToggleWindowCascadeHelp(*)
     "Verbose debug logging      Toggle detailed diagnostics for this run"
     )
 
-    help_gui.AddText("w780", help_text)
+    more_help_gui.AddText("w780", more_help_text)
 
-    help_gui.OnEvent("Close", CloseHelp)
-    help_gui.OnEvent("Escape", CloseHelp)
-    help_gui.Show()
+    more_help_gui.OnEvent("Close", CloseMoreHelp)
+    more_help_gui.OnEvent("Escape", CloseMoreHelp)
+    more_help_gui.Show()
 
-    CloseHelp(*) {
-        try help_gui.Destroy()
-        help_gui := 0
-        ; Destroy the GUI before releasing the HICONs it was displaying.
-        for icon_handle in help_icons
+    CloseMoreHelp(*) {
+        try more_help_gui.Destroy()
+        more_help_gui := 0
+        for icon_handle in more_help_icons
             DllCall("DestroyIcon", "ptr", icon_handle, "int")
-        help_icons := []
+        more_help_icons := []
     }
 }
 
