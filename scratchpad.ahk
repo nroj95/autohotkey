@@ -1333,12 +1333,20 @@ class ScratchpadController
 
     GetBounds(source_window)
     {
-        if !source_window || !DllCall("IsWindow", "ptr", source_window, "int") {
-            MouseGetPos , , &source_window
-            if !source_window
-                source_window := DllCall("GetDesktopWindow", "ptr")
-        }
-        monitor := DllCall("MonitorFromWindow", "ptr", source_window, "uint", 2, "ptr")
+        monitor := 0
+        if this.IsDesktopWindow(source_window)
+            monitor := this.GetMonitorUnderMouse()
+
+        if !monitor && source_window && DllCall("IsWindow", "ptr", source_window, "int")
+            monitor := DllCall("MonitorFromWindow", "ptr", source_window, "uint", 2, "ptr")
+
+        ; Invalid or missing source windows should follow the pointer rather than
+        ; silently falling back to the primary monitor.
+        if !monitor
+            monitor := this.GetMonitorUnderMouse()
+        if !monitor
+            monitor := DllCall("MonitorFromWindow", "ptr", DllCall("GetDesktopWindow", "ptr"), "uint", 2, "ptr")
+
         monitor_info := Buffer(40, 0)
         NumPut("uint", 40, monitor_info)
         if !DllCall("GetMonitorInfoW", "ptr", monitor, "ptr", monitor_info, "int")
@@ -1350,6 +1358,24 @@ class ScratchpadController
         width := Min(work_width, Max(320, Round(work_width * this.width_percent / 100)))
         height := Min(work_height, Max(180, Round(work_height * this.height_percent / 100)))
         return {x: left + Round((work_width - width) / 2), y: top, w: width, h: height}
+    }
+
+    IsDesktopWindow(hwnd)
+    {
+        if !hwnd || !DllCall("IsWindow", "ptr", hwnd, "int")
+            return false
+        try window_class := WinGetClass("ahk_id " hwnd)
+        catch
+            return false
+        return window_class = "Progman" || window_class = "WorkerW"
+    }
+
+    GetMonitorUnderMouse()
+    {
+        point := Buffer(8, 0)
+        if !DllCall("GetCursorPos", "ptr", point, "int")
+            return 0
+        return DllCall("MonitorFromPoint", "int64", NumGet(point, 0, "int64"), "uint", 2, "ptr")
     }
 
     ShowWindow(source_window, animate := true)
