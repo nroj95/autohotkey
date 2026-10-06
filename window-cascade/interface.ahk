@@ -261,6 +261,9 @@ ToggleWindowCascadeHelp(*)
 
     help_text :=
     (
+    "CAPSLOCK LAYER REQUIRED`n"
+    "Keep capslock-layer.ahk running with Window Cascade.`n"
+    "`n"
     "Caps + H             Toggle this help`n"
     "Caps + M             Minimize all / disable; restore all / resume`n"
     "`n"
@@ -301,6 +304,7 @@ ToggleWindowCascadeHelp(*)
     "`n"
     "WINDOW DRAGS`n"
     "Release near a cascade slot to snap/adopt; release away to leave the cascade.`n"
+    "Slot matching uses the window's visible top-left corner, not the mouse pointer or focus tab.`n"
     "The decision is made on release, never while holding. Caps + Insert still works.`n"
     "Dropped windows keep their slot; a cascade smaller than one full layer may compact inward.`n"
     "`n"
@@ -310,10 +314,7 @@ ToggleWindowCascadeHelp(*)
     "Show focus tabs            Show / hide the faint focus tabs`n"
     "Focus tab colors           Choose colors for the active and inactive slots`n"
     "Check compatibility        Check conflicting settings`n"
-    "Verbose debug logging      Toggle detailed diagnostics for this run`n"
-    "`n"
-    "CAPSLOCK LAYER REQUIRED`n"
-    "Keep capslock-layer.ahk running with Window Cascade."
+    "Verbose debug logging      Toggle detailed diagnostics for this run"
     )
 
     help_gui.AddText("w780", help_text)
