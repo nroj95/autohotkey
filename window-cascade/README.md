@@ -47,9 +47,9 @@ the launcher remains at the repository root. startup shortcuts and `icons/window
 
 each monitor/slot shows at most one focus tab. an inactive slot represents its exposed window; the active slot represents the next layer below the foreground window. a focused single-layer slot has no tab. deeper layers remain managed but their tabs stay hidden, so opacity no longer indicates stack depth. the full-height marker follows the highest slot regardless of which layer represents it.
 
-pressing an inactive slot's tab focuses its exposed window immediately. pressing the active slot's tab rotates the foreground window to the back of that slot's stack and focuses the next layer. repeated clicks visit every layer in order (A -> B -> C -> A), rather than alternating between the first two windows.
+pressing an inactive slot's tab focuses its exposed window immediately. pressing the active slot's tab rotates within the foreground window's current native Z-order band and focuses the next layer in that band. repeated clicks visit every layer in order when the stack is all-normal or all-topmost. in a mixed stack, always-on-top windows remain in the topmost band instead of being silently demoted, so normal layers remain behind that band.
 
-all actions happen once on mouse-down. the pressed tab is hidden immediately; the renderer selects the new representative without waiting for mouse-up. holding, dragging, and releasing add no action. there is no swipe preview, temporary opacity/topmost override, or focus-tab Escape binding; keyboard slot/layer rotation is unchanged.
+all actions happen once on mouse-down. the pressed tab is hidden immediately; the renderer selects the new representative without waiting for mouse-up. holding, dragging, and releasing add no action. there is no swipe preview, temporary opacity/topmost override, or focus-tab Escape binding. mouse and keyboard layer rotation use the same native Z-order-band rule.
 
 the renderer hides the old representative before showing its replacement. geometry queries stay interruptible; the selection and hide/show handoff run together, and stale foreground or click-generation snapshots are retried.
 
@@ -109,7 +109,7 @@ placement correction follows each window's final destination. dropped-out window
 
 ## foreground recovery and performance
 
-bringing a cascade forward preserves each window's pre-existing always-on-top setting; only temporarily promoted normal windows are returned to the normal Z-order band.
+bringing a cascade forward preserves each window's pre-existing always-on-top setting; only temporarily promoted normal windows are returned to the normal Z-order band. swaps, layer rotation, and compaction also preserve that boundary: relative Z-order rebuilding occurs only between windows confirmed to be in the same band. if a native topmost-state query fails, that Z-order mutation is skipped rather than treating the window as normal; compaction does not spin on an immediate retry.
 
 new-window placement remains non-activating. discovery retains focus context when a new window is already foreground or appears within `new_window_focus_timeout_ms` (3000 ms) of a taskbar mouse press. taskbar correlation is a recent-input heuristic, not proof of which process the taskbar launched. background launches without that context or observed foreground ownership are not activated.
 
@@ -125,9 +125,9 @@ the shell-settle path tries `SetForegroundWindow` first. after three consecutive
 
 `Caps + Delete` closes the active window with `WinClose("A")`, without sending Alt+F4. application-specific close handling still applies. a foreground target's stale marker is hidden immediately; the overlay renderer still selects the next layer's tab independently. an active-slot tab for a deeper layer remains intentional and does not by itself indicate failed focus.
 
-ordinary lifecycle/error logging stays enabled and writes to `%LOCALAPPDATA%\Window Cascade\window-cascade-debug.log`. focus recovery, placement, restore reconciliation, compaction, and destruction of pending/handled/managed windows remain visible in the normal log. **Verbose debug logging** in the tray toggles `debug_verbose_enabled` for the current run only and defaults to false after every restart; raw show/poll events, unrelated or repeated destroy events, and expensive title/appearance snapshots are opt-in. destruction is always processed even when its log entry is suppressed. foreground diagnostics retain the foreground HWND, thread-active HWND, keyboard-focus HWND/root, and process IDs, and skip native diagnostic queries when logging is disabled. the temporary placement `foreground-before` / `foreground-after` probes are removed.
+ordinary lifecycle/error logging stays enabled and writes to `%LOCALAPPDATA%\Window Cascade\window-cascade-debug.log`. the active log rotates after crossing `debug_log_max_bytes` (2 MiB by default), with one `.old` backup; size is checked once at startup and only every `debug_log_size_check_interval` (128) writes afterward, not on every event, so the active file may exceed the threshold briefly between checks. `Caps + F5` clears both segments. focus recovery, placement, restore reconciliation, compaction, and destruction of pending/handled/managed windows remain visible in the normal log. **Verbose debug logging** in the tray toggles `debug_verbose_enabled` for the current run only and defaults to false after every restart; raw show/poll events, unrelated or repeated destroy events, and expensive title/appearance snapshots are opt-in. destruction is always processed even when its log entry is suppressed. foreground diagnostics retain the foreground HWND, thread-active HWND, keyboard-focus HWND/root, and process IDs, and skip native diagnostic queries when logging is disabled. the temporary placement `foreground-before` / `foreground-after` probes are removed.
 
-`Caps + F5` clears the debug log and starts a fresh logged session. `Caps + F6` copies the current log to the clipboard without clearing it, activating or opening a window, cancelling focus recovery, or writing a capture entry into the log itself. a brief cursor-adjacent tooltip confirms a successful clear or copy without entering the debug history. this makes it possible to isolate a reproduction with F5, trigger it, then snapshot the untouched history with F6. both shortcuts are also available through the one-shot Caps layer.
+`Caps + F5` clears the debug log and starts a fresh logged session. `Caps + F6` copies the current log to the clipboard without clearing it, activating or opening a window, cancelling focus recovery, or writing a capture entry into the log itself. a brief cursor-adjacent tooltip confirms success or failure without entering the debug history. a failed clipboard write is not retried from the error path, so clipboard contention cannot turn the observational command into another unhandled clipboard operation. this makes it possible to isolate a reproduction with F5, trigger it, then snapshot the untouched history with F6. both shortcuts are also available through the one-shot Caps layer.
 
 `SetWinDelay 0` yields without AutoHotkey's default per-window 100 ms sleep; restore/placement watchers still decide readiness explicitly. a focus-tab pass uses one observed rectangle per candidate and one canonical geometry calculation per monitor. minimized overlays are cached/hidden rather than repeatedly destroyed, and unchanged opacity/Z-order operations are skipped. per-window placement requests retain object identity through retries so stale callbacks cannot target a later request for a recycled handle. placement confirmation stops after `placement_stabilize_confirmation_limit` (3) final checks instead of polling forever. no Windows desktop timing benchmark is implied by these source-level optimizations.
 
@@ -174,7 +174,9 @@ for Window Cascade changes, check:
 - holding/dragging/releasing: no preview or repeat action; release outside the tab or on another monitor is still consumed
 - ordinary app clicks/drags and Escape retain native behavior; also test close/minimize/move, focus changes, and reload/exit while holding
 - slot swaps, slot/layer rotation, and exposed-stack ordering
-- bring a mixed normal/always-on-top cascade forward; existing topmost windows must remain topmost and normal windows must return to the normal band
+- test mixed normal/always-on-top stacks through bring-forward, slot swaps, forward/reverse layer rotation, focus-tab clicks, and compaction; existing topmost windows must remain topmost, normal windows must remain normal, and both rotation directions must stay within the front window's native Z-order band
+- force/reproduce a failed topmost-state query during compaction: geometry may still compact, Z-order rebuilding for that stack must be skipped, and no repeated 120 ms compaction loop should result
+- queue a cascade command behind a slow command, then change/close the foreground window: the delayed command must be discarded unless its original HWND and PID still own foreground
 - Caps + F4: all layers on the current monitor close without intermediate compaction; other monitors stay untouched
 - drop-slot preservation: exactly one full layer and multiple layers; other windows fill gaps without moving the dropped window
 - partial layer: drops within the first N slots stay put; drops beyond that range compact inward
@@ -183,6 +185,7 @@ for Window Cascade changes, check:
 - drag away and back while still held; drag to another slot/monitor; no mid-drag pruning, reflow, or corrective move
 - adopt an unmanaged window by dropping near an existing cascade; outside/empty-monitor drops remain unmanaged
 - cancelled drags, edge resizing, rapid successive drags, target closure, and delayed new-window placement during a drag
+- after mouse release, simulate/observe a failed native move-state query: snapping must be abandoned after `cascade_drag_unknown_release_timeout_ms`, the drag gate must clear, and later cascade commands must work normally
 - Caps + M from multiple monitors and from an empty cascade: disable remains latched until explicitly resumed
 - disable a partial/full multi-monitor cascade, open new windows, resume: only saved cascade windows restore and disabled-time launches remain unmanaged
 - close or manually restore a saved window while disabled; it must not be revived/re-restored on resume; independently minimized windows stay hidden
@@ -204,6 +207,9 @@ for Window Cascade changes, check:
 - change scaling live with existing multi-layer cascades, without reloading; membership, slots, focus, and internal Z-order should survive once the transition settles
 - repeat a live scaling change with an independently minimized member and with Caps + M disabled; neither should be restored merely to update geometry
 - change resolution or disconnect a display; check the documented primary-display fallback and slot clamping, then verify fresh launches still work
+- grow or seed the debug log beyond `debug_log_max_bytes`, then start/write again: the old active segment must become `.old`, logging must continue in a fresh active file, and repeated rotation must retain only one backup
+- Caps + F5 after rotation must remove both the active log and `.old` before starting the fresh reset session
+- Caps + F6 with normal clipboard access and with clipboard access deliberately unavailable: success copies the untouched active log, failure shows only the failure tooltip and does not throw or append to the log
 - change Space/Tab from the Cascade tray with the Caps help GUI open, then reload Caps; the selection must stay synchronized
 - hold Caps + Q, add W, release Q while holding W: F13 must release independently of F14; also release Caps first and reload while held
 - tap Caps, hold Q, then press W: only Q consumes the one-shot; W stays ordinary and Q does not leak repeat characters

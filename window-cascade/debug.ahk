@@ -40,6 +40,8 @@ InitializeDebugLogging()
 
     OnError(LogUnhandledError)
 
+    ; Rotate an oversized log before the new session header is appended.
+    RotateDebugLogIfNeeded(true)
     DebugLogSession("started")
 }
 
@@ -91,10 +93,9 @@ CopyDebugLogToClipboard()
         }
         return true
     }
-    catch Error as err {
-        ; Report through the clipboard rather than the log so the captured history
-        ; remains unchanged even when the read fails.
-        A_Clipboard := "Could not copy Window Cascade debug log: " err.Message
+    catch {
+        ; Clipboard access itself may be what failed. Do not retry the same
+        ; operation or write to the debug log and contaminate the snapshot.
         return false
     }
 }
@@ -117,7 +118,7 @@ HideDebugActionTip()
 
 ResetDebugLog()
 {
-    global debug_enabled, debug_log_path
+    global debug_enabled, debug_log_path, debug_log_backup_path
 
     if !debug_enabled
         return false
@@ -125,6 +126,8 @@ ResetDebugLog()
     try {
         if FileExist(debug_log_path)
             FileDelete(debug_log_path)
+        if FileExist(debug_log_backup_path)
+            FileDelete(debug_log_backup_path)
     }
     catch Error as err {
         DebugLog(
@@ -153,6 +156,41 @@ DebugLogSession(reason)
     )
 }
 
+RotateDebugLogIfNeeded(force_check := false)
+{
+    global debug_enabled, debug_log_path, debug_log_backup_path
+    global debug_log_max_bytes, debug_log_size_check_interval
+    static writes_since_check := 0
+
+    if !debug_enabled
+        return
+
+    if force_check {
+        writes_since_check := 0
+    } else {
+        writes_since_check += 1
+        if writes_since_check < debug_log_size_check_interval
+            return
+        writes_since_check := 0
+    }
+
+    try {
+        if !FileExist(debug_log_path)
+            return
+        if FileGetSize(debug_log_path) < debug_log_max_bytes
+            return
+
+        ; Keep one previous segment only. Logging itself must continue even if
+        ; housekeeping fails because another process briefly has the file open.
+        if FileExist(debug_log_backup_path)
+            FileDelete(debug_log_backup_path)
+        FileMove(debug_log_path, debug_log_backup_path)
+    }
+    catch {
+    }
+}
+
+
 DebugLog(message)
 {
     global debug_enabled, debug_log_path
@@ -164,6 +202,8 @@ DebugLog(message)
         ,
         "yyyy-MM-dd HH:mm:ss"
     )
+
+    RotateDebugLogIfNeeded()
 
     try FileAppend(
         timestamp

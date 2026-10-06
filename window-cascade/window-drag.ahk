@@ -125,6 +125,7 @@ BeginCascadeWindowDrag(hwnd, event_time)
     drag := press.Clone()
     drag.source_monitor := GetManagedCascadeMonitor(hwnd)
     drag.native_ended := false
+    drag.native_state_unknown_since := 0
     drag.completing := false
     cascade_window_drag := drag
     cascade_drag_generation += 1
@@ -181,7 +182,7 @@ IsNativeWindowMoveSizeActive(hwnd)
 
 WatchCascadeWindowDrag()
 {
-    global cascade_window_drag
+    global cascade_window_drag, cascade_drag_unknown_release_timeout_ms
 
     if !IsObject(cascade_window_drag) {
         SetTimer(WatchCascadeWindowDrag, 0)
@@ -197,12 +198,60 @@ WatchCascadeWindowDrag()
             return
         }
 
-        ; Mouse-up alone can precede the final native geometry. The thread query
-        ; recovers a missed end event without a timeout that snaps mid-drag.
-        if IsCascadeDisplayTransition()
-            || (!drag.native_ended && IsNativeWindowMoveSizeActive(drag.hwnd) != 0)
-            || (!drag.cancelled && !drag.up_tick && GetKeyState("LButton", "P"))
-        {
+        if IsCascadeDisplayTransition() {
+            SetTimer(WatchCascadeWindowDrag, 50)
+            return
+        }
+
+        left_button_held := GetKeyState("LButton", "P")
+        native_move_state := drag.native_ended
+            ? 0
+            : IsNativeWindowMoveSizeActive(drag.hwnd)
+
+        if !drag.native_ended {
+            if native_move_state = 1 {
+                drag.native_state_unknown_since := 0
+                SetTimer(WatchCascadeWindowDrag, 50)
+                return
+            }
+
+            if native_move_state < 0 {
+                ; Never infer completion while the user still physically holds the
+                ; drag button. Once released, tolerate a short query failure window,
+                ; then abandon snapping rather than leaving the drag gate stuck.
+                if left_button_held {
+                    drag.native_state_unknown_since := 0
+                    SetTimer(WatchCascadeWindowDrag, 50)
+                    return
+                }
+
+                if !drag.native_state_unknown_since {
+                    drag.native_state_unknown_since := A_TickCount
+                    SetTimer(WatchCascadeWindowDrag, 50)
+                    return
+                }
+
+                unknown_elapsed_ms :=
+                    (A_TickCount - drag.native_state_unknown_since) & 0xFFFFFFFF
+                if unknown_elapsed_ms < cascade_drag_unknown_release_timeout_ms {
+                    SetTimer(WatchCascadeWindowDrag, 50)
+                    return
+                }
+
+                drag.cancelled := true
+                DebugLog(
+                    "Cascade drag abandoned after native state query failure."
+                    . " | elapsed-ms=" unknown_elapsed_ms
+                    . " | hwnd=" drag.hwnd
+                )
+            } else {
+                drag.native_state_unknown_since := 0
+            }
+        }
+
+        ; Mouse-up can precede final native geometry. If the native move loop has
+        ; ended or is known inactive, wait only while the physical button remains.
+        if !drag.cancelled && !drag.up_tick && left_button_held {
             SetTimer(WatchCascadeWindowDrag, 50)
             return
         }

@@ -68,6 +68,10 @@ placement_stabilize_confirmation_limit := 3
 ; managing its own geometry before posting another corrective move.
 placement_stabilize_backoff_delays_ms := [1000, 2000, 4000]
 
+; If Windows stops reporting native move-loop state after mouse release, abandon
+; the snap decision instead of leaving the cascade permanently locked in a drag.
+cascade_drag_unknown_release_timeout_ms := 500
+
 edge_margin := 12
 minimum_width := 320
 minimum_height := 220
@@ -121,6 +125,10 @@ settings_path := settings_directory "\settings.ini"
 debug_enabled := true
 debug_verbose_enabled := false
 debug_log_path := settings_directory "\window-cascade-debug.log"
+debug_log_backup_path := debug_log_path ".old"
+; Keep routine logging bounded without querying file size for every event.
+debug_log_max_bytes := 2 * 1024 * 1024
+debug_log_size_check_interval := 128
 
 focus_corner_active_slot_color_name := IniRead(
     settings_path,

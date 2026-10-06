@@ -230,6 +230,25 @@ ConsumeHandledWindowReshowIntent(kind, hint)
         explorer_space_reshow_hint := 0
 }
 
+CancelBoundExplorerSpaceReshowOnForeground(hwnd)
+{
+    global explorer_space_reshow_hint
+
+    if !hwnd || !IsObject(explorer_space_reshow_hint)
+        return
+
+    hint := explorer_space_reshow_hint
+    if !hint.HasOwnProp("reshow_hwnd")
+        return
+
+    ; Explorer itself and shell handoffs are expected before the preview wins focus.
+    ; A different real application means the user has moved on from this intent.
+    if hwnd = hint.reshow_hwnd || hwnd = hint.source_hwnd || IsShellSurfaceWindow(hwnd)
+        return
+
+    explorer_space_reshow_hint := 0
+}
+
 TryQueueHandledWindowReshow(hwnd, trigger := "show")
 {
     global handled_windows, placement_delay_ms
@@ -263,11 +282,15 @@ TryQueueHandledWindowReshow(hwnd, trigger := "show")
         return false
 
     if hint.HasOwnProp("reshow_hwnd") {
-        if hint.reshow_hwnd = hwnd
+        if hint.reshow_hwnd != hwnd
+            return false
+        ; A SHOW callback may have bound this target before it won foreground.
+        ; Let the matching FOREGROUND event queue a fresh identity-checked pass.
+        if intent.kind != "explorer-space" || trigger != "foreground"
             return true
-        return false
+    } else {
+        hint.reshow_hwnd := hwnd
     }
-    hint.reshow_hwnd := hwnd
 
     request := {
         hwnd: hwnd,
@@ -316,12 +339,23 @@ HandledWindowReshowMatchesRememberedPlacement(hwnd, placement)
 
 PlaceHandledWindowReshow(request)
 {
-    global handled_windows
+    global handled_windows, handled_reshow_hint_max_age_ms
 
+    keep_intent := false
     try {
         if !IsCascadeEnabled()
             || !IsCurrentHandledWindowReshowIntent(request.intent_kind, request.hint)
             return
+
+        hint_age := (A_TickCount - request.hint.tick) & 0xFFFFFFFF
+        if hint_age > handled_reshow_hint_max_age_ms {
+            DebugLog(
+                "Handled window " request.intent_kind " re-show skipped."
+                . " | reason=intent-expired"
+                . " | target=" DebugDescribeWindow(request.hwnd)
+            )
+            return
+        }
 
         hwnd := request.hwnd
         if !handled_windows.Has(hwnd)
@@ -333,14 +367,17 @@ PlaceHandledWindowReshow(request)
         if !source_monitor
             return
 
-        ; Explorer Space can mean many native actions. The short-lived hint only
-        ; becomes authoritative when the re-shown managed window actually wins focus.
+        ; SHOW can precede FOREGROUND. Keep the already-bound Explorer intent alive
+        ; only for that ordering; a later matching FOREGROUND event queues another pass.
         if request.intent_kind = "explorer-space"
             && DllCall("GetForegroundWindow", "ptr") != hwnd
         {
+            keep_intent := request.trigger = "show"
             DebugLog(
-                "Handled window explorer-space re-show skipped."
+                "Handled window explorer-space re-show "
+                . (keep_intent ? "waiting." : "skipped.")
                 . " | reason=target-not-foreground"
+                . " | trigger=" request.trigger
                 . " | target=" DebugDescribeWindow(hwnd)
             )
             return
@@ -431,7 +468,8 @@ PlaceHandledWindowReshow(request)
         DebugError("Handled window re-show", err)
     }
     finally {
-        ConsumeHandledWindowReshowIntent(request.intent_kind, request.hint)
+        if !keep_intent
+            ConsumeHandledWindowReshowIntent(request.intent_kind, request.hint)
     }
 }
 
@@ -734,6 +772,7 @@ HandleWinEvent(
             ; bind here; taskbar intent remains SHOW-only.
             if handled_windows.Has(hwnd)
                 TryQueueHandledWindowReshow(hwnd, "foreground")
+            CancelBoundExplorerSpaceReshowOnForeground(hwnd)
 
             QueueFocusCornerUpdate()
             TryQueueForegroundFallback(hwnd)

@@ -142,22 +142,30 @@ SwapActiveCascadeWindow(direction)
         | 0x0200  ; SWP_NOOWNERZORDER
     )
 
-    try PhysicalDllCall(
-        "SetWindowPos",
-        "ptr", target_hwnd,
-        "ptr", active_hwnd,
-        "int", 0,
-        "int", 0,
-        "int", 0,
-        "int", 0,
-        "uint", z_flags,
-        "int"
-    )
+    ; Never force a topmost window behind a normal window. If either native
+    ; state query fails, skip the relative Z-order mutation rather than guessing.
+    target_topmost := IsCascadeWindowTopmost(target_hwnd)
+    active_topmost := IsCascadeWindowTopmost(active_hwnd)
+    if target_topmost >= 0 && active_topmost >= 0
+        && target_topmost = active_topmost
+    {
+        try PhysicalDllCall(
+            "SetWindowPos",
+            "ptr", target_hwnd,
+            "ptr", active_hwnd,
+            "int", 0,
+            "int", 0,
+            "int", 0,
+            "int", 0,
+            "uint", z_flags,
+            "int"
+        )
+    }
 
     QueueFocusCornerUpdate()
 }
 
-MoveCascadeWindowToSlot(hwnd, target_x, target_y)
+MoveCascadeWindowToSlot(hwnd, target_x, target_y, post_asynchronously := false)
 {
     if !IsCascadeEnabled() || IsCascadeDisplayTransition()
         return false
@@ -211,32 +219,76 @@ MoveCascadeWindowToSlot(hwnd, target_x, target_y)
     if !IsCascadeEnabled() || IsCascadeWindowBeingDragged(hwnd)
         || IsCascadeDisplayTransition() || display_generation != cascade_display_generation
         return false
+
     owned_reservation := Map(
         "monitor", GetMonitorForWindow(hwnd), "x", target_x, "y", target_y
     )
     placement_reservations[hwnd] := owned_reservation
+    stabilization_scheduled := false
+
     try {
-        WinMovePixels(
-            raw_target[1],
-            raw_target[2],
-            raw_target[3],
-            raw_target[4],
-            "ahk_id " hwnd
-        )
+        move_accepted := false
+        if post_asynchronously {
+            ; Compaction can post geometry changes because reservations and the
+            ; stabilization watcher already represent in-flight destinations.
+            move_accepted := PhysicalDllCall(
+                "SetWindowPos",
+                "ptr", hwnd,
+                "ptr", 0,
+                "int", raw_target[1],
+                "int", raw_target[2],
+                "int", raw_target[3],
+                "int", raw_target[4],
+                "uint", 0x4014, ; ASYNC | NOACTIVATE | NOZORDER
+                "int"
+            )
+        } else {
+            ; Swaps depend on ordered move/rollback semantics, so keep those
+            ; explicit callers synchronous instead of introducing a new race.
+            WinMovePixels(
+                raw_target[1],
+                raw_target[2],
+                raw_target[3],
+                raw_target[4],
+                "ahk_id " hwnd
+            )
+            move_accepted := true
+        }
+
+        if !move_accepted
+            return false
+
+        if !IsCascadeEnabled() || IsCascadeDisplayTransition()
+            || display_generation != cascade_display_generation
+            || !placement_reservations.Has(hwnd)
+            || placement_reservations[hwnd] != owned_reservation
+            return false
+
+        if !IsCascadeWindowBeingDragged(hwnd) {
+            SchedulePlacementStabilization(
+                hwnd,
+                target_x,
+                target_y,
+                current_width,
+                current_height
+            )
+            stabilization_scheduled := true
+        }
+        return true
     }
     catch {
-        if placement_reservations.Has(hwnd) && placement_reservations[hwnd] = owned_reservation
-            placement_reservations.Delete(hwnd)
         return false
     }
-
-    if !IsCascadeEnabled() || IsCascadeDisplayTransition()
-        || display_generation != cascade_display_generation
-        || !placement_reservations.Has(hwnd) || placement_reservations[hwnd] != owned_reservation
-        return false
-    if !IsCascadeWindowBeingDragged(hwnd)
-        SchedulePlacementStabilization(hwnd, target_x, target_y, current_width, current_height)
-    return true
+    finally {
+        ; A cancelled/failed move must not leave compaction occupancy behind.
+        ; Do not remove a newer request's reservation for a recycled HWND.
+        if !stabilization_scheduled
+            && placement_reservations.Has(hwnd)
+            && placement_reservations[hwnd] = owned_reservation
+        {
+            placement_reservations.Delete(hwnd)
+        }
+    }
 }
 
 
@@ -302,6 +354,24 @@ RotateCascadeStackWindows(ordered_windows, direction)
     if ordered_windows.Length < 2
         return 0
 
+    ; Windows maintains separate topmost and normal Z-order bands. Crossing that
+    ; boundary with SetWindowPos can silently change WS_EX_TOPMOST, so rotate only
+    ; the front window's current band. The other band keeps its application state.
+    front_is_topmost := IsCascadeWindowTopmost(ordered_windows[1])
+    if front_is_topmost < 0
+        return 0
+
+    band_windows := []
+    for hwnd in ordered_windows {
+        window_is_topmost := IsCascadeWindowTopmost(hwnd)
+        if window_is_topmost < 0
+            return 0
+        if window_is_topmost = front_is_topmost
+            band_windows.Push(hwnd)
+    }
+    if band_windows.Length < 2
+        return 0
+
     flags := (
         0x0001  ; SWP_NOSIZE
         | 0x0002  ; SWP_NOMOVE
@@ -311,13 +381,16 @@ RotateCascadeStackWindows(ordered_windows, direction)
 
     try {
         if direction < 0 {
-            ; Previous layer: bring the deepest window to the front.
-            target_hwnd := ordered_windows[ordered_windows.Length]
+            ; Bring the deepest window to the front of its existing native band
+            ; in one operation. HWND_TOP does not make a normal window topmost;
+            ; HWND_TOPMOST preserves an already-topmost window's band.
+            target_hwnd := band_windows[band_windows.Length]
+            insert_after := front_is_topmost ? -1 : 0 ; TOPMOST / TOP
 
             succeeded := PhysicalDllCall(
                 "SetWindowPos",
                 "ptr", target_hwnd,
-                "ptr", 0, ; HWND_TOP
+                "ptr", insert_after,
                 "int", 0,
                 "int", 0,
                 "int", 0,
@@ -329,9 +402,9 @@ RotateCascadeStackWindows(ordered_windows, direction)
             return succeeded ? target_hwnd : 0
         }
 
-        ; Next layer: move the exposed window behind the deepest window.
-        current_hwnd := ordered_windows[1]
-        deepest_hwnd := ordered_windows[ordered_windows.Length]
+        ; Move the exposed window behind the deepest window in the same band.
+        current_hwnd := band_windows[1]
+        deepest_hwnd := band_windows[band_windows.Length]
 
         succeeded := PhysicalDllCall(
             "SetWindowPos",
@@ -345,7 +418,7 @@ RotateCascadeStackWindows(ordered_windows, direction)
             "int"
         )
 
-        return succeeded ? ordered_windows[2] : 0
+        return succeeded ? band_windows[2] : 0
     }
     catch {
         return 0

@@ -248,7 +248,9 @@ RegisterIntegrationMessages()
     if !cascade_command_message || !cascade_rotate_key_message
         throw OSError(A_LastError, "RegisterIntegrationMessages")
 
-    OnMessage(cascade_command_message, HandleCascadeCommandMessage)
+    ; Allow one nested receiver only to enqueue commands while a prior command runs.
+    ; The receiver's tiny Critical section buffers any further posted messages.
+    OnMessage(cascade_command_message, HandleCascadeCommandMessage, 2)
     BroadcastCascadeRotateKey()
 }
 
@@ -268,6 +270,70 @@ BroadcastCascadeRotateKey()
 
 HandleCascadeCommandMessage(command_id, parameter, message_id, target_hwnd)
 {
+    static command_queue := []
+    static command_dispatching := false
+
+    ; Registered command messages are posted. Keep the receiver itself tiny and
+    ; Critical so another arrival is buffered instead of becoming unmonitored.
+    previous_critical := Critical("On")
+    try {
+        ; HWND_BROADCAST also reaches script-owned GUIs. Accept each command once
+        ; through AutoHotkey's hidden main window.
+        if target_hwnd != A_ScriptHwnd || !IsCapsLockLayerRunning()
+            return
+
+        foreground_hwnd := DllCall("GetForegroundWindow", "ptr")
+        foreground_pid := 0
+        if foreground_hwnd {
+            try foreground_pid := WinGetPID(foreground_hwnd)
+        }
+
+        command := {
+            id: command_id,
+            parameter: parameter,
+            foreground_hwnd: foreground_hwnd,
+            foreground_pid: foreground_pid,
+            queued: command_dispatching
+        }
+
+        if command_dispatching {
+            command_queue.Push(command)
+            return
+        }
+
+        command_dispatching := true
+    }
+    finally {
+        Critical(previous_critical)
+    }
+
+    current_command := command
+    Loop {
+        try DispatchCascadeCommand(current_command)
+        catch Error as err
+            DebugError("Cascade command dispatch", err)
+
+        ; Taking the next item and releasing the dispatcher must be atomic.
+        ; Otherwise a nested receiver could append after an empty check and leave
+        ; a command stranded with no active dispatcher.
+        previous_critical := Critical("On")
+        try {
+            if command_queue.Length {
+                current_command := command_queue.RemoveAt(1)
+            } else {
+                command_dispatching := false
+                return
+            }
+        }
+        finally {
+            Critical(previous_critical)
+        }
+    }
+}
+
+
+DispatchCascadeCommand(command)
+{
     global cascade_command_focus_previous, cascade_command_focus_next
     global cascade_command_rotate_slot_previous, cascade_command_rotate_slot_next
     global cascade_command_swap_window_up, cascade_command_swap_window_down
@@ -278,24 +344,49 @@ HandleCascadeCommandMessage(command_id, parameter, message_id, target_hwnd)
     global cascade_command_move_monitor_left, cascade_command_move_monitor_right
     global cascade_disabled, cascade_toggle_in_progress
 
-    ; HWND_BROADCAST also reaches script-owned GUIs. Run each command only
-    ; once through AutoHotkey's hidden main window.
-    if target_hwnd != A_ScriptHwnd
-        return
+    command_id := command.id
+    parameter := command.parameter
 
-    if !IsCapsLockLayerRunning()
-        return
     if cascade_toggle_in_progress
         return
 
-    ; Caps + M must be able to wake the cascade from any foreground window.
-    ; It is the only keyboard command accepted while the cascade is disabled.
+    ; Caps + M is context-free and remains the only command accepted while disabled.
     if command_id = cascade_command_toggle_minimize {
         ToggleCascadeDisabled()
         return
     }
     if cascade_disabled
         return
+
+    ; A command delayed behind a slower one must still belong to the exact
+    ; foreground window that owned it. Context-free help is safe regardless.
+    if command.queued && command_id != cascade_command_show_help {
+        actual_foreground := DllCall("GetForegroundWindow", "ptr")
+        foreground_matches := actual_foreground = command.foreground_hwnd
+
+        if foreground_matches && command.foreground_hwnd {
+            if !command.foreground_pid {
+                foreground_matches := false
+            } else {
+                try foreground_matches :=
+                    WinGetPID(command.foreground_hwnd) = command.foreground_pid
+                catch
+                    foreground_matches := false
+            }
+        }
+
+        if !foreground_matches {
+            DebugLog(
+                "Queued cascade command skipped."
+                . " | reason=foreground-identity-changed"
+                . " | command=" command_id
+                . " | expected-foreground=" command.foreground_hwnd
+                . " | expected-pid=" command.foreground_pid
+                . " | actual-foreground=" actual_foreground
+            )
+            return
+        }
+    }
 
     CancelNewWindowFocus()
 
@@ -337,9 +428,11 @@ HandleCascadeCommandMessage(command_id, parameter, message_id, target_hwnd)
             BringCommandMonitorCascadeForward()
 
         case cascade_command_close_active:
-            ; Close without synthetic modifiers. Foreground recovery has its own
-            ; guarded fallback and must not depend on this close command.
-            try WinClose("A")
+            ; Close the same foreground window that owned the command message.
+            ; Never let a delayed close follow focus into another application.
+            if command.foreground_hwnd
+                && DllCall("GetForegroundWindow", "ptr") = command.foreground_hwnd
+                try WinClose(command.foreground_hwnd)
 
         case cascade_command_close_scope:
             CloseCommandMonitorCascade()

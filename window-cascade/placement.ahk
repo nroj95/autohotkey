@@ -103,13 +103,37 @@ PlaceCascadeWindowOnMonitor(
             "monitor", target_monitor, "x", target_x, "y", target_y
         )
         placement_reservations[hwnd] := owned_reservation
-        WinMovePixels(
-            raw_target[1],
-            raw_target[2],
-            raw_target[3],
-            raw_target[4],
-            window
+
+        ; Explicit adoption/gather/drop placement does not need to block on the
+        ; target application's UI thread. The reservation represents the intended
+        ; slot until the existing stabilization path confirms the posted move.
+        move_result := PhysicalDllCall(
+            "SetWindowPos",
+            "ptr", hwnd,
+            "ptr", 0,
+            "int", raw_target[1],
+            "int", raw_target[2],
+            "int", raw_target[3],
+            "int", raw_target[4],
+            "uint", 0x4014, ; ASYNC | NOACTIVATE | NOZORDER
+            "int"
         )
+        move_error := A_LastError
+
+        if !move_result {
+            if move_error = 5 {
+                ; Preserve the old access-denied behavior: do not let discovery
+                ; repeatedly retry a window Windows has refused to control.
+                handled_windows[hwnd] := true
+                known_windows[hwnd] := true
+            }
+            DebugLog(
+                "Explicit placement SetWindowPos failed."
+                . " | last-error=" move_error
+                . " | target=" DebugDescribeWindow(hwnd)
+            )
+            return false
+        }
 
         if !IsCascadeEnabled() || display_generation != cascade_display_generation
             || IsCascadeDisplayTransition()
@@ -147,16 +171,6 @@ PlaceCascadeWindowOnMonitor(
     catch Error as err {
         if placement_reservations.Has(hwnd) && placement_reservations[hwnd] = owned_reservation
             placement_reservations.Delete(hwnd)
-        error_number := 0
-
-        try
-            error_number := err.Number
-
-        if err.What = "WinMove" && error_number = 5 {
-            handled_windows[hwnd] := true
-            known_windows[hwnd] := true
-        }
-
         ; A failed re-slot/gather must not silently drop an already managed
         ; window from its original monitor history.
         if previous_monitor
@@ -396,6 +410,48 @@ TryProvisionalNewWindowPlacement(hwnd, source_hwnd, queued_monitor, request)
         DebugError("Provisional new-window placement", err)
         return false
     }
+}
+
+
+ReleaseFailedNewWindowPlacementReservation(hwnd, request, reservation := 0)
+{
+    global placement_reservations
+
+    ; A terminal callback may be cleaning up a reservation created by an earlier
+    ; provisional pass rather than by this invocation of PlaceNewWindow().
+    if !IsObject(reservation)
+        && IsObject(request)
+        && request.HasOwnProp("provisional_placement")
+        && IsObject(request.provisional_placement)
+    {
+        reservation := request.provisional_placement.reservation
+    }
+
+    if !IsObject(reservation)
+        return
+
+    monitor_index := reservation.Has("monitor") ? reservation["monitor"] : 0
+
+    ; Delete only the exact reservation owned by this failed request. A newer
+    ; operation may already have reused the HWND and installed a different one.
+    if placement_reservations.Has(hwnd)
+        && placement_reservations[hwnd] = reservation
+    {
+        placement_reservations.Delete(hwnd)
+    }
+
+    if IsObject(request)
+        && request.HasOwnProp("provisional_placement")
+        && IsObject(request.provisional_placement)
+        && request.provisional_placement.reservation = reservation
+    {
+        request.provisional_placement := 0
+    }
+
+    ; Another launch may already have chosen a later slot while this reservation
+    ; existed. Recompact current membership after the abandoned slot is released.
+    if monitor_index
+        QueueCascadeCompaction(monitor_index)
 }
 
 
@@ -787,7 +843,9 @@ PlaceNewWindow(
 
         if err.What = "WinMove" && error_number = 5 {
             ; The window was successfully identified but Windows denied control.
-            ; Treat it as handled so fallback detection does not retry it.
+            ; Treat it as handled so fallback detection does not retry it, but do
+            ; not leave an earlier provisional slot reserved for an unmanaged window.
+            ReleaseFailedNewWindowPlacementReservation(hwnd, request, owned_reservation)
             handled_windows[hwnd] := true
             return
         }
@@ -797,9 +855,8 @@ PlaceNewWindow(
     finally {
         if !retry_scheduled && IsCurrentNewWindowPlacement(hwnd, request) {
             pending_windows.Delete(hwnd)
-            if !handled_windows.Has(hwnd) && placement_reservations.Has(hwnd)
-                && placement_reservations[hwnd] = owned_reservation
-                placement_reservations.Delete(hwnd)
+            if !handled_windows.Has(hwnd)
+                ReleaseFailedNewWindowPlacementReservation(hwnd, request, owned_reservation)
         }
     }
 }

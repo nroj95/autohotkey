@@ -211,6 +211,17 @@ IsShellSurfaceWindow(hwnd)
     )
 }
 
+IsCascadeWindowTopmost(hwnd)
+{
+    if !hwnd || !DllCall("IsWindow", "ptr", hwnd, "int")
+        return -1
+
+    try return !!(WinGetExStyle("ahk_id " hwnd) & 0x8) ; WS_EX_TOPMOST
+    catch
+        return -1
+}
+
+
 IsWindowCloaked(hwnd)
 {
     cloaked := 0

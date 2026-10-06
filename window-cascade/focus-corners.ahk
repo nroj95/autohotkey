@@ -236,10 +236,25 @@ GetCascadeWindowsForOverlay()
 
 SelectFocusCornerSlotTarget(ordered_windows, active_hwnd)
 {
-    ; Inactive slot: exposed window. Active slot: first layer below foreground.
-    ; A focused single-window slot has no remaining tab to show.
-    for hwnd in ordered_windows {
-        if hwnd != active_hwnd
+    if !ordered_windows.Length
+        return 0
+
+    ; Inactive slot: always expose the actual front window.
+    if ordered_windows[1] != active_hwnd
+        return ordered_windows[1]
+
+    ; Active slot: offer the next layer only within the foreground window's
+    ; topmost/normal Z-order band. Crossing bands would change app topmost state.
+    active_is_topmost := IsCascadeWindowTopmost(active_hwnd)
+    if active_is_topmost < 0
+        return 0
+
+    Loop ordered_windows.Length - 1 {
+        hwnd := ordered_windows[A_Index + 1]
+        window_is_topmost := IsCascadeWindowTopmost(hwnd)
+        if window_is_topmost < 0
+            return 0
+        if window_is_topmost = active_is_topmost
             return hwnd
     }
 

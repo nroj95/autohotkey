@@ -735,12 +735,16 @@ CompactCascadeLayout(monitor_index, preferred_hwnd := 0)
                 return
             }
 
-            if !MoveCascadeWindowToSlot(hwnd, target_slot[1], target_slot[2])
+            ; Compaction has reservation/stabilization tracking, so geometry moves
+            ; can be posted without waiting on each target application's UI thread.
+            if !MoveCascadeWindowToSlot(hwnd, target_slot[1], target_slot[2], true)
                 failed_moves += 1
         }
     }
 
-    ; Keep each target stack in the same top-to-bottom layer order.
+    ; Keep each target stack in the same top-to-bottom order within each native
+    ; Z-order band. Never place a topmost window after a normal window: Windows
+    ; would remove its WS_EX_TOPMOST state as a side effect.
     z_flags := (
         0x0001  ; SWP_NOSIZE
         | 0x0002  ; SWP_NOMOVE
@@ -749,33 +753,57 @@ CompactCascadeLayout(monitor_index, preferred_hwnd := 0)
     )
 
     for stack_windows in target_stacks {
-        if stack_windows.Length < 2
+        topmost_windows := []
+        normal_windows := []
+        topmost_state_known := true
+        for hwnd in stack_windows {
+            window_is_topmost := IsCascadeWindowTopmost(hwnd)
+            if window_is_topmost < 0 {
+                topmost_state_known := false
+                break
+            }
+            if window_is_topmost
+                topmost_windows.Push(hwnd)
+            else
+                normal_windows.Push(hwnd)
+        }
+
+        if !topmost_state_known {
+            ; Geometry compaction already completed. Do not turn a transient style
+            ; query failure into a 120 ms retry loop; simply leave this stack's
+            ; current Z-order untouched for this pass.
             continue
+        }
 
-        Loop stack_windows.Length - 1 {
-            if drag_generation != cascade_drag_generation
-                || membership_generation != cascade_membership_generation {
-                RequeueCascadeCompaction(monitor_index, preferred_hwnd)
-                return
-            }
-            if IsCascadeCompactionDeferred(monitor_index) {
-                RequeueCascadeCompaction(monitor_index, preferred_hwnd)
-                return
-            }
-            upper_hwnd := stack_windows[A_Index]
-            lower_hwnd := stack_windows[A_Index + 1]
+        for band_windows in [topmost_windows, normal_windows] {
+            if band_windows.Length < 2
+                continue
 
-            try PhysicalDllCall(
-                "SetWindowPos",
-                "ptr", lower_hwnd,
-                "ptr", upper_hwnd,
-                "int", 0,
-                "int", 0,
-                "int", 0,
-                "int", 0,
-                "uint", z_flags,
-                "int"
-            )
+            Loop band_windows.Length - 1 {
+                if drag_generation != cascade_drag_generation
+                    || membership_generation != cascade_membership_generation {
+                    RequeueCascadeCompaction(monitor_index, preferred_hwnd)
+                    return
+                }
+                if IsCascadeCompactionDeferred(monitor_index) {
+                    RequeueCascadeCompaction(monitor_index, preferred_hwnd)
+                    return
+                }
+                upper_hwnd := band_windows[A_Index]
+                lower_hwnd := band_windows[A_Index + 1]
+
+                try PhysicalDllCall(
+                    "SetWindowPos",
+                    "ptr", lower_hwnd,
+                    "ptr", upper_hwnd,
+                    "int", 0,
+                    "int", 0,
+                    "int", 0,
+                    "int", 0,
+                    "uint", z_flags,
+                    "int"
+                )
+            }
         }
     }
 
