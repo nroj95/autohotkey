@@ -2,26 +2,31 @@
 #SingleInstance Force
 #Warn
 
+; =============================================================================
+; Pause Command Mode - held shortcuts and a single-use tapped layer
+; =============================================================================
+; - hold Pause for text, help and sleep commands.
+; - tap Pause to arm one command for 1.4 seconds; tap again to wake speakers.
+; - consume the tapped layer before running a command, while suppressing repeats
+;   of that command key until release. Other keys do not inherit the armed layer.
+; - coordinate with CapsLock Layer through the existing registered messages.
+; - remain event-driven: only the arm timeout and resume reload use one-shot timers.
+; =============================================================================
+
 A_IconTip := "Pause Command Mode"
 try TraySetIcon(A_ScriptDir "\icons\pause-command-mode.ico")
 
 startup_shortcut_path := A_Startup "\Pause Command Mode.lnk"
 pause_layer_armed := false
 pause_layer_arm_window_ms := 1400
+pause_command_keys_down := Map()
+speaker_wake_file := A_WinDir "\Media\Windows Balloon.wav"
+speaker_volume_restore := 0
 
-caps_layer_disarm_message := DllCall(
-    "RegisterWindowMessage",
-    "str", "nroj.CapsLockLayer.Disarm",
-    "uint"
-)
-
-pause_layer_disarm_message := DllCall(
-    "RegisterWindowMessage",
-    "str", "nroj.PauseCommandMode.Disarm",
-    "uint"
-)
-
+caps_layer_disarm_message := RegisterCommandMessage("nroj.CapsLockLayer.Disarm")
+pause_layer_disarm_message := RegisterCommandMessage("nroj.PauseCommandMode.Disarm")
 OnMessage(pause_layer_disarm_message, HandlePauseLayerDisarm)
+OnExit CleanupPauseMode
 
 A_TrayMenu.Delete()
 A_TrayMenu.Add("How to use", ShowHelp)
@@ -29,200 +34,142 @@ A_TrayMenu.Add()
 A_TrayMenu.Add("Run at startup", ToggleStartup)
 A_TrayMenu.Add()
 A_TrayMenu.AddStandard()
-
 UpdateStartupMenu()
 
 ; Rebuild AutoHotkey's keyboard hook after Windows resumes from sleep.
 OnMessage(0x0218, HandlePowerBroadcast)
 
 ; =============================================================================
-; mission:
-; - use Pause as a held modifier for personal text, system sleep,
-;   and small utilities.
-; - allow tapping Pause to arm one discrete command for a few seconds.
-; - wake speakers by pressing Pause again while one-shot mode is armed.
-; - keep held Pause chords available as the normal modifier behavior.
+; held Pause shortcuts
 ; =============================================================================
 
-speaker_wake_file := "C:\Windows\Media\Windows Balloon.wav"
-
-; Hold Pause for normal chords, or tap it to arm one command.
+; A custom combination's unused prefix fires its own hotkey on release.
 Pause::ArmPauseLayer()
-
-Pause & h::
-{
-    ShowHelp()
-    KeyWait "h"
-}
-
-Pause & s::
-{
-    Send "ß"
-    KeyWait "s"
-}
-
-Pause & -::
-{
-    Send "–"
-    KeyWait "-"
-}
-
-Pause & '::
-{
-    Send "’"
-    KeyWait "'"
-}
-
-Pause & n::
-{
-    SendText "&nbsp;"
-    KeyWait "n"
-}
-
-Pause & t::
-{
-    SendText FormatTime(, "yyyyMMdd-HHmmss")
-    KeyWait "t"
-}
-
-Pause & Esc::SleepComputer()
-
+Pause & h::RunPauseCommand("h")
+Pause & s::RunPauseCommand("s")
+Pause & -::RunPauseCommand("-")
+Pause & '::RunPauseCommand("'")
+Pause & n::RunPauseCommand("n")
+Pause & t::RunPauseCommand("t")
+Pause & Esc::RunPauseCommand("Escape")
 
 ; =============================================================================
-; tapped Pause layer
+; tapped Pause shortcuts
 ; =============================================================================
+; Keep only the consumed key intercepted until release, not the entire layer.
+; This prevents both repeat characters and a second one-shot command while the
+; first key is still down. $ also keeps generated text out of these hotkeys.
 
-#HotIf pause_layer_armed
+#HotIf pause_layer_armed || pause_command_keys_down.Has("Pause")
+$Pause::RunPauseCommand("Pause", true)
 
-Pause::
-{
-    HidePauseLayerTip()
-    SetTimer DisarmPauseLayer, 0
+#HotIf pause_layer_armed || pause_command_keys_down.Has("h")
+$h::RunPauseCommand("h", true)
 
-    try {
-        WakeSpeaker()
-        KeyWait "Pause"
-    }
-    finally {
-        DisarmPauseLayer()
-    }
-}
+#HotIf pause_layer_armed || pause_command_keys_down.Has("s")
+$s::RunPauseCommand("s", true)
 
-h::
-{
-    HidePauseLayerTip()
-    SetTimer DisarmPauseLayer, 0
+#HotIf pause_layer_armed || pause_command_keys_down.Has("-")
+$-::RunPauseCommand("-", true)
 
-    try {
-        ShowHelp()
-        KeyWait "h"
-    }
-    finally {
-        DisarmPauseLayer()
-    }
-}
+#HotIf pause_layer_armed || pause_command_keys_down.Has("'")
+$'::RunPauseCommand("'", true)
 
-s::
-{
-    HidePauseLayerTip()
-    SetTimer DisarmPauseLayer, 0
+#HotIf pause_layer_armed || pause_command_keys_down.Has("n")
+$n::RunPauseCommand("n", true)
 
-    try {
-        Send "ß"
-        KeyWait "s"
-    }
-    finally {
-        DisarmPauseLayer()
-    }
-}
+#HotIf pause_layer_armed || pause_command_keys_down.Has("t")
+$t::RunPauseCommand("t", true)
 
--::
-{
-    HidePauseLayerTip()
-    SetTimer DisarmPauseLayer, 0
-
-    try {
-        Send "–"
-        KeyWait "-"
-    }
-    finally {
-        DisarmPauseLayer()
-    }
-}
-
-'::
-{
-    HidePauseLayerTip()
-    SetTimer DisarmPauseLayer, 0
-
-    try {
-        Send "’"
-        KeyWait "'"
-    }
-    finally {
-        DisarmPauseLayer()
-    }
-}
-
-n::
-{
-    HidePauseLayerTip()
-    SetTimer DisarmPauseLayer, 0
-
-    try {
-        SendText "&nbsp;"
-        KeyWait "n"
-    }
-    finally {
-        DisarmPauseLayer()
-    }
-}
-
-t::
-{
-    HidePauseLayerTip()
-    SetTimer DisarmPauseLayer, 0
-
-    try {
-        SendText FormatTime(, "yyyyMMdd-HHmmss")
-        KeyWait "t"
-    }
-    finally {
-        DisarmPauseLayer()
-    }
-}
-
-Esc::
-{
-    DisarmPauseLayer()
-    SleepComputer()
-}
-
+#HotIf pause_layer_armed || pause_command_keys_down.Has("Escape")
+$Esc::RunPauseCommand("Escape", true)
 #HotIf
 
+RunPauseCommand(command_key, one_shot := false) {
+    global pause_layer_armed, pause_command_keys_down
+
+    ; Claim the key and consume the layer together. Never keep Critical enabled
+    ; during sound playback, key waits or the command itself.
+    previous_critical := A_IsCritical
+    Critical "On"
+    try {
+        if pause_command_keys_down.Has(command_key)
+            || (one_shot && !pause_layer_armed)
+            return
+
+        pause_command_keys_down[command_key] := true
+        DisarmPauseLayer()
+    }
+    finally {
+        Critical previous_critical
+    }
+
+    try {
+        switch command_key {
+            case "h": ShowHelp()
+            case "s": SendText "ß"
+            case "-": SendText "–"
+            case "'": SendText "’"
+            case "n": SendText "&nbsp;"
+            case "t": SendText FormatTime(, "yyyyMMdd-HHmmss")
+            case "Pause": WakeSpeaker()
+            case "Escape":
+                ; Finish the physical shortcut before sleeping, so a held key
+                ; cannot keep retriggering the command immediately after resume.
+                KeyWait "Escape"
+                KeyWait "Pause"
+                SleepComputer()
+        }
+    }
+    catch as failure {
+        TrayTip failure.Message, "Pause Command Mode", 2
+    }
+    finally {
+        try KeyWait command_key
+        finally pause_command_keys_down.Delete(command_key)
+        ; Do not disarm here: a new Pause tap may have armed a fresh command
+        ; while this key was still held.
+    }
+}
+
+; =============================================================================
+; arming, indicators and companion messages
+; =============================================================================
 
 ArmPauseLayer() {
     global pause_layer_armed, pause_layer_arm_window_ms
     global caps_layer_disarm_message
 
-    ; Only one one-shot command layer should remain armed at a time.
-    PostRegisteredCommand(caps_layer_disarm_message)
+    previous_critical := A_IsCritical
+    Critical "On"
+    try {
+        ; Only one one-shot command layer should remain armed at a time.
+        PostRegisteredCommand(caps_layer_disarm_message)
+        pause_layer_armed := true
 
-    pause_layer_armed := true
-
-    ShowPauseLayerTip()
-
-    ; Refresh the one-shot timeout on every tap.
-    SetTimer DisarmPauseLayer, 0
-    SetTimer DisarmPauseLayer, -pause_layer_arm_window_ms
+        ; Set the safety timeout before touching optional UI. Updating this
+        ; one-shot timer also restarts its countdown; no second reset is needed.
+        SetTimer DisarmPauseLayer, -pause_layer_arm_window_ms
+        try ShowPauseLayerTip()
+    }
+    finally {
+        Critical previous_critical
+    }
 }
 
 DisarmPauseLayer() {
     global pause_layer_armed
 
-    pause_layer_armed := false
-    SetTimer DisarmPauseLayer, 0
-    HidePauseLayerTip()
+    previous_critical := A_IsCritical
+    Critical "On"
+    try {
+        pause_layer_armed := false
+        SetTimer DisarmPauseLayer, 0
+        try HidePauseLayerTip()
+    }
+    finally {
+        Critical previous_critical
+    }
 }
 
 HandlePauseLayerDisarm(*) {
@@ -250,50 +197,51 @@ ActiveWindowBlocksLayerTip() {
     if !active_hwnd
         return false
 
-    ; Suppress the mode indicator in maximized windows.
-    if WinGetMinMax("ahk_id " active_hwnd) = 1
-        return true
-
-    try WinGetPos(
-        &window_x,
-        &window_y,
-        &window_width,
-        &window_height,
-        "ahk_id " active_hwnd
-    )
-    catch
-        return false
-
-    window_right := window_x + window_width
-    window_bottom := window_y + window_height
-    tolerance_px := 2
-
-    ; Borderless fullscreen windows normally cover one monitor exactly.
-    loop MonitorGetCount()
-    {
-        MonitorGet(
-            A_Index,
-            &monitor_left,
-            &monitor_top,
-            &monitor_right,
-            &monitor_bottom
-        )
-
-        if Abs(window_x - monitor_left) <= tolerance_px
-            && Abs(window_y - monitor_top) <= tolerance_px
-            && Abs(window_right - monitor_right) <= tolerance_px
-            && Abs(window_bottom - monitor_bottom) <= tolerance_px
-        {
+    previous_dpi_context := 0
+    try {
+        ; The foreground window can close between these calls.
+        if WinGetMinMax("ahk_id " active_hwnd) = 1
             return true
-        }
-    }
 
-    return false
+        ; Compare physical rectangles on mixed-DPI desktops. Only the window's
+        ; nearest monitor can be an exact fullscreen match; do not scan them all.
+        previous_dpi_context := DllCall("SetThreadDpiAwarenessContext", "ptr", -4, "ptr")
+        window_rect := Buffer(16, 0)
+        if !DllCall("GetWindowRect", "ptr", active_hwnd, "ptr", window_rect, "int")
+            return false
+
+        monitor := DllCall("MonitorFromWindow", "ptr", active_hwnd, "uint", 2, "ptr")
+        monitor_info := Buffer(40, 0)
+        NumPut("uint", monitor_info.Size, monitor_info)
+        if !DllCall("GetMonitorInfoW", "ptr", monitor, "ptr", monitor_info, "int")
+            return false
+
+        tolerance_px := 2
+        return Abs(NumGet(window_rect, 0, "int") - NumGet(monitor_info, 4, "int")) <= tolerance_px
+            && Abs(NumGet(window_rect, 4, "int") - NumGet(monitor_info, 8, "int")) <= tolerance_px
+            && Abs(NumGet(window_rect, 8, "int") - NumGet(monitor_info, 12, "int")) <= tolerance_px
+            && Abs(NumGet(window_rect, 12, "int") - NumGet(monitor_info, 16, "int")) <= tolerance_px
+    }
+    catch {
+        return false
+    }
+    finally {
+        if previous_dpi_context
+            DllCall("SetThreadDpiAwarenessContext", "ptr", previous_dpi_context, "ptr")
+    }
+}
+
+RegisterCommandMessage(message_name) {
+    message_id := DllCall("RegisterWindowMessageW", "str", message_name, "uint")
+    if !message_id
+        throw OSError(A_LastError, "RegisterWindowMessageW", message_name)
+    return message_id
 }
 
 PostRegisteredCommand(message_id) {
-    DllCall(
-        "PostMessage",
+    ; Best effort: the companion script does not have to be running.
+    return DllCall(
+        "PostMessageW",
         "ptr", 0xFFFF, ; HWND_BROADCAST
         "uint", message_id,
         "uptr", 0,
@@ -302,20 +250,26 @@ PostRegisteredCommand(message_id) {
     )
 }
 
+; =============================================================================
+; sleep, resume and temporary speaker volume
+; =============================================================================
+
 SleepComputer() {
-    ; false = sleep rather than hibernate; keep wake events enabled.
-    DllCall(
-        "PowrProf\SetSuspendState",
-        "Int", 0,
-        "Int", 0,
-        "Int", 0
-    )
+    DisarmPauseLayer()
+    RestoreSpeakerVolume()
+
+    ; BOOLEAN is one byte. Keep wake events enabled and report rejected requests.
+    if !DllCall("PowrProf\SetSuspendState", "uchar", 0, "uchar", 0, "uchar", 0, "uchar")
+        throw OSError(A_LastError, "SetSuspendState", "Windows could not enter sleep.")
 }
 
 HandlePowerBroadcast(w_param, *) {
-    ; PBT_APMRESUMEAUTOMATIC is sent after every system resume.
-    if w_param = 0x12
+    if w_param = 0x4 ; PBT_APMSUSPEND
+        DisarmPauseLayer()
+    else if w_param = 0x12 { ; PBT_APMRESUMEAUTOMATIC
+        DisarmPauseLayer()
         SetTimer ReloadAfterResume, -500
+    }
 }
 
 ReloadAfterResume() {
@@ -323,27 +277,74 @@ ReloadAfterResume() {
 }
 
 WakeSpeaker() {
-    global speaker_wake_file
+    global speaker_wake_file, speaker_volume_restore
 
     if !FileExist(speaker_wake_file)
-        return
+        throw Error("The speaker wake sound was not found:`n" speaker_wake_file)
 
-    original_volume := SoundGetVolume()
-    wake_volume := 16
+    ; Bind volume restoration to this endpoint, not whichever device happens
+    ; to become the default during playback. ComValue releases the interface.
+    endpoint_pointer := SoundGetInterface("{5CDF2C82-841E-4546-9722-0CF74078229A}")
+    if !endpoint_pointer
+        throw Error("The playback device does not expose endpoint volume control.")
+    endpoint := ComValue(13, endpoint_pointer) ; IAudioEndpointVolume
+    ComCall 9, endpoint, "float*", &original_volume := 0 ; GetMasterVolumeLevelScalar
+    wake_volume := 0.16
 
     try {
-        ; briefly raise quiet systems enough for the wake sound to matter.
         if original_volume < wake_volume {
-            SoundSetVolume wake_volume
+            ; Keep the boost and its cleanup record together. In particular, a
+            ; sleep hotkey must not restore halfway through publishing this state.
+            previous_critical := A_IsCritical
+            Critical "On"
+            try {
+                ; Publish first so Reload/Exit can undo an interrupted boost.
+                speaker_volume_restore := {
+                    endpoint: endpoint,
+                    original_volume: original_volume,
+                    boosted_volume: wake_volume
+                }
+                ComCall 7, endpoint, "float", wake_volume, "ptr", 0 ; SetMasterVolumeLevelScalar
+                ComCall 9, endpoint, "float*", &applied_volume := 0
+                speaker_volume_restore.boosted_volume := applied_volume
+            }
+            finally {
+                Critical previous_critical
+            }
             Sleep 100
         }
 
         SoundPlay speaker_wake_file, true
     }
     finally {
-        SoundSetVolume original_volume
+        RestoreSpeakerVolume()
     }
 }
+
+RestoreSpeakerVolume() {
+    global speaker_volume_restore
+
+    restoration := speaker_volume_restore
+    if !restoration
+        return
+
+    ComCall 9, restoration.endpoint, "float*", &current_volume := 0
+    ; Leave a different user-selected level alone; restore only our own boost.
+    if Abs(current_volume - restoration.boosted_volume) < 0.0001
+        ComCall 7, restoration.endpoint, "float", restoration.original_volume, "ptr", 0
+
+    ; Forget the cleanup record only after the endpoint check/restoration succeeds.
+    speaker_volume_restore := 0
+}
+
+CleanupPauseMode(*) {
+    DisarmPauseLayer()
+    try RestoreSpeakerVolume()
+}
+
+; =============================================================================
+; help and startup
+; =============================================================================
 
 ShowHelp(*) {
     static help_gui := 0
@@ -359,25 +360,26 @@ ShowHelp(*) {
 
     help_text :=
     (
-    "Pause + H          Toggle this help`n"
+    "Pause + H            Toggle this help`n"
     "`n"
     "HINTS`n"
-    "Hold Pause + key   Run a command normally`n"
+    "Hold Pause + key     Run a command normally`n"
     "Tap Pause, then key  One-shot command for 1.4 seconds`n"
     "`n"
     "TEXT`n"
-    "Pause + S          Insert ß`n"
-    "Pause + -          Insert –`n"
-    "Pause + '          Insert ’`n"
-    "Pause + N          Insert &nbsp;`n"
+    "Pause + S            Insert ß`n"
+    "Pause + -            Insert –`n"
+    "Pause + '            Insert ’`n"
+    "Pause + N            Insert &nbsp;`n"
     "`n"
     "UTILITIES`n"
-    "Pause + T          Insert timestamp`n"
-    "Pause, then Pause  Wake speakers`n"
-    "Pause + Esc        Sleep PC"
+    "Pause + T            Insert timestamp`n"
+    "Pause, then Pause    Wake speakers`n"
+    "Pause + Esc          Sleep PC after releasing the keys"
     )
 
-    help_gui.AddText("w510", help_text)
+    ; SS_NOPREFIX keeps the ampersand in &nbsp; visible instead of a mnemonic.
+    help_gui.AddText("w510 +0x80", help_text)
 
     help_gui.OnEvent("Close", CloseHelp)
     help_gui.OnEvent("Escape", CloseHelp)
