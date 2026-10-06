@@ -38,10 +38,10 @@ $#PgDn::PlaceCornerTile("bottom-right")
 +#Enter::SwapWindow("counter-clockwise")
 
 ; Standalone spatial focus and Steam cycling.
-$^#Left::FocusNearestWindow("left")
-$^#Right::FocusNearestWindow("right")
-$^#Up::FocusNearestWindow("up")
-$^#Down::FocusNearestWindow("down")
+$^!Left::FocusNearestWindow("left")
+$^!Right::FocusNearestWindow("right")
+$^!Up::FocusNearestWindow("up")
+$^!Down::FocusNearestWindow("down")
 +#g::CycleSteamGames()
 
 ; =============================================================================
