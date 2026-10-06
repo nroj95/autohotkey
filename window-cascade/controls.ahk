@@ -33,6 +33,68 @@
 ~*Escape::CancelCascadeWindowDrop()
 #HotIf
 
+; Some preview/quick-look tools reuse an existing managed HWND instead of
+; creating a new window. Observe plain Space in Explorer as a short-lived user
+; intent; the first managed re-show must still pass identity and foreground checks.
+#HotIf IsExplorerSpaceReshowIntentContext()
+~*Space::CaptureExplorerSpaceReshowIntent()
+#HotIf
+
+IsExplorerSpaceReshowIntentContext()
+{
+    if !IsCascadeEnabled()
+        return false
+
+    hwnd := WinExist("A")
+    if !hwnd || IsShellSurfaceWindow(hwnd)
+        return false
+
+    try return WinGetProcessName("ahk_id " hwnd) = "explorer.exe"
+    catch
+        return false
+}
+
+CaptureExplorerSpaceReshowIntent()
+{
+    global explorer_space_reshow_hint
+    global debug_enabled, debug_verbose_enabled
+
+    ; Modifier/Caps chords belong to Explorer, another app, or CapsLock Layer.
+    ; Only the native plain-Space action may become a re-show intent.
+    for modifier in ["CapsLock", "Shift", "Ctrl", "Alt", "LWin", "RWin"] {
+        if GetKeyState(modifier, "P")
+            return
+    }
+
+    source_hwnd := WinExist("A")
+    if !source_hwnd || !IsExplorerSpaceReshowIntentContext()
+        return
+
+    try source_pid := WinGetPID("ahk_id " source_hwnd)
+    catch
+        return
+
+    monitor := GetMonitorForWindow(source_hwnd)
+    if !monitor
+        return
+
+    explorer_space_reshow_hint := {
+        tick: A_TickCount,
+        source_hwnd: source_hwnd,
+        source_pid: source_pid,
+        monitor: monitor,
+        monitor_device: GetCascadeMonitorDevice(monitor)
+    }
+
+    if debug_enabled && debug_verbose_enabled {
+        DebugLog(
+            "Explorer Space re-show intent captured."
+            . " | monitor=" monitor
+            . " | source=" DebugDescribeWindow(source_hwnd)
+        )
+    }
+}
+
 
 ; =============================================================================
 ; required CapsLock Layer dependency

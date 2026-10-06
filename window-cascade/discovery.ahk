@@ -75,6 +75,7 @@ QueueWindowPlacement(hwnd, source_hwnd)
     catch
         return
     request := {pid: pid, focus: CaptureNewWindowFocusContext(hwnd)}
+    ConsumeExplorerSpaceIntentForNewWindow(hwnd, source_hwnd, pid)
     pending_windows[hwnd] := request
 
     ; Snapshot once here. Readiness retries and settling reuse this monitor
@@ -109,23 +110,88 @@ QueueWindowPlacement(hwnd, source_hwnd)
     )
 }
 
-TryQueueHandledWindowReshow(hwnd)
+ConsumeExplorerSpaceIntentForNewWindow(hwnd, source_hwnd, target_pid)
 {
-    global handled_windows, cascade_launch_hint
-    global handled_reshow_hint_max_age_ms, placement_delay_ms
+    global explorer_space_reshow_hint, handled_reshow_hint_max_age_ms
+    global debug_enabled, debug_verbose_enabled
+
+    if !IsObject(explorer_space_reshow_hint) || !hwnd || !source_hwnd
+        return false
+
+    hint := explorer_space_reshow_hint
+    if hint.HasOwnProp("reshow_hwnd")
+        return false
+
+    hint_age := (A_TickCount - hint.tick) & 0xFFFFFFFF
+    if hint_age > handled_reshow_hint_max_age_ms
+        return false
+
+    try {
+        if source_hwnd != hint.source_hwnd
+            || !WinExist("ahk_id " source_hwnd)
+            || WinGetPID("ahk_id " source_hwnd) != hint.source_pid
+            || WinGetProcessName("ahk_id " source_hwnd) != "explorer.exe"
+            || target_pid = hint.source_pid
+            return false
+    }
+    catch {
+        return false
+    }
+
+    explorer_space_reshow_hint := 0
+    if debug_enabled && debug_verbose_enabled {
+        DebugLog(
+            "Explorer Space re-show intent consumed by new window."
+            . " | target=" DebugDescribeWindow(hwnd)
+        )
+    }
+    return true
+}
+
+GetHandledWindowReshowIntent(hwnd, trigger := "show")
+{
+    global cascade_launch_hint, explorer_space_reshow_hint
+    global handled_reshow_hint_max_age_ms
     global current_foreground_hwnd, previous_foreground_hwnd
 
-    if !handled_windows.Has(hwnd) || !IsObject(cascade_launch_hint)
-        return false
+    if trigger != "show" && trigger != "foreground"
+        return 0
 
-    source_monitor := GetManagedCascadeMonitor(hwnd)
-    if !source_monitor
-        return false
+    ; Plain Space in Explorer is a generic re-show intent, not an app allow-list.
+    ; Bind it to the first other-process managed HWND that re-shows, then require
+    ; that target to own foreground when the delayed reconciliation runs.
+    if IsObject(explorer_space_reshow_hint) {
+        hint := explorer_space_reshow_hint
+        hint_age := (A_TickCount - hint.tick) & 0xFFFFFFFF
+        if hint_age <= handled_reshow_hint_max_age_ms {
+            try {
+                source_hwnd := hint.source_hwnd
+                if source_hwnd
+                    && hwnd != source_hwnd
+                    && WinExist("ahk_id " source_hwnd)
+                    && WinGetPID("ahk_id " source_hwnd) = hint.source_pid
+                    && WinGetProcessName("ahk_id " source_hwnd) = "explorer.exe"
+                    && WinGetPID("ahk_id " hwnd) != hint.source_pid
+                {
+                    if !hint.HasOwnProp("reshow_hwnd") || hint.reshow_hwnd = hwnd
+                        return {kind: "explorer-space", trigger: trigger, hint: hint}
+                }
+            }
+            catch {
+                ; Identity or process queries failing simply invalidate the hint.
+            }
+        }
+    }
+
+    ; Taskbar intent remains SHOW-only. A foreground event by itself is too broad
+    ; for taskbar clicks because ordinary focus changes can follow them.
+    if trigger != "show" || !IsObject(cascade_launch_hint)
+        return 0
 
     hint := cascade_launch_hint
     hint_age := (A_TickCount - hint.tick) & 0xFFFFFFFF
     if hint_age > handled_reshow_hint_max_age_ms
-        return false
+        return 0
 
     ; SHOW and FOREGROUND can arrive in either order. Require the current native
     ; foreground or one side of our foreground handoff to still be a taskbar.
@@ -133,8 +199,53 @@ TryQueueHandledWindowReshow(hwnd)
     if !IsTaskbarSurfaceWindow(native_foreground)
         && !IsTaskbarSurfaceWindow(current_foreground_hwnd)
         && !IsTaskbarSurfaceWindow(previous_foreground_hwnd)
+        return 0
+
+    return {kind: "taskbar", trigger: trigger, hint: hint}
+}
+
+IsCurrentHandledWindowReshowIntent(kind, hint)
+{
+    global cascade_launch_hint, explorer_space_reshow_hint
+
+    if kind = "taskbar"
+        return IsObject(cascade_launch_hint) && cascade_launch_hint = hint
+    if kind = "explorer-space"
+        return IsObject(explorer_space_reshow_hint) && explorer_space_reshow_hint = hint
+    return false
+}
+
+ConsumeHandledWindowReshowIntent(kind, hint)
+{
+    global cascade_launch_hint, explorer_space_reshow_hint
+
+    if kind = "taskbar" {
+        if IsObject(cascade_launch_hint) && cascade_launch_hint = hint
+            cascade_launch_hint := 0
+        return
+    }
+
+    if kind = "explorer-space"
+        && IsObject(explorer_space_reshow_hint) && explorer_space_reshow_hint = hint
+        explorer_space_reshow_hint := 0
+}
+
+TryQueueHandledWindowReshow(hwnd, trigger := "show")
+{
+    global handled_windows, placement_delay_ms
+
+    if !handled_windows.Has(hwnd)
         return false
 
+    source_monitor := GetManagedCascadeMonitor(hwnd)
+    if !source_monitor
+        return false
+
+    intent := GetHandledWindowReshowIntent(hwnd, trigger)
+    if !IsObject(intent)
+        return false
+
+    hint := intent.hint
     target_monitor := 0
     monitor_device := ""
     try target_monitor := hint.monitor
@@ -147,20 +258,15 @@ TryQueueHandledWindowReshow(hwnd)
     if !target_monitor
         return false
 
-    ; A taskbar click on the window's existing monitor consumes the hint but
-    ; preserves its current slot and avoids an unnecessary re-slot.
-    if target_monitor = source_monitor {
-        if cascade_launch_hint = hint
-            cascade_launch_hint := 0
-        return true
-    }
-
     try pid := WinGetPID(hwnd)
     catch
         return false
 
-    if hint.HasOwnProp("reshow_hwnd") && hint.reshow_hwnd = hwnd
-        return true
+    if hint.HasOwnProp("reshow_hwnd") {
+        if hint.reshow_hwnd = hwnd
+            return true
+        return false
+    }
     hint.reshow_hwnd := hwnd
 
     request := {
@@ -169,11 +275,14 @@ TryQueueHandledWindowReshow(hwnd)
         source_monitor: source_monitor,
         target_monitor: target_monitor,
         monitor_device: monitor_device,
+        intent_kind: intent.kind,
+        trigger: intent.trigger,
         hint: hint
     }
 
     DebugLog(
-        "Handled window taskbar re-show queued."
+        "Handled window " intent.kind " re-show queued."
+        . " | trigger=" intent.trigger
         . " | from-monitor=" source_monitor
         . " | target-monitor=" target_monitor
         . " | target=" DebugDescribeWindow(hwnd)
@@ -186,14 +295,32 @@ TryQueueHandledWindowReshow(hwnd)
     return true
 }
 
+HandledWindowReshowMatchesRememberedPlacement(hwnd, placement)
+{
+    global placement_stabilize_tolerance
+
+    if !IsObject(placement) || GetMonitorForWindow(hwnd) != placement.monitor
+        return false
+
+    if !GetVisibleWindowBounds(hwnd, &x, &y, &width, &height)
+        return false
+
+    return (
+        Abs(x - placement.x) <= placement_stabilize_tolerance
+        && Abs(y - placement.y) <= placement_stabilize_tolerance
+        && Abs(width - placement.width) <= placement_stabilize_tolerance
+        && Abs(height - placement.height) <= placement_stabilize_tolerance
+    )
+}
+
+
 PlaceHandledWindowReshow(request)
 {
-    global cascade_launch_hint, handled_windows
+    global handled_windows
 
     try {
         if !IsCascadeEnabled()
-            || !IsObject(cascade_launch_hint)
-            || cascade_launch_hint != request.hint
+            || !IsCurrentHandledWindowReshowIntent(request.intent_kind, request.hint)
             return
 
         hwnd := request.hwnd
@@ -206,42 +333,105 @@ PlaceHandledWindowReshow(request)
         if !source_monitor
             return
 
+        ; Explorer Space can mean many native actions. The short-lived hint only
+        ; becomes authoritative when the re-shown managed window actually wins focus.
+        if request.intent_kind = "explorer-space"
+            && DllCall("GetForegroundWindow", "ptr") != hwnd
+        {
+            DebugLog(
+                "Handled window explorer-space re-show skipped."
+                . " | reason=target-not-foreground"
+                . " | target=" DebugDescribeWindow(hwnd)
+            )
+            return
+        }
+
         target_monitor := request.target_monitor
         if request.monitor_device != "" {
             resolved_monitor := FindCascadeMonitorDevice(request.monitor_device)
             if resolved_monitor
                 target_monitor := resolved_monitor
         }
-        if !target_monitor || target_monitor = source_monitor
+        if !target_monitor
             return
 
+        same_monitor := target_monitor = source_monitor
+        mode := same_monitor ? "restore-slot" : "move-monitor"
+        requested_position := 0
+        preserve_membership_order := false
+
+        ; A trusted re-show may repair placement, but it is not permission to
+        ; undo an application/user maximize or minimize state.
+        if WinGetMinMax(hwnd) != 0 {
+            DebugLog(
+                "Handled window " request.intent_kind " re-show placement skipped."
+                . " | mode=" mode
+                . " | reason=non-normal-state"
+                . " | target=" DebugDescribeWindow(hwnd)
+            )
+            return
+        }
+
+        if same_monitor {
+            remembered := GetRememberedCascadePlacement(hwnd, target_monitor)
+            if !IsObject(remembered) {
+                DebugLog(
+                    "Handled window " request.intent_kind " re-show placement skipped."
+                    . " | mode=" mode
+                    . " | reason=no-remembered-slot"
+                    . " | target=" DebugDescribeWindow(hwnd)
+                )
+                return
+            }
+            if HandledWindowReshowMatchesRememberedPlacement(hwnd, remembered) {
+                DebugLog(
+                    "Handled window " request.intent_kind " re-show placement skipped."
+                    . " | mode=" mode
+                    . " | reason=already-matched"
+                    . " | target=" DebugDescribeWindow(hwnd)
+                )
+                return
+            }
+            requested_position := [remembered.x, remembered.y]
+            preserve_membership_order := true
+        }
+
         DebugLog(
-            "Handled window taskbar re-show placement begin."
+            "Handled window " request.intent_kind " re-show placement begin."
+            . " | mode=" mode
             . " | from-monitor=" source_monitor
             . " | target-monitor=" target_monitor
             . " | target=" DebugDescribeWindow(hwnd)
         )
 
-        if PlaceCascadeWindowOnMonitor(hwnd, target_monitor) {
+        placed := PlaceCascadeWindowOnMonitor(
+            hwnd,
+            target_monitor,
+            requested_position,
+            preserve_membership_order
+        )
+
+        if placed {
             DebugLog(
-                "Handled window taskbar re-show placement complete."
+                "Handled window " request.intent_kind " re-show placement complete."
+                . " | mode=" mode
                 . " | monitor=" target_monitor
                 . " | " DebugDescribeWindow(hwnd)
             )
         } else {
             DebugLog(
-                "Handled window taskbar re-show placement skipped."
+                "Handled window " request.intent_kind " re-show placement skipped."
+                . " | mode=" mode
                 . " | target-monitor=" target_monitor
                 . " | " DebugDescribeWindow(hwnd)
             )
         }
     }
     catch Error as err {
-        DebugError("Handled window taskbar re-show", err)
+        DebugError("Handled window re-show", err)
     }
     finally {
-        if IsObject(cascade_launch_hint) && cascade_launch_hint = request.hint
-            cascade_launch_hint := 0
+        ConsumeHandledWindowReshowIntent(request.intent_kind, request.hint)
     }
 }
 
@@ -539,6 +729,12 @@ HandleWinEvent(
                 }
             }
 
+            ; Some reusable managed windows become foreground without emitting a
+            ; SHOW event. Only intent sources that explicitly allow foreground may
+            ; bind here; taskbar intent remains SHOW-only.
+            if handled_windows.Has(hwnd)
+                TryQueueHandledWindowReshow(hwnd, "foreground")
+
             QueueFocusCornerUpdate()
             TryQueueForegroundFallback(hwnd)
             return
@@ -615,9 +811,9 @@ HandleWinEvent(
             )
         }
 
-        ; An already-managed tray app can re-show the same HWND rather than
-        ; create a new one. Only a fresh taskbar hint may retarget that window.
-        if handled_windows.Has(hwnd) && TryQueueHandledWindowReshow(hwnd)
+        ; Some already-managed apps re-show the same HWND rather than creating
+        ; a new one. Only a narrowly captured, recent user intent may retarget it.
+        if handled_windows.Has(hwnd) && TryQueueHandledWindowReshow(hwnd, "show")
             return
 
         ; EVENT_OBJECT_SHOW also fires when some existing minimized windows are

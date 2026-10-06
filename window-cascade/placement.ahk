@@ -5,7 +5,12 @@
 ; explicit placement on a monitor
 ; =============================================================================
 
-PlaceCascadeWindowOnMonitor(hwnd, target_monitor, requested_position := 0)
+PlaceCascadeWindowOnMonitor(
+    hwnd,
+    target_monitor,
+    requested_position := 0,
+    preserve_existing_membership_order := false
+)
 {
     if !IsCascadeEnabled() || IsCascadeDisplayTransition()
         return false
@@ -110,7 +115,13 @@ PlaceCascadeWindowOnMonitor(hwnd, target_monitor, requested_position := 0)
             || IsCascadeDisplayTransition()
             || !placement_reservations.Has(hwnd) || placement_reservations[hwnd] != owned_reservation
             return false
-        RemoveCascadeWindowFromHistory(hwnd)
+        ; Same-monitor reconciliation may need to repair geometry without turning
+        ; the re-shown window into the newest history member. Cross-monitor moves,
+        ; drops and explicit re-slotting keep their existing remove/re-record behavior.
+        preserve_membership := preserve_existing_membership_order
+            && previous_monitor = target_monitor
+        if !preserve_membership
+            RemoveCascadeWindowFromHistory(hwnd)
         handled_windows[hwnd] := true
         known_windows[hwnd] := true
         if pending_windows.Has(hwnd)

@@ -21,9 +21,9 @@ cascade_slot_tolerance := 56
 
 placement_delay_ms := 20
 
-; Existing managed windows may be shown again by an already-running tray app.
-; Keep this much shorter than the ordinary launch-focus hint so unrelated later
-; taskbar activity cannot retarget an old managed window.
+; Existing managed windows may re-show the same HWND from a recent trusted
+; user action. Keep this much shorter than ordinary launch focus so unrelated
+; later activity cannot retarget an old managed window.
 handled_reshow_hint_max_age_ms := 1000
 
 ; Recent taskbar hints and ordinary focus requests use this timeout.
@@ -168,6 +168,7 @@ caps_layer_dependency_lost := false
 
 pending_windows := Map()
 cascade_launch_hint := 0
+explorer_space_reshow_hint := 0
 new_window_focus_request := 0
 handled_windows := Map()
 placement_reservations := Map()
@@ -180,7 +181,7 @@ known_windows := Map()
 missed_window_poll_ms := 1000
 cascade_history := Map()
 ; A display snapshot is refreshed by notifications and the existing slow fallback.
-; Logical slots survive a live DPI/work-area change; they are not reload persistence.
+; Logical slots survive transient geometry/display changes; they are not reload persistence.
 cascade_displays := Map()
 cascade_dpi_probes := Map()
 cascade_display_signature := ""

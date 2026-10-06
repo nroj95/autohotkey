@@ -193,6 +193,7 @@ StopCascadeActivity()
     global cascade_restore_batches, cascade_close_batches, cascade_compaction_timer_pending
     global focus_corner_update_pending, focus_corner_overlays, focus_tab_click_generation
     global cascade_mouse_press, desktop_monitor_hint, desktop_monitor_hint_tick
+    global explorer_space_reshow_hint
 
     CancelNewWindowFocus()
     CancelPendingAdoptionUndo()
@@ -202,6 +203,7 @@ StopCascadeActivity()
     cascade_mouse_press := 0
     desktop_monitor_hint := 0
     desktop_monitor_hint_tick := 0
+    explorer_space_reshow_hint := 0
 
     for callback in [WatchForMissedWindows, UpdateFocusCornerOverlays,
         RunQueuedFocusCornerUpdate, WatchCascadeWindowRestores,
