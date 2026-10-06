@@ -18,7 +18,7 @@ a top-edge scratch drawer for temporary notes and code, using Notepad3 as the ed
 - pages are plain files in `D:\toolbox\scratch\`
 - autosaves while visible and performs stricter checked saves before hiding, switching, reloading, or exiting
 - remembers the current page, caret, selection, and scroll position
-- supports quick page creation and keyboard page navigation
+- supports quick page creation, deletion, and keyboard page navigation
 - tracks native **Save As** renames inside the scratch folder
 - protects the active page from accidental external deletion or replacement
 - stays topmost while visible so the drawer remains available over other applications
@@ -36,6 +36,7 @@ Scratchpad uses its own Notepad3 configuration, separate from your normal Notepa
 | `Escape` | hide Scratchpad |
 | `Ctrl+N` | create a new page |
 | `Ctrl+S` | save the current page |
+| `Win+F4` | delete the current page to the Recycle Bin |
 | `Win+Left` / `Win+PgDn` | previous page |
 | `Win+Right` / `Win+PgUp` | next page |
 
