@@ -89,6 +89,11 @@ $^s::
     scratchpad.QueueCommand("save")
     KeyWait "s"
 }
+$#F4::
+{
+    scratchpad.QueueCommand("delete")
+    KeyWait "F4"
+}
 $#Left::
 {
     scratchpad.QueueCommand("previous")
@@ -557,6 +562,11 @@ class ScratchpadController
         if request.name = "save" {
             if this.HasWindow()
                 this.SaveCurrentPage()
+            return
+        }
+        if request.name = "delete" {
+            if this.HasWindow()
+                this.DeleteCurrentPage()
             return
         }
         if request.name = "resize" {
@@ -1262,6 +1272,53 @@ class ScratchpadController
         else
             this.RestorePageView(next_path)
         this.FocusEditor()
+    }
+
+    DeleteCurrentPage()
+    {
+        path := this.CheckCurrentPage()
+        pages := this.ListPages()
+        current_index := 0
+
+        for index, candidate in pages {
+            if candidate = path {
+                current_index := index
+                break
+            }
+        }
+
+        if !current_index
+            throw Error("The current scratch page could not be found in the page list.")
+
+        ; Save and leave the page before recycling it. ProtectPage() acquires the
+        ; replacement page's lock before releasing this page's delete-denying lock.
+        if pages.Length = 1 {
+            this.SwitchPage("", true)
+        } else {
+            next_index := current_index < pages.Length
+                ? current_index + 1
+                : current_index - 1
+
+            this.SwitchPage(pages[next_index])
+        }
+
+        try {
+            FileRecycle path
+        }
+        catch as failure {
+            ; The page is still intact if recycling failed. Return to it so the
+            ; delete command can be retried instead of leaving it behind unnoticed.
+            try this.SwitchPage(path)
+
+            throw Error(
+                "The scratch page could not be moved to the Recycle Bin:`n"
+                    . path "`n`n"
+                    . failure.Message
+            )
+        }
+
+        if this.page_views.Has(path)
+            this.page_views.Delete(path)
     }
 
     RememberPageView(path)
@@ -2007,6 +2064,7 @@ class ScratchpadController
         "INSIDE THE EDITOR`n"
         "Escape                  Hide scratchpad`n"
         "Ctrl + N / Ctrl + S     New page / save page`n"
+        "Win + F4                Delete page to Recycle Bin`n"
         "Win + Left / PgDn       Previous page`n"
         "Win + Right / PgUp      Next page`n"
         "`n"
