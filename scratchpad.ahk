@@ -189,7 +189,6 @@ class ScratchpadController
         ]
         this.toggle_hotkey_menu := 0
         this.custom_hotkey_gui := 0
-        this.window_size_menu := 0
         this.window_width_menu := 0
         this.window_height_menu := 0
         this.window_width_presets := [35, 45, 55, 65, 75]
@@ -1762,10 +1761,8 @@ class ScratchpadController
             )
         }
 
-        this.window_size_menu := Menu()
-        this.window_size_menu.Add("Width", this.window_width_menu)
-        this.window_size_menu.Add("Height", this.window_height_menu)
-        A_TrayMenu.Add("Window size", this.window_size_menu)
+        A_TrayMenu.Add("Window width", this.window_width_menu)
+        A_TrayMenu.Add("Window height", this.window_height_menu)
 
         A_TrayMenu.Add()
         A_TrayMenu.Add("Open scratch folder", (*) => Run('explorer.exe "' this.scratch_directory '"'))
