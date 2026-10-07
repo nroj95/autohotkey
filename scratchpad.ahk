@@ -27,6 +27,7 @@
 ;
 ; settings and implementation boundaries
 ; - controller: %LOCALAPPDATA%\Scratchpad\settings.ini and state.ini.
+; - display defaults to Windows main display; tray selection can pin a display.
 ; - editor: %LOCALAPPDATA%\Scratchpad\Notepad3.ini (separate from normal settings).
 ; - the old Notepad++ executable setting/profile are ignored, not deleted.
 ; - no clipboard swaps, injected keystroke saves, process killing or remote memory.
@@ -194,6 +195,9 @@ class ScratchpadController
         ]
         this.toggle_hotkey_menu := 0
         this.custom_hotkey_gui := 0
+        this.monitor_menu := 0
+        this.monitor_menu_items := Map()
+        this.monitor_menu_items.CaseSense := "Off"
         this.window_width_menu := 0
         this.window_height_menu := 0
         this.window_width_presets := [35, 45, 55, 65, 75]
@@ -221,6 +225,7 @@ class ScratchpadController
         DirCreate this.scratch_directory
         ; Resolve . and .. before enforcing the direct-child page boundary.
         this.scratch_directory := RTrim(ScratchpadFullPath(this.scratch_directory), "\/")
+        this.monitor_target := this.ReadMonitorTarget()
         this.width_percent := this.ReadNumber("Window", "WidthPercent", 45, 30, 100)
         this.height_percent := this.ReadNumber("Window", "HeightPercent", 35, 20, 100)
         this.animation_ms := this.ReadNumber("Window", "AnimationDurationMs", 180, 0, 1000)
@@ -258,7 +263,7 @@ class ScratchpadController
         if !FileExist(this.settings_path) {
             settings := "[Paths]`nScratchDirectory=" default_scratch_directory
                 . "`nNotepad3Executable=`n"
-                . "`n[Window]`nWidthPercent=45`nHeightPercent=35`nAnimationDurationMs=180`n"
+                . "`n[Window]`nMonitor=Primary`nWidthPercent=45`nHeightPercent=35`nAnimationDurationMs=180`n"
                 . "`n[Saving]`nAutosaveIntervalMs=10000`n`n[Controls]`nToggleHotkey=Win+F12`n"
                 . "`n[Setup]`nWelcomePending=1`n"
             FileAppend settings, this.settings_path, "UTF-16"
@@ -275,6 +280,8 @@ class ScratchpadController
             IniDelete this.settings_path, "Paths", "NotepadExecutable"
         if IniRead(this.settings_path, "Paths", "Notepad3Executable", "<missing>") = "<missing>"
             IniWrite "", this.settings_path, "Paths", "Notepad3Executable"
+        if IniRead(this.settings_path, "Window", "Monitor", "<missing>") = "<missing>"
+            IniWrite "Primary", this.settings_path, "Window", "Monitor"
 
         ; Remove retired Z-order settings from existing controller files.
         if IniRead(this.settings_path, "Window", "AlwaysOnTop", "<missing>") != "<missing>"
@@ -299,6 +306,20 @@ class ScratchpadController
         ; Notepad3 owns this UTF-8 INI. Never rewrite its existing preferences.
         if !FileExist(this.editor_profile)
             FileAppend "[Notepad3]`n`n[Settings]`nSettingsVersion=5`n", this.editor_profile, "UTF-8-RAW"
+    }
+
+    ReadMonitorTarget()
+    {
+        target := Trim(IniRead(this.settings_path, "Window", "Monitor", "Primary"))
+        if target = "" || StrLower(target) = "primary"
+            return "Primary"
+
+        ; Explicit display choices are stored by Windows device name so the
+        ; selection remains pinned instead of following whichever display is main.
+        if RegExMatch(target, "i)^\\\\\.\\DISPLAY\d+$")
+            return target
+
+        return "Primary"
     }
 
     ReadNumber(section, key, fallback, minimum, maximum)
@@ -758,7 +779,7 @@ class ScratchpadController
         this.disk_stamp := before_load_stamp
         this.ProtectPage(initial_path)
         this.bridge.PrepareDrawer()
-        this.last_bounds := this.GetBounds(source_window)
+        this.last_bounds := this.GetBounds()
         this.PersistCurrentState()
         if new_page
             this.ConfigureNewPage()
@@ -1369,51 +1390,66 @@ class ScratchpadController
     ; monitor placement, focus and animation
     ; =========================================================================
 
-    GetBounds(source_window)
+    GetBounds()
     {
-        monitor := 0
-        if this.IsDesktopWindow(source_window)
-            monitor := this.GetMonitorUnderMouse()
+        monitor_index := this.ResolveMonitorIndex()
 
-        if !monitor && source_window && DllCall("IsWindow", "ptr", source_window, "int")
-            monitor := DllCall("MonitorFromWindow", "ptr", source_window, "uint", 2, "ptr")
+        try {
+            MonitorGetWorkArea(
+                monitor_index,
+                &left,
+                &top,
+                &right,
+                &bottom
+            )
+        }
+        catch as failure {
+            primary_index := MonitorGetPrimary()
+            if monitor_index = primary_index
+                throw failure
 
-        ; Invalid or missing source windows should follow the pointer rather than
-        ; silently falling back to the primary monitor.
-        if !monitor
-            monitor := this.GetMonitorUnderMouse()
-        if !monitor
-            monitor := DllCall("MonitorFromWindow", "ptr", DllCall("GetDesktopWindow", "ptr"), "uint", 2, "ptr")
+            MonitorGetWorkArea(
+                primary_index,
+                &left,
+                &top,
+                &right,
+                &bottom
+            )
+        }
 
-        monitor_info := Buffer(40, 0)
-        NumPut("uint", 40, monitor_info)
-        if !DllCall("GetMonitorInfoW", "ptr", monitor, "ptr", monitor_info, "int")
-            throw OSError(A_LastError, "GetMonitorInfoW")
-        left := NumGet(monitor_info, 20, "int")
-        top := NumGet(monitor_info, 24, "int")
-        work_width := NumGet(monitor_info, 28, "int") - left
-        work_height := NumGet(monitor_info, 32, "int") - top
+        work_width := right - left
+        work_height := bottom - top
         width := Min(work_width, Max(320, Round(work_width * this.width_percent / 100)))
         height := Min(work_height, Max(180, Round(work_height * this.height_percent / 100)))
-        return {x: left + Round((work_width - width) / 2), y: top, w: width, h: height}
+
+        return {
+            x: left + Round((work_width - width) / 2),
+            y: top,
+            w: width,
+            h: height
+        }
     }
 
-    IsDesktopWindow(hwnd)
+    ResolveMonitorIndex()
     {
-        if !hwnd || !DllCall("IsWindow", "ptr", hwnd, "int")
-            return false
-        try window_class := WinGetClass("ahk_id " hwnd)
+        monitor_count := MonitorGetCount()
+
+        if this.monitor_target != "Primary" {
+            loop monitor_count {
+                try monitor_name := MonitorGetName(A_Index)
+                catch
+                    continue
+
+                if StrLower(monitor_name) = StrLower(this.monitor_target)
+                    return A_Index
+            }
+        }
+
+        ; A disconnected pinned display temporarily falls back to the Windows
+        ; main display without overwriting the saved preference.
+        try return MonitorGetPrimary()
         catch
-            return false
-        return window_class = "Progman" || window_class = "WorkerW"
-    }
-
-    GetMonitorUnderMouse()
-    {
-        point := Buffer(8, 0)
-        if !DllCall("GetCursorPos", "ptr", point, "int")
-            return 0
-        return DllCall("MonitorFromPoint", "int64", NumGet(point, 0, "int64"), "uint", 2, "ptr")
+            return 1
     }
 
     ShowWindow(source_window, animate := true)
@@ -1426,7 +1462,7 @@ class ScratchpadController
             this.previous_window := source_window
             this.last_external_window := source_window
         }
-        this.last_bounds := this.GetBounds(source_window)
+        this.last_bounds := this.GetBounds()
         bounds := this.last_bounds
 
         ; Start with an empty region so restoring a minimized window cannot flash.
@@ -1452,7 +1488,7 @@ class ScratchpadController
             this.ConnectBridge()
         this.SaveCurrentPage()
         was_active := !!WinActive("ahk_id " this.window_hwnd)
-        bounds := this.GetBounds(this.window_hwnd)
+        bounds := this.GetBounds()
         WinGetPos &window_x, &window_y, &window_width, &window_height, "ahk_id " this.window_hwnd
         bounds.x := window_x
         bounds.w := window_width
@@ -1750,7 +1786,7 @@ class ScratchpadController
             previous_dpi := DllCall("SetThreadDpiAwarenessContext", "ptr", -4, "ptr")
             try {
                 DllCall("SetWindowRgn", "ptr", this.window_hwnd, "ptr", 0, "int", true)
-                bounds := this.GetBounds(source_window)
+                bounds := this.GetBounds()
                 if WinGetMinMax("ahk_id " this.window_hwnd) != 0
                     WinRestore "ahk_id " this.window_hwnd
                 WinMove bounds.x, bounds.y, bounds.w, bounds.h, "ahk_id " this.window_hwnd
@@ -1804,6 +1840,10 @@ class ScratchpadController
         this.toggle_hotkey_menu.Add("Disabled", ObjBindMethod(this, "ChooseToggleHotkey", "Disabled"))
         A_TrayMenu.Add("Toggle shortcut", this.toggle_hotkey_menu)
 
+        this.monitor_menu := Menu()
+        this.BuildMonitorMenu()
+        A_TrayMenu.Add("Display", this.monitor_menu)
+
         this.window_width_menu := Menu()
         for percent in this.window_width_presets {
             this.window_width_menu.Add(
@@ -1833,6 +1873,107 @@ class ScratchpadController
         A_TrayMenu.Add("Reload", ObjBindMethod(this, "QueueCommand", "reload"))
         A_TrayMenu.Add("Exit", ObjBindMethod(this, "QueueCommand", "exit"))
         this.UpdateTrayChecks()
+    }
+
+    BuildMonitorMenu()
+    {
+        try this.monitor_menu.Delete()
+        this.monitor_menu_items := Map()
+        this.monitor_menu_items.CaseSense := "Off"
+
+        main_label := "Main display"
+        this.monitor_menu.Add(
+            main_label,
+            ObjBindMethod(this, "SetMonitorTarget", "Primary")
+        )
+        this.monitor_menu_items["Primary"] := main_label
+
+        monitor_count := MonitorGetCount()
+        if monitor_count {
+            this.monitor_menu.Add()
+            primary_index := MonitorGetPrimary()
+
+            loop monitor_count {
+                monitor_index := A_Index
+                try {
+                    monitor_name := MonitorGetName(monitor_index)
+                    ; MonitorGetCount can include displays which are not currently
+                    ; part of the desktop. Only offer displays with a usable work area.
+                    MonitorGetWorkArea(monitor_index)
+                }
+                catch
+                    continue
+
+                label := this.MonitorMenuLabel(monitor_name, monitor_index)
+                if monitor_index = primary_index
+                    label .= " (main)"
+
+                this.monitor_menu.Add(
+                    label,
+                    ObjBindMethod(this, "SetMonitorTarget", monitor_name)
+                )
+                this.monitor_menu_items[monitor_name] := label
+            }
+        }
+
+        ; Keep a disconnected pinned display visible in the menu. Scratchpad
+        ; falls back to the main display until that Windows display returns.
+        if this.monitor_target != "Primary"
+            && !this.monitor_menu_items.Has(this.monitor_target)
+        {
+            this.monitor_menu.Add()
+            unavailable_label := this.MonitorMenuLabel(this.monitor_target)
+                . " (unavailable)"
+            this.monitor_menu.Add(unavailable_label, (*) => 0)
+            this.monitor_menu.Disable(unavailable_label)
+            this.monitor_menu_items[this.monitor_target] := unavailable_label
+        }
+
+        this.UpdateMonitorMenu()
+    }
+
+    MonitorMenuLabel(monitor_name, fallback_index := 0)
+    {
+        if RegExMatch(monitor_name, "i)DISPLAY(\d+)$", &match)
+            return "Display " match[1]
+
+        if fallback_index
+            return "Display " fallback_index
+
+        return monitor_name
+    }
+
+    SetMonitorTarget(target, *)
+    {
+        try IniWrite target, this.settings_path, "Window", "Monitor"
+        catch as failure {
+            MsgBox(
+                failure.Message,
+                "Scratchpad display",
+                "Iconx 4096"
+            )
+            return
+        }
+
+        this.monitor_target := target
+        this.UpdateMonitorMenu()
+        this.QueueCommand("resize")
+    }
+
+    UpdateMonitorMenu()
+    {
+        if !this.monitor_menu
+            return
+
+        for target, item in this.monitor_menu_items
+            try this.monitor_menu.Uncheck(item)
+
+        if this.monitor_menu_items.Has(this.monitor_target) {
+            try this.monitor_menu.Check(this.monitor_menu_items[this.monitor_target])
+        }
+        else if this.monitor_menu_items.Has("Primary") {
+            try this.monitor_menu.Check(this.monitor_menu_items["Primary"])
+        }
     }
 
     SetWindowSizePercent(dimension, percent, *)
@@ -1877,7 +2018,7 @@ class ScratchpadController
         )
 
         try {
-            bounds := this.GetBounds(this.window_hwnd)
+            bounds := this.GetBounds()
 
             WinMove(
                 bounds.x,
@@ -2035,6 +2176,7 @@ class ScratchpadController
     UpdateTrayChecks()
     {
         this.UpdateToggleHotkeyMenu()
+        this.UpdateMonitorMenu()
         this.UpdateWindowSizeMenu()
 
         if FileExist(this.startup_shortcut)
@@ -2081,8 +2223,9 @@ class ScratchpadController
         "Undo history survives hiding, but not switching pages.`n"
         "`n"
         "SETTINGS`n"
-        "Choose common window sizes from Window size in the tray menu.`n"
-        "Use Open settings for exact percentages, scratch folder, Notepad3 path,`n"
+        "Display defaults to the Windows main display; choose a pinned display in the tray.`n"
+        "Choose common window sizes from Window width / Window height in the tray menu.`n"
+        "Use Open settings for exact percentages, display, scratch folder, Notepad3 path,`n"
         "animation, autosave interval, and toggle shortcut.`n"
         "Reload Scratchpad after editing settings.ini directly.`n"
         "`n"
@@ -2140,7 +2283,7 @@ class ScratchpadController
             ; ordinary exits reveal it rather than stranding a hidden document.
             try {
                 DllCall("SetWindowRgn", "ptr", this.window_hwnd, "ptr", 0, "int", true)
-                bounds := this.last_bounds ? this.last_bounds : this.GetBounds(this.window_hwnd)
+                bounds := this.last_bounds ? this.last_bounds : this.GetBounds()
                 WinMove bounds.x, bounds.y, bounds.w, bounds.h, "ahk_id " this.window_hwnd
                 if exit_reason != "Reload" && exit_reason != "Single"
                     && exit_reason != "Shutdown" && exit_reason != "Logoff" {
