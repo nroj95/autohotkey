@@ -527,9 +527,6 @@ RestoreCascadeWindowList(windows)
 
 TrackCascadeWindowRestores(windows)
 {
-    global cascade_paused
-    if cascade_paused
-        return Map()
 
     global cascade_restore_batches, cascade_restore_poll_ms, cascade_membership_generation
 

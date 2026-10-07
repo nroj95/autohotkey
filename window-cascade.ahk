@@ -48,7 +48,7 @@ Persistent
 SetWinDelay 0
 
 A_IconTip := "Window Cascade"
-; Keep the custom icon while our own paused state suspends mouse hotkeys.
+; Keep the custom icon stable across Window Cascade runtime state changes.
 try TraySetIcon(A_ScriptDir "\icons\window-cascade.ico", , true)
 
 ; Use virtual-screen coordinates so multi-monitor mouse positions match MonitorGet().
@@ -81,8 +81,7 @@ StartWindowHooks()
 
 SetTimer(WatchCapsLockLayer, caps_layer_check_ms)
 
-; The hooks retain lightweight lifetime bookkeeping while paused. Work timers
-; are shared with the resume path and start only while the cascade is enabled.
+; Start recurring Cascade activity after the native hooks are installed.
 if IsCascadeEnabled() {
     StartCascadeActivity()
     SetTimer(CheckCompatibilitySettings, -500)

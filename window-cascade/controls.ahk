@@ -342,23 +342,21 @@ DispatchCascadeCommand(command)
     global cascade_command_close_active, cascade_command_close_scope
     global cascade_command_gather_to_monitor, cascade_command_show_help
     global cascade_command_move_monitor_left, cascade_command_move_monitor_right
-    global cascade_command_toggle_pause
-    global cascade_paused, cascade_pause_toggle_in_progress
+    global cascade_command_toggle_auto_placement
+    global cascade_auto_placement_toggle_in_progress
     global cascade_minimize_toggle_in_progress
 
     command_id := command.id
     parameter := command.parameter
 
-    if cascade_pause_toggle_in_progress || cascade_minimize_toggle_in_progress
+    if cascade_auto_placement_toggle_in_progress || cascade_minimize_toggle_in_progress
         return
 
-    ; Pause/resume is the only Cascade command accepted while paused.
-    if command_id = cascade_command_toggle_pause {
-        ToggleCascadePaused()
+    ; Auto-placement pause/resume is a script-level control and never disables existing cascades.
+    if command_id = cascade_command_toggle_auto_placement {
+        ToggleCascadeAutoPlacement()
         return
     }
-    if cascade_paused
-        return
 
     if command_id = cascade_command_toggle_minimize {
         ToggleCascadeMinimize()

@@ -84,7 +84,7 @@ automatically arranges ordinary desktop windows into a cascading layout.
 - supports keyboard focus movement, layer rotation, gathering, closing, and monitor moves
 - preserves minimized windows and handles multi-monitor cascades
 - ignores dialogs, transient prompts, Scratchpad, and other windows that should not become cascade members
-- can minimize/restore managed windows with `Caps + M` and pause/resume cascading with `Caps + P`
+- can minimize/restore managed windows with `Caps + M` and pause/resume automatic new-window cascading with `Caps + P`
 
 Window Cascade runs as its own process and uses `capslock-layer.ahk` for its keyboard command bindings.
 

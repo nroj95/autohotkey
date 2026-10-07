@@ -2,87 +2,87 @@
 ; Included into the same script; functions share the existing global state.
 ;
 ; Caps + M owns only its saved minimize/restore set. Caps + P pauses/resumes
-; cascade activity without changing any window's minimized state.
+; automatic placement of newly opened windows without disabling existing cascades.
 
 ; =============================================================================
-; pause / resume
+; automatic new-window placement pause / resume
 ; =============================================================================
 
 IsCascadeEnabled()
 {
-    global cascade_paused, cascade_pause_toggle_in_progress
-    return !cascade_paused && !cascade_pause_toggle_in_progress
+    ; Auto-placement pause does not disable the managed Cascade runtime.
+    return true
 }
 
-ToggleCascadePaused(*)
+IsCascadeAutoPlacementEnabled()
 {
-    global cascade_paused, cascade_pause_toggle_in_progress
+    global cascade_auto_placement_paused, cascade_auto_placement_toggle_in_progress
+    return !cascade_auto_placement_paused && !cascade_auto_placement_toggle_in_progress
+}
 
-    if cascade_pause_toggle_in_progress
-        return
-    ; Finish native pointer state before removing the mouse-side cascade behavior.
-    if HasCascadeWindowDrag() || HasFocusTabClick() || GetKeyState("LButton", "P")
+ToggleCascadeAutoPlacement(*)
+{
+    global cascade_auto_placement_paused, cascade_auto_placement_toggle_in_progress
+
+    if cascade_auto_placement_toggle_in_progress
         return
 
     previous_critical := Critical("On")
-    cascade_pause_toggle_in_progress := true
+    cascade_auto_placement_toggle_in_progress := true
     toggle_succeeded := false
     try {
-        if cascade_paused
-            ResumeWindowCascade()
+        if cascade_auto_placement_paused
+            ResumeCascadeAutoPlacement()
         else
-            PauseWindowCascade()
+            PauseCascadeAutoPlacement()
         toggle_succeeded := true
     }
     catch Error as err {
-        ; Keep the message receiver alive so Caps + P can retry the resume.
-        cascade_paused := true
-        Suspend(true)
-        StopCascadeActivity()
-        DebugError("Toggle cascade paused state", err)
+        DebugError("Toggle cascade auto placement", err)
     }
     finally {
-        cascade_pause_toggle_in_progress := false
-        if !cascade_paused {
-            Suspend(false)
-            StartCascadeActivity()
-        }
+        cascade_auto_placement_toggle_in_progress := false
         UpdateTrayMenu()
         if toggle_succeeded {
             ShowCascadeStatusTip(
-                cascade_paused ? "cascade paused" : "cascade resumed"
+                cascade_auto_placement_paused
+                ? "auto cascading paused"
+                : "auto cascading resumed"
             )
         }
         Critical(previous_critical)
     }
 }
 
-PauseWindowCascade()
+PauseCascadeAutoPlacement()
 {
-    global cascade_paused, cascade_membership_generation
+    global cascade_auto_placement_paused
 
-    cascade_paused := true
-    cascade_membership_generation += 1
-    Suspend(true)
-    StopCascadeActivity()
-    DebugLog("Cascade paused.")
+    cascade_auto_placement_paused := true
+    DebugLog("Cascade auto placement paused.")
 }
 
-ResumeWindowCascade()
+ResumeCascadeAutoPlacement()
 {
-    global cascade_paused, cascade_membership_generation
-    global current_foreground_hwnd, previous_foreground_hwnd
+    global cascade_auto_placement_paused
 
-    RefreshCascadeDisplays()
-    ; Windows first observed while paused must not look like fresh launches.
-    RememberWindowsOpenedWhilePaused()
-    cascade_paused := false
-    cascade_membership_generation += 1
-    current_foreground_hwnd := WinExist("A")
-    previous_foreground_hwnd := 0
-    DebugLog("Cascade resumed.")
+    ; Snapshot everything that appeared during the pause before reopening
+    ; automatic discovery. Those windows stay unmanaged until explicitly adopted.
+    RememberWindowsOpenedWhileAutoPlacementPaused()
+    cascade_auto_placement_paused := false
+    DebugLog("Cascade auto placement resumed.")
 }
 
+RememberWindowDuringAutoPlacementPause(hwnd)
+{
+    global startup_windows, known_windows
+
+    if !hwnd
+        return
+
+    startup_windows[hwnd] := true
+    known_windows[hwnd] := true
+}
 
 ; =============================================================================
 ; Caps + M minimize / restore
@@ -273,56 +273,8 @@ PruneMinimizedCascadeWindows()
 
 
 ; =============================================================================
-; cancel paused work, then resume only from current membership
+; activity startup and paused-window bookkeeping
 ; =============================================================================
-
-StopCascadeActivity()
-{
-    global pending_windows, startup_windows, known_windows, handled_windows
-    global placement_reservations, placement_stabilization_generations, placement_dpi_generations
-    global cascade_restore_batches, cascade_close_batches, cascade_compaction_timer_pending
-    global focus_corner_update_pending, focus_corner_overlays, focus_tab_click_generation
-    global cascade_mouse_press, desktop_monitor_hint, desktop_monitor_hint_tick
-    global explorer_space_reshow_hint
-
-    CancelNewWindowFocus()
-    CancelPendingAdoptionUndo()
-    StopFocusTabClick()
-    focus_tab_click_generation += 1
-    StopCascadeWindowDrag()
-    cascade_mouse_press := 0
-    desktop_monitor_hint := 0
-    desktop_monitor_hint_tick := 0
-    explorer_space_reshow_hint := 0
-
-    for callback in [WatchForMissedWindows, UpdateFocusCornerOverlays,
-        RunQueuedFocusCornerUpdate, WatchCascadeWindowRestores,
-        FlushCascadeCompactions, CheckCompatibilitySettings, ApplyPendingCascadeDisplayLayout]
-    {
-        SetTimer(callback, 0)
-    }
-    focus_corner_update_pending := false
-    cascade_compaction_timer_pending := false
-
-    ; Bound one-shot timers cannot be cancelled by creating another Bind object.
-    ; Invalidate their request identities/generations instead; late calls are no-ops.
-    for hwnd in pending_windows.Clone() {
-        startup_windows[hwnd] := true
-        known_windows[hwnd] := true
-        handled_windows[hwnd] := true
-    }
-    pending_windows.Clear()
-    placement_reservations.Clear()
-    placement_stabilization_generations.Clear()
-    placement_dpi_generations.Clear()
-    cascade_restore_batches.Clear()
-    ; Closed/cancelled requests must not preserve an old compaction gate on resume.
-    cascade_close_batches.Clear()
-
-    ; Hidden means no hit target at all, not merely the normal alpha-1 tab setting.
-    for hwnd in focus_corner_overlays.Clone()
-        HideFocusCornerOverlay(hwnd)
-}
 
 StartCascadeActivity()
 {
@@ -342,11 +294,11 @@ StartCascadeActivity()
     QueueFocusCornerUpdate()
 }
 
-RememberWindowsOpenedWhilePaused()
+RememberWindowsOpenedWhileAutoPlacementPaused()
 {
     global startup_windows, known_windows
 
-    ; Include hidden top-level windows too, so showing a paused-time app later
+    ; Include hidden top-level windows too, so showing an auto-paused app later
     ; does not make it look like a fresh launch. Do not adopt any of this snapshot.
     previous_hidden := DetectHiddenWindows(true)
     try {
@@ -360,35 +312,6 @@ RememberWindowsOpenedWhilePaused()
     }
 }
 
-HandlePausedCascadeWinEvent(event, hwnd, object_id, child_id)
-{
-    global startup_windows, known_windows
-    global cascade_minimize_toggle_in_progress
-
-    if !hwnd || object_id != 0 || child_id != 0
-        return
-
-    try {
-        if event = 0x8001 { ; EVENT_OBJECT_DESTROY
-            ForgetWindow(hwnd)
-            return
-        }
-
-        if event = 0x0017 && !cascade_minimize_toggle_in_progress {
-            ; A manual restore relinquishes Caps + M ownership even while paused.
-            ForgetMinimizedCascadeWindow(hwnd)
-            return
-        }
-
-        if (event = 0x8002 || event = 0x0003) && IsPlausibleTopLevelWindow(hwnd) {
-            startup_windows[hwnd] := true
-            known_windows[hwnd] := true
-        }
-    }
-    catch Error as err {
-        DebugError("Paused cascade window bookkeeping", err)
-    }
-}
 
 RestoreMinimizedCascadeWindowsOnExit()
 {

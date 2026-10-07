@@ -61,6 +61,10 @@ QueueWindowPlacement(hwnd, source_hwnd)
 {
     if !IsCascadeEnabled()
         return
+    if !IsCascadeAutoPlacementEnabled() {
+        RememberWindowDuringAutoPlacementPause(hwnd)
+        return
+    }
 
     global pending_windows, known_windows, placement_delay_ms
 
@@ -723,11 +727,6 @@ HandleWinEvent(
     global startup_windows
     global desktop_monitor_hint, desktop_monitor_hint_tick
     global debug_enabled, debug_verbose_enabled
-
-    if !IsCascadeEnabled() {
-        HandlePausedCascadeWinEvent(event, hwnd, object_id, child_id)
-        return
-    }
 
     try {
         EVENT_SYSTEM_FOREGROUND := 0x0003

@@ -18,7 +18,7 @@ BuildTrayMenu()
     A_TrayMenu.Add("How to use", ToggleWindowCascadeHelp)
     A_TrayMenu.Add("How to debug", ShowWindowCascadeDebugHelp)
     A_TrayMenu.Add()
-    A_TrayMenu.Add("Pause cascade", ToggleCascadePaused)
+    A_TrayMenu.Add("Pause auto cascading", ToggleCascadeAutoPlacement)
     A_TrayMenu.Add("Show focus tabs", ToggleFocusCornerVisibility)
 
     focus_tab_active_slot_color_menu := Menu()
@@ -57,7 +57,7 @@ BuildTrayMenu()
     A_TrayMenu.Add("Verbose debug logging", ToggleVerboseDebugLogging)
     A_TrayMenu.Add()
     A_TrayMenu.AddStandard()
-    ; Native Pause/Suspend would bypass the external Caps + P resume path.
+    ; Native Pause/Suspend would bypass Window Cascade's own runtime state.
     A_TrayMenu.Delete("&Pause Script")
     A_TrayMenu.Delete("&Suspend Hotkeys")
 
@@ -197,7 +197,7 @@ ToggleStartup(*)
 
 UpdateTrayMenu()
 {
-    global cascade_paused, startup_shortcut_path
+    global cascade_auto_placement_paused, startup_shortcut_path
     global focus_corner_visible, debug_verbose_enabled
     global rotate_key, rotate_key_menu
     global focus_tab_color_presets
@@ -206,18 +206,12 @@ UpdateTrayMenu()
     global focus_tab_active_slot_color_menu
     global focus_tab_inactive_slot_color_menu
 
-    if cascade_paused
-        A_TrayMenu.Check("Pause cascade")
+    if cascade_auto_placement_paused
+        A_TrayMenu.Check("Pause auto cascading")
     else
-        A_TrayMenu.Uncheck("Pause cascade")
+        A_TrayMenu.Uncheck("Pause auto cascading")
 
-    A_IconTip := cascade_paused ? "Window Cascade (paused)" : "Window Cascade"
-    for item in ["Show focus tabs", "Focus tab colors", "Rotate layers key", "Check compatibility"] {
-        if cascade_paused
-            A_TrayMenu.Disable(item)
-        else
-            A_TrayMenu.Enable(item)
-    }
+    A_IconTip := cascade_auto_placement_paused ? "Window Cascade (auto cascading paused)" : "Window Cascade"
 
     if focus_corner_visible
         A_TrayMenu.Check("Show focus tabs")
@@ -291,8 +285,7 @@ ToggleWindowCascadeHelp(*)
     help_text :=
     (
     "Caps + H             Toggle this help`n"
-    "Caps + M             Minimize / restore managed windows`n"
-    "Caps + P             Pause / resume cascade`n"
+    "Caps + P             Pause / resume auto cascading`n"
     "`n"
     "HINTS`n"
     "Hold Caps + key      Run a command normally`n"
@@ -309,10 +302,11 @@ ToggleWindowCascadeHelp(*)
     "Caps + F4                     Close visible layers on this monitor`n"
     "Caps + F5                     Clear debug log`n"
     "Caps + F6                     Copy debug log to clipboard`n"
+    "Caps + F7                     Gather other monitors' cascades here`n"
     "Caps + Delete                 Close active window`n"
     "Caps + Home                   Bring this monitor's cascade to front`n"
-    "Caps + F7                     Gather other monitors' cascades here`n"
-    "Caps + Alt + Left / Right     Move to adjacent monitor + smart sort`n"
+    "Caps + M                      Minimize / restore managed windows`n"
+    "Caps + Alt + Left / Right     Move to adjacent monitor`n"
     "`n"
     "FOCUS TABS`n"
     "Click an inactive slot's tab to focus it; click the active slot's tab to cycle layers.`n"
@@ -355,7 +349,7 @@ ShowWindowCascadeMoreHelp(*)
     "NOTES`n"
     "Alt commands require held Caps.`n"
     "Space / Tab for layer rotation is selected from the tray menu.`n"
-    "When paused, only Caps + P resumes; all other cascade controls are inactive.`n"
+    "When auto cascading is paused, new windows stay unmanaged; existing cascade controls remain active.`n"
     "Other window commands are blocked during native drags/resizes or while maximized/fullscreen.`n"
     "If CapsLock Layer stops, Window Cascade exits after a short reload grace period.`n"
     "`n"
@@ -375,7 +369,7 @@ ShowWindowCascadeMoreHelp(*)
     "`n"
     "TRAY`n"
     "How to debug               Isolate a bug and prepare a GitHub report`n"
-    "Pause cascade              Same pause / resume toggle as Caps + P`n"
+    "Pause auto cascading       Same new-window auto-placement toggle as Caps + P`n"
     "Show focus tabs            Show / hide the faint focus tabs`n"
     "Focus tab colors           Choose colors for the active and inactive slots`n"
     "Check compatibility        Check conflicting settings`n"

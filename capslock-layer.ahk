@@ -67,7 +67,7 @@ cascade_command_gather_to_monitor := 13
 cascade_command_show_help := 14
 cascade_command_move_monitor_left := 15
 cascade_command_move_monitor_right := 16
-cascade_command_toggle_pause := 17
+cascade_command_toggle_auto_placement := 17
 
 debug_reset_logs_message := DllCall(
     "RegisterWindowMessage",
@@ -270,7 +270,7 @@ CapsLock & m::PostPlainWindowCascadeCommandOnce(
     "m"
 )
 CapsLock & p::PostPlainWindowCascadeCommandOnce(
-    cascade_command_toggle_pause,
+    cascade_command_toggle_auto_placement,
     "p"
 )
 CapsLock & F4::PostPlainWindowCascadeCommandOnce(
@@ -359,7 +359,7 @@ Tab::UseArmedWindowCascadeCommand(cascade_command_rotate_layers, "Tab")
 #HotIf CapsLayerOneShotReady()
 Home::UseArmedWindowCascadeCommand(cascade_command_bring_forward, "Home")
 m::UseArmedWindowCascadeCommand(cascade_command_toggle_minimize, "m")
-p::UseArmedWindowCascadeCommand(cascade_command_toggle_pause, "p")
+p::UseArmedWindowCascadeCommand(cascade_command_toggle_auto_placement, "p")
 F4::UseArmedWindowCascadeCommand(cascade_command_close_scope, "F4")
 F7::UseArmedWindowCascadeCommand(cascade_command_gather_to_monitor, "F7")
 Delete::UseArmedWindowCascadeCommand(cascade_command_close_active, "Delete")
