@@ -51,7 +51,7 @@ ToggleWinKeyOverhaulHelp(*)
     "Win + Enter          Swap clockwise`n"
     "Win + Shift + Enter  Swap counter-clockwise`n"
     "Win + Alt + Arrow    Start / move spatial focus`n"
-    "Win + Shift + Tab    Cycle maximized / fullscreen / borderless"
+    "Win + Shift + Tab    Switch between expanded windows"
     )
 
     if IsFancyZonesRunning() {
