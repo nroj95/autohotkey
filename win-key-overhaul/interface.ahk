@@ -6,6 +6,8 @@
 
 ToggleWinKeyOverhaulHelp(*)
 {
+    global fancyzones_integration_state
+
     static help_gui := 0
 
     if help_gui {
@@ -48,18 +50,25 @@ ToggleWinKeyOverhaulHelp(*)
     "WINDOW ARRANGEMENT`n"
     "Win + Enter          Swap clockwise`n"
     "Win + Shift + Enter  Swap counter-clockwise`n"
-    "Ctrl + Alt + Arrow   Start / move spatial focus`n"
+    "Win + Alt + Arrow    Start / move spatial focus`n"
     "Win + Shift + Tab    Cycle maximized / fullscreen / borderless"
     )
 
     if IsFancyZonesRunning() {
+        fancyzones_arrow_shortcut :=
+            GetFancyZonesArrowShortcutLabel(fancyzones_integration_state)
+
         help_text .= (
             "`n"
             "`n"
             "FANCYZONES`n"
-            "Win + Alt + Arrow    Move between zones`n"
-            "Win + Alt + PgUp     Previous window in current zone`n"
-            "Win + Alt + PgDn     Next window in current zone"
+        )
+
+        help_text .= fancyzones_arrow_shortcut "   Move between zones`n"
+
+        help_text .= (
+            "Ctrl + Alt + PgUp    Previous window in current zone`n"
+            "Ctrl + Alt + PgDn    Next window in current zone"
         )
     }
 

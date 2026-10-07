@@ -270,7 +270,15 @@ ShowRecommendedSetup(*)
     {
         ; Keep compatibility prompts modal to and above this AlwaysOnTop GUI.
         setup_gui.Opt("+OwnDialogs")
-        CheckFancyZonesIntegration()
+
+        result := CheckFancyZonesIntegration()
+        if result = "ready" {
+            MsgBox(
+                "FancyZones is already compatible. No settings need to be changed.",
+                "Win Key Overhaul",
+                "Iconi"
+            )
+        }
     }
 
     CloseSetup(*)

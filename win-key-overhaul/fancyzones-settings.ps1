@@ -75,19 +75,18 @@ try {
     $backupPath = ''
     if ($Mode -eq 'Apply') {
         $properties.fancyzones_overrideSnapHotkeys.value = $true
-        $properties.fancyzones_moveWindowsBasedOnPosition.value = $true
         $properties.fancyzones_windowSwitching.value = $true
 
         $previous = $properties.fancyzones_prevTab_hotkey.value
         $next = $properties.fancyzones_nextTab_hotkey.value
         foreach ($hotkey in @($previous, $next)) {
-            $hotkey.win = $true
-            $hotkey.ctrl = $false
+            $hotkey.win = $false
+            $hotkey.ctrl = $true
             $hotkey.alt = $true
             $hotkey.shift = $false
         }
-        $previous.code = 33 # VK_PRIOR: Alt+Win+PgUp
-        $next.code = 34     # VK_NEXT: Alt+Win+PgDn
+        $previous.code = 33 # VK_PRIOR: Ctrl+Alt+PgUp
+        $next.code = 34     # VK_NEXT: Ctrl+Alt+PgDn
 
         $updatedText = $settings | ConvertTo-Json -Depth 100
         $uniqueSuffix = [guid]::NewGuid().ToString('N').Substring(0, 8)

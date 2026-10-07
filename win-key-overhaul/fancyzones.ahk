@@ -45,23 +45,26 @@ CheckFancyZonesIntegration(*)
         if !state {
             MsgBox(
                 "The FancyZones settings could not be read.`n`n"
-                . "Configure Override Windows Snap, Relative position, and "
-                . "Win + Alt + PgUp/PgDn manually in PowerToys.",
+                . "Configure Override Windows Snap and zone-window switching, and "
+                . "Ctrl + Alt + PgUp/PgDn manually in PowerToys.",
                 "Win Key Overhaul", "Icon!"
             )
             return
         }
         if FancyZonesArrowsReady(state) && FancyZonesSwitchingReady(state)
-            return
+            return "ready"
+
+        arrow_shortcut := GetFancyZonesArrowShortcutLabel(state)
 
         response := MsgBox(
             "Set up the optional FancyZones shortcuts?`n`n"
-            . "Win + Alt + Arrow: move between zones`n"
-            . "Win + Alt + PgUp: previous window in the current zone`n"
-            . "Win + Alt + PgDn: next window in the current zone`n`n"
-            . "This enables Override Windows Snap, Relative position, and "
-            . "zone-window switching, and replaces the two switching shortcuts. "
-            . "Layouts and unrelated settings stay unchanged.`n`n"
+            . arrow_shortcut ": move between zones`n"
+            . "Ctrl + Alt + PgUp: previous window in the current zone`n"
+            . "Ctrl + Alt + PgDn: next window in the current zone`n`n"
+            . "This enables Override Windows Snap and zone-window switching, "
+            . "configures the two switching shortcuts, and leaves your Zone index / "
+            . "Relative position choice unchanged. Layouts and unrelated settings "
+            . "stay unchanged.`n`n"
             . "Close PowerToys Settings before choosing Yes. An exact backup "
             . "will be saved beside settings.json. No leaves everything unchanged.",
             "Win Key Overhaul", "YesNo Default2 Icon?"
@@ -92,9 +95,16 @@ IsFancyZonesRunning()
     return !!ProcessExist("PowerToys.FancyZones.exe")
 }
 
+GetFancyZonesArrowShortcutLabel(state)
+{
+    return state && !state.relative_position_enabled
+        ? "Ctrl + Alt + Left/Right"
+        : "Ctrl + Alt + Arrow"
+}
+
 FancyZonesArrowsReady(state)
 {
-    return state && state.override_snap_enabled && state.relative_position_enabled
+    return state && state.override_snap_enabled
 }
 
 FancyZonesSwitchingReady(state)
@@ -106,7 +116,7 @@ FancyZonesSwitchingReady(state)
 
 IsDesiredFancyZonesHotkey(hotkey, code)
 {
-    return hotkey.win && hotkey.alt && !hotkey.ctrl && !hotkey.shift && hotkey.code = code
+    return !hotkey.win && hotkey.ctrl && hotkey.alt && !hotkey.shift && hotkey.code = code
 }
 
 ; =============================================================================
@@ -123,6 +133,14 @@ MoveWindowThroughFancyZones(direction)
     if ProcessExist("PowerToys.FancyZones.exe") != fancyzones_process_id
         return
 
+    ; Zone index uses only Win+Left/Right. Relative position uses all four
+    ; arrows. Respect the user's PowerToys navigation mode instead of changing it.
+    if !fancyzones_integration_state.relative_position_enabled
+        && (direction = "Up" || direction = "Down")
+    {
+        return
+    }
+
     hwnd := GetWindowControlTarget()
     if !hwnd
         return
@@ -131,10 +149,10 @@ MoveWindowThroughFancyZones(direction)
         RunWindowCommand(PrepareWindowForPlacement, hwnd)
         ForgetWindowLayoutCycle(hwnd)
 
-        ; FancyZones interprets Win+Alt+Arrow as zone extension. Temporarily
-        ; release Alt to send plain Win+Arrow instead. Blind mode prevents an
-        ; immediate automatic Alt restore before FancyZones processes its queue.
-        SendEvent("{Blind}{vkE8}{LAlt up}{RAlt up}#{" direction "}")
+        ; Forward Ctrl+Alt+Arrow as plain Win+Arrow for FancyZones. Temporarily
+        ; release Ctrl and Alt first. Blind mode prevents an
+        ; immediate automatic modifier restore before FancyZones processes its queue.
+        SendEvent("{Blind}{vkE8}{LCtrl up}{RCtrl up}{LAlt up}{RAlt up}#{" direction "}")
         KeyWait(direction)
         Sleep 40
     }
@@ -142,8 +160,8 @@ MoveWindowThroughFancyZones(direction)
         DebugError("Forward FancyZones navigation", err)
     }
     finally {
-        ; Restore only modifiers the user still physically holds, including RAlt.
-        for key in ["LAlt", "RAlt"] {
+        ; Restore only modifiers the user still physically holds.
+        for key in ["LCtrl", "RCtrl", "LAlt", "RAlt"] {
             if GetKeyState(key, "P")
                 SendEvent("{Blind}{" key " down}")
         }

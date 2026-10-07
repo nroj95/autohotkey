@@ -38,10 +38,10 @@ $#PgDn::RunWindowCommand(PlaceCornerTile, "bottom-right")
 +#Enter::RunWindowCommand(SwapWindow, "counter-clockwise")
 
 ; Standalone spatial focus and maximized/fullscreen cycling.
-$^!Left::RunWindowCommand(FocusNearestWindow, "left")
-$^!Right::RunWindowCommand(FocusNearestWindow, "right")
-$^!Up::RunWindowCommand(FocusNearestWindow, "up")
-$^!Down::RunWindowCommand(FocusNearestWindow, "down")
+$!#Left::RunWindowCommand(FocusNearestWindow, "left")
+$!#Right::RunWindowCommand(FocusNearestWindow, "right")
+$!#Up::RunWindowCommand(FocusNearestWindow, "up")
+$!#Down::RunWindowCommand(FocusNearestWindow, "down")
 +#Tab::RunWindowCommand(CycleMaximizedFullscreenWindows)
 
 ; =============================================================================
@@ -52,12 +52,12 @@ $^!Down::RunWindowCommand(FocusNearestWindow, "down")
 ; while Windows is waiting for a keyboard-hook condition.
 #HotIf fancyzones_process_id
 
-$!#Left::MoveWindowThroughFancyZones("Left")
-$!#Right::MoveWindowThroughFancyZones("Right")
-$!#Up::MoveWindowThroughFancyZones("Up")
-$!#Down::MoveWindowThroughFancyZones("Down")
+$^!Left::MoveWindowThroughFancyZones("Left")
+$^!Right::MoveWindowThroughFancyZones("Right")
+$^!Up::MoveWindowThroughFancyZones("Up")
+$^!Down::MoveWindowThroughFancyZones("Down")
 
-; Win+Alt+PgUp/PgDn are registered by FancyZones itself. Registering them here
+; Ctrl+Alt+PgUp/PgDn are registered by FancyZones itself. Registering them here
 ; as well would block its zone-window switching. Startup offers to configure it.
 #HotIf
 

@@ -37,10 +37,10 @@ debug logging is off by default and can be toggled for the current run from the 
 | `Win + Home/End` | top-center / bottom-center, alternating centered 50% and offset 25%. |
 | `Win + Enter` | swap with the next eligible window clockwise on the current monitor. |
 | `Win + Shift + Enter` | swap with the next eligible window counter-clockwise. |
-| `Ctrl + Alt + Arrow` | start a spatial-focus session on the active window; subsequent presses move focus. |
+| `Win + Alt + Arrow` | start a spatial-focus session on the active window; subsequent presses move focus. |
 | `Win + Shift + Tab` | cycle visible maximized, fullscreen, and borderless windows without changing their geometry or minimize state. |
-| `Win + Alt + Arrow` | optional FancyZones zone navigation. |
-| `Win + Alt + PgUp/PgDn` | optional FancyZones previous / next window in the current zone. |
+| `Ctrl + Alt + Arrow` | optional FancyZones zone navigation. |
+| `Ctrl + Alt + PgUp/PgDn` | optional FancyZones previous / next window in the current zone. |
 
 when the marked Scratchpad window is active, Win Key Overhaul yields `Win + Left/Right` and `Win + PgUp/PgDn` so Scratchpad can use them for page navigation. this is optional coordination through a window property; Win Key Overhaul remains standalone.
 
@@ -92,14 +92,14 @@ ScreenGrid is recommended once per user profile unless already running. acceptin
 
 FancyZones remains optional. the script detects it on startup and when its process starts later, using the existing five-second watcher. keyboard-hook conditions use that watcher's cached PID; an invoked forwarding command rechecks the process before sending keys. compatibility setup requires confirmation and configures only:
 
-- **Override Windows Snap hotkeys**, **Relative position**, and **Switch between windows in the current zone**;
-- previous window as **Win + Alt + PgUp**, and next window as **Win + Alt + PgDn**.
+- **Override Windows Snap hotkeys** and **Switch between windows in the current zone**;
+- previous window as **Ctrl + Alt + PgUp**, and next window as **Ctrl + Alt + PgDn**.
 
-native Windows Snap may remain disabled; the FancyZones override setting is a separate feature. close the PowerToys Settings window before applying the change so it does not write stale settings back. the helper preserves unrelated setting values and makes an exact timestamped `.bak` beside `settings.json` using an atomic replacement. unfamiliar/incomplete settings, non-boolean toggles/modifiers, and invalid virtual-key codes are rejected instead of guessed. JSON formatting may change.
+the existing **Zone index** / **Relative position** choice is preserved. with Zone index, `Ctrl + Alt + Left/Right` move between zones; with Relative position, all four `Ctrl + Alt + Arrow` directions are available. native Windows Snap may remain disabled; the FancyZones override setting is a separate feature. close the PowerToys Settings window before applying the change so it does not write stale settings back. the helper preserves unrelated setting values and makes an exact timestamped `.bak` beside `settings.json` using an atomic replacement. unfamiliar/incomplete settings, non-boolean toggles/modifiers, and invalid virtual-key codes are rejected instead of guessed. JSON formatting may change.
 
-FancyZones owns the two page-key shortcuts itself. the script forwards the arrow shortcuts with Alt temporarily released so FancyZones moves instead of extending across zones. forwarding sends one step per arrow press and restores still-physically-held Alt keys on release. the keyboard hook is reasserted after FancyZones starts so the script retains bare `Win + Arrow`.
+FancyZones owns the two page-key shortcuts itself. the script forwards the arrow shortcuts with Ctrl and Alt temporarily released so FancyZones receives plain `Win + Arrow`. forwarding sends one step per arrow press and restores still-physically-held Ctrl and Alt keys on release. the keyboard hook is reasserted after FancyZones starts so the script retains bare `Win + Arrow`.
 
-use **Check FancyZones compatibility** from the **Recommended setup** GUI after changing relevant PowerToys settings. rejecting setup keeps existing PowerToys settings intact; the advertised shortcuts require the matching setup. the internal PowerShell helper runs with a process-only execution-policy override; no persistent execution policy is changed.
+use **Check FancyZones compatibility** from the **Recommended setup** GUI after changing relevant PowerToys settings. rejecting setup keeps existing PowerToys settings intact; shortcut availability follows those settings. the internal PowerShell helper runs with a process-only execution-policy override; no persistent execution policy is changed.
 
 ## module map
 
