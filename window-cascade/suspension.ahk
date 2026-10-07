@@ -1,159 +1,224 @@
 ; Internal Window Cascade module. Launch ..\window-cascade.ahk instead.
 ; Included into the same script; functions share the existing global state.
 ;
-; Caps + M is one global disable/resume toggle. Keep the message receiver and
-; dependency/lifetime bookkeeping alive, but do not run cascade work while off.
+; Caps + M owns only its saved minimize/restore set. Caps + P pauses/resumes
+; cascade activity without changing any window's minimized state.
 
 ; =============================================================================
-; global disable / resume
+; pause / resume
 ; =============================================================================
 
 IsCascadeEnabled()
 {
-    global cascade_disabled, cascade_toggle_in_progress
-    return !cascade_disabled && !cascade_toggle_in_progress
+    global cascade_paused, cascade_pause_toggle_in_progress
+    return !cascade_paused && !cascade_pause_toggle_in_progress
 }
 
-ToggleCascadeDisabled(*)
+ToggleCascadePaused(*)
 {
-    global cascade_disabled, cascade_toggle_in_progress
+    global cascade_paused, cascade_pause_toggle_in_progress
 
-    if cascade_toggle_in_progress
+    if cascade_pause_toggle_in_progress
         return
-    ; Complete a native drag or a paired tab click before hiding its target.
+    ; Finish native pointer state before removing the mouse-side cascade behavior.
     if HasCascadeWindowDrag() || HasFocusTabClick() || GetKeyState("LButton", "P")
         return
 
     previous_critical := Critical("On")
-    cascade_toggle_in_progress := true
+    cascade_pause_toggle_in_progress := true
+    toggle_succeeded := false
     try {
-        if cascade_disabled
+        if cascade_paused
             ResumeWindowCascade()
         else
-            DisableWindowCascade()
+            PauseWindowCascade()
+        toggle_succeeded := true
     }
     catch Error as err {
-        ; Leave the receiver alive and the saved restore set available for retry.
-        cascade_disabled := true
+        ; Keep the message receiver alive so Caps + P can retry the resume.
+        cascade_paused := true
         Suspend(true)
         StopCascadeActivity()
-        DebugError("Toggle cascade disabled state", err)
+        DebugError("Toggle cascade paused state", err)
     }
     finally {
-        cascade_toggle_in_progress := false
-        if !cascade_disabled {
+        cascade_pause_toggle_in_progress := false
+        if !cascade_paused {
             Suspend(false)
             StartCascadeActivity()
         }
         UpdateTrayMenu()
+        if toggle_succeeded {
+            ShowCascadeStatusTip(
+                cascade_paused ? "cascade paused" : "cascade resumed"
+            )
+        }
         Critical(previous_critical)
     }
 }
 
-DisableWindowCascade()
+PauseWindowCascade()
 {
-    global cascade_disabled, cascade_disabled_windows, cascade_membership_generation
+    global cascade_paused, cascade_membership_generation
 
-    targets := CaptureCascadeDisableTargets()
-    cascade_disabled := true
+    cascade_paused := true
     cascade_membership_generation += 1
     Suspend(true)
     StopCascadeActivity()
-
-    ; Empty cascades can be disabled too. Closing the final saved window later
-    ; changes only the restore set, never the explicit disabled state.
-    cascade_disabled_windows := []
-    for target in targets {
-        if !IsSameDisabledCascadeWindow(target)
-            continue
-        try {
-            if WinGetMinMax(target.hwnd) = -1
-                continue
-            ; Publish before WinMinimize can yield to a native lifetime callback.
-            cascade_disabled_windows.Push(target)
-            WinMinimize(target.hwnd)
-            if DllCall("IsIconic", "ptr", target.hwnd, "int") {
-                ObserveCascadeMinimizedWindow(target.hwnd)
-            } else {
-                ForgetDisabledCascadeWindow(target.hwnd)
-                DebugLog("Cascade minimize was not accepted. | hwnd=" target.hwnd)
-            }
-        }
-        catch Error as err {
-            ForgetDisabledCascadeWindow(target.hwnd)
-            DebugError("Disable cascade window", err)
-        }
-    }
-    DebugLog("Cascade disabled. | saved-windows=" cascade_disabled_windows.Length)
+    DebugLog("Cascade paused.")
 }
 
 ResumeWindowCascade()
 {
-    global cascade_disabled, cascade_disabled_windows, cascade_membership_generation
+    global cascade_paused, cascade_membership_generation
     global current_foreground_hwnd, previous_foreground_hwnd
 
     RefreshCascadeDisplays()
-    RememberWindowsOpenedWhileDisabled()
-    windows_to_restore := []
-    for target in cascade_disabled_windows.Clone() {
-        if !IsSameDisabledCascadeWindow(target)
+    ; Windows first observed while paused must not look like fresh launches.
+    RememberWindowsOpenedWhilePaused()
+    cascade_paused := false
+    cascade_membership_generation += 1
+    current_foreground_hwnd := WinExist("A")
+    previous_foreground_hwnd := 0
+    DebugLog("Cascade resumed.")
+}
+
+
+; =============================================================================
+; Caps + M minimize / restore
+; =============================================================================
+
+ToggleCascadeMinimize(*)
+{
+    global cascade_minimize_toggle_in_progress, cascade_minimized_windows
+
+    if cascade_minimize_toggle_in_progress
+        return
+    ; Do not hide a target in the middle of a native drag or paired tab click.
+    if HasCascadeWindowDrag() || HasFocusTabClick() || GetKeyState("LButton", "P")
+        return
+
+    previous_critical := Critical("On")
+    cascade_minimize_toggle_in_progress := true
+    try {
+        PruneMinimizedCascadeWindows()
+        if cascade_minimized_windows.Length
+            RestoreMinimizedCascadeWindows()
+        else
+            MinimizeCascadeWindows()
+    }
+    catch Error as err {
+        DebugError("Toggle cascade minimized state", err)
+    }
+    finally {
+        cascade_minimize_toggle_in_progress := false
+        QueueFocusCornerUpdate()
+        Critical(previous_critical)
+    }
+}
+
+MinimizeCascadeWindows()
+{
+    global cascade_minimized_windows
+
+    targets := CaptureCascadeMinimizeTargets()
+    cascade_minimized_windows := []
+
+    for target in targets {
+        if !IsSameMinimizedCascadeWindow(target)
             continue
+
         try {
-            ; A manual restore/close while disabled relinquishes our ownership.
             if WinGetMinMax(target.hwnd) = -1
-                && GetManagedCascadeMonitor(target.hwnd) = target.monitor
-                windows_to_restore.Push(target.hwnd)
+                continue
+
+            ; Publish ownership before WinMinimize can yield to a lifetime callback.
+            cascade_minimized_windows.Push(target)
+            CancelPlacementStabilization(target.hwnd)
+            RemoveWindowFromCascadeRestore(target.hwnd)
+            WinMinimize(target.hwnd)
+
+            if DllCall("IsIconic", "ptr", target.hwnd, "int") {
+                ObserveCascadeMinimizedWindow(target.hwnd)
+            } else {
+                ForgetMinimizedCascadeWindow(target.hwnd)
+                DebugLog("Cascade minimize was not accepted. | hwnd=" target.hwnd)
+            }
+        }
+        catch Error as err {
+            ForgetMinimizedCascadeWindow(target.hwnd)
+            DebugError("Minimize cascade window", err)
         }
     }
 
-    ; Keep the transition gate and suspended mouse hotkeys until every restore
-    ; request is issued. Register all monitor batches before restoring any window.
-    cascade_disabled := false
-    cascade_membership_generation += 1
-    RestoreCascadeWindows(windows_to_restore)
-    RememberWindowsOpenedWhileDisabled()
-    cascade_disabled_windows := []
-    current_foreground_hwnd := WinExist("A")
-    previous_foreground_hwnd := 0
-    DebugLog("Cascade resumed. | restored-windows=" windows_to_restore.Length)
+    DebugLog("Cascade windows minimized. | saved-windows=" cascade_minimized_windows.Length)
 }
 
-CaptureCascadeDisableTargets()
+RestoreMinimizedCascadeWindows()
 {
-    global cascade_history, placement_reservations
+    global cascade_minimized_windows
+
+    windows_to_restore := []
+    for target in cascade_minimized_windows.Clone() {
+        if !IsSameMinimizedCascadeWindow(target)
+            continue
+
+        try {
+            ; Manual restores and closed windows relinquish Caps + M ownership.
+            if WinGetMinMax(target.hwnd) = -1
+                && GetManagedCascadeMonitor(target.hwnd) = target.monitor
+            {
+                windows_to_restore.Push(target.hwnd)
+            }
+        }
+    }
+
+    RestoreCascadeWindows(windows_to_restore)
+    cascade_minimized_windows := []
+    DebugLog("Cascade windows restored. | restored-windows=" windows_to_restore.Length)
+}
+
+CaptureCascadeMinimizeTargets()
+{
+    global cascade_history
 
     targets := Map()
-    ; Include reserved members so a just-posted placement cannot escape the toggle.
     for monitor_index, history in cascade_history.Clone() {
         try history := GetLiveCascadeHistory(monitor_index)
         catch
             continue
+
         for hwnd in history
-            CaptureCascadeDisableTarget(targets, hwnd, monitor_index)
-    }
-    for hwnd, reservation in placement_reservations.Clone() {
-        if targets.Has(hwnd)
-            continue
-        if CaptureCascadeDisableTarget(targets, hwnd, reservation["monitor"])
-            RecordCascadeWindow(reservation["monitor"], hwnd)
+            CaptureCascadeMinimizeTarget(targets, hwnd, monitor_index)
     }
 
     windows := []
     for hwnd in targets
         windows.Push(hwnd)
+
     ordered := []
     for hwnd in SortCascadeWindowsByZOrder(windows, GetCascadeWindowZRanks())
         ordered.Push(targets[hwnd])
     return ordered
 }
 
-CaptureCascadeDisableTarget(targets, hwnd, monitor_index)
+CaptureCascadeMinimizeTarget(targets, hwnd, monitor_index)
 {
-    ; Independently minimized or maximized/unmanaged windows are outside this set.
-    if targets.Has(hwnd) || !IsCascadeWindow(hwnd)
+    if targets.Has(hwnd) || !hwnd || !DllCall("IsWindow", "ptr", hwnd, "int")
         return false
+    if !DllCall("IsWindowVisible", "ptr", hwnd, "int") || IsWindowCloaked(hwnd)
+        return false
+
     try {
-        targets[hwnd] := {hwnd: hwnd, pid: WinGetPID(hwnd), monitor: monitor_index}
+        ; Independently minimized windows are never owned by Caps + M.
+        if WinGetMinMax(hwnd) = -1
+            return false
+
+        targets[hwnd] := {
+            hwnd: hwnd,
+            pid: WinGetPID(hwnd),
+            monitor: monitor_index
+        }
         return true
     }
     catch {
@@ -161,7 +226,7 @@ CaptureCascadeDisableTarget(targets, hwnd, monitor_index)
     }
 }
 
-IsSameDisabledCascadeWindow(target)
+IsSameMinimizedCascadeWindow(target)
 {
     if !DllCall("IsWindow", "ptr", target.hwnd, "int")
         return false
@@ -170,20 +235,45 @@ IsSameDisabledCascadeWindow(target)
         return false
 }
 
-ForgetDisabledCascadeWindow(hwnd)
+ForgetMinimizedCascadeWindow(hwnd)
 {
-    global cascade_disabled_windows
+    global cascade_minimized_windows
 
-    index := cascade_disabled_windows.Length
+    index := cascade_minimized_windows.Length
     while index >= 1 {
-        if cascade_disabled_windows[index].hwnd = hwnd
-            cascade_disabled_windows.RemoveAt(index)
+        if cascade_minimized_windows[index].hwnd = hwnd
+            cascade_minimized_windows.RemoveAt(index)
         index -= 1
     }
 }
 
+PruneMinimizedCascadeWindows()
+{
+    global cascade_minimized_windows
+
+    index := cascade_minimized_windows.Length
+    while index >= 1 {
+        target := cascade_minimized_windows[index]
+        keep := IsSameMinimizedCascadeWindow(target)
+
+        if keep {
+            try keep := (
+                WinGetMinMax(target.hwnd) = -1
+                && !!GetManagedCascadeMonitor(target.hwnd)
+            )
+            catch
+                keep := false
+        }
+
+        if !keep
+            cascade_minimized_windows.RemoveAt(index)
+        index -= 1
+    }
+}
+
+
 ; =============================================================================
-; cancel active work, then resume only from current membership
+; cancel paused work, then resume only from current membership
 ; =============================================================================
 
 StopCascadeActivity()
@@ -252,11 +342,11 @@ StartCascadeActivity()
     QueueFocusCornerUpdate()
 }
 
-RememberWindowsOpenedWhileDisabled()
+RememberWindowsOpenedWhilePaused()
 {
     global startup_windows, known_windows
 
-    ; Include hidden top-level windows too, so showing a disabled-time app later
+    ; Include hidden top-level windows too, so showing a paused-time app later
     ; does not make it look like a fresh launch. Do not adopt any of this snapshot.
     previous_hidden := DetectHiddenWindows(true)
     try {
@@ -270,46 +360,51 @@ RememberWindowsOpenedWhileDisabled()
     }
 }
 
-HandleDisabledCascadeWinEvent(event, hwnd, object_id, child_id)
+HandlePausedCascadeWinEvent(event, hwnd, object_id, child_id)
 {
-    global startup_windows, known_windows, cascade_disabled, cascade_toggle_in_progress
+    global startup_windows, known_windows
+    global cascade_minimize_toggle_in_progress
 
     if !hwnd || object_id != 0 || child_id != 0
         return
+
     try {
         if event = 0x8001 { ; EVENT_OBJECT_DESTROY
             ForgetWindow(hwnd)
             return
         }
-        if event = 0x0017 && cascade_disabled && !cascade_toggle_in_progress {
-            ; A user-restored window is no longer part of the next global restore.
-            ForgetDisabledCascadeWindow(hwnd)
+
+        if event = 0x0017 && !cascade_minimize_toggle_in_progress {
+            ; A manual restore relinquishes Caps + M ownership even while paused.
+            ForgetMinimizedCascadeWindow(hwnd)
             return
         }
+
         if (event = 0x8002 || event = 0x0003) && IsPlausibleTopLevelWindow(hwnd) {
             startup_windows[hwnd] := true
             known_windows[hwnd] := true
         }
     }
     catch Error as err {
-        DebugError("Disabled cascade window bookkeeping", err)
+        DebugError("Paused cascade window bookkeeping", err)
     }
 }
 
-RestoreDisabledCascadeWindowsOnExit()
+RestoreMinimizedCascadeWindowsOnExit()
 {
-    global cascade_disabled_windows
+    global cascade_minimized_windows
 
     ; Native hooks are already stopped. Do not run layout, Z-order, or focus work
     ; during exit/reload, and never restore independently minimized applications.
-    Loop cascade_disabled_windows.Length {
-        target := cascade_disabled_windows[cascade_disabled_windows.Length - A_Index + 1]
-        if !IsSameDisabledCascadeWindow(target)
+    Loop cascade_minimized_windows.Length {
+        target := cascade_minimized_windows[cascade_minimized_windows.Length - A_Index + 1]
+        if !IsSameMinimizedCascadeWindow(target)
             continue
+
         try {
             if WinGetMinMax(target.hwnd) = -1
                 WinRestore(target.hwnd)
         }
     }
-    cascade_disabled_windows := []
+    cascade_minimized_windows := []
 }

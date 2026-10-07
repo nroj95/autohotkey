@@ -18,7 +18,7 @@ BuildTrayMenu()
     A_TrayMenu.Add("How to use", ToggleWindowCascadeHelp)
     A_TrayMenu.Add("How to debug", ShowWindowCascadeDebugHelp)
     A_TrayMenu.Add()
-    A_TrayMenu.Add("Disable cascade", ToggleCascadeDisabled)
+    A_TrayMenu.Add("Pause cascade", ToggleCascadePaused)
     A_TrayMenu.Add("Show focus tabs", ToggleFocusCornerVisibility)
 
     focus_tab_active_slot_color_menu := Menu()
@@ -57,7 +57,7 @@ BuildTrayMenu()
     A_TrayMenu.Add("Verbose debug logging", ToggleVerboseDebugLogging)
     A_TrayMenu.Add()
     A_TrayMenu.AddStandard()
-    ; Native Pause/Suspend would bypass the restore set and the Caps + M wake path.
+    ; Native Pause/Suspend would bypass the external Caps + P resume path.
     A_TrayMenu.Delete("&Pause Script")
     A_TrayMenu.Delete("&Suspend Hotkeys")
 
@@ -143,6 +143,24 @@ SetRotateKey(new_rotate_key, *)
     UpdateTrayMenu()
 }
 
+ShowCascadeStatusTip(text)
+{
+    CoordMode "Mouse", "Screen"
+    CoordMode "ToolTip", "Screen"
+    MouseGetPos &mouse_x, &mouse_y
+
+    ; Every new status replaces the previous one and owns a fresh timeout.
+    SetTimer HideCascadeStatusTip, 0
+    ToolTip text, mouse_x + 14, mouse_y + 18, 3
+    SetTimer HideCascadeStatusTip, -1400
+}
+
+HideCascadeStatusTip()
+{
+    ToolTip , , , 3
+}
+
+
 ToggleStartup(*)
 {
     global startup_shortcut_path
@@ -179,7 +197,7 @@ ToggleStartup(*)
 
 UpdateTrayMenu()
 {
-    global cascade_disabled, startup_shortcut_path
+    global cascade_paused, startup_shortcut_path
     global focus_corner_visible, debug_verbose_enabled
     global rotate_key, rotate_key_menu
     global focus_tab_color_presets
@@ -188,14 +206,14 @@ UpdateTrayMenu()
     global focus_tab_active_slot_color_menu
     global focus_tab_inactive_slot_color_menu
 
-    if cascade_disabled
-        A_TrayMenu.Check("Disable cascade")
+    if cascade_paused
+        A_TrayMenu.Check("Pause cascade")
     else
-        A_TrayMenu.Uncheck("Disable cascade")
+        A_TrayMenu.Uncheck("Pause cascade")
 
-    A_IconTip := cascade_disabled ? "Window Cascade (disabled)" : "Window Cascade"
+    A_IconTip := cascade_paused ? "Window Cascade (paused)" : "Window Cascade"
     for item in ["Show focus tabs", "Focus tab colors", "Rotate layers key", "Check compatibility"] {
-        if cascade_disabled
+        if cascade_paused
             A_TrayMenu.Disable(item)
         else
             A_TrayMenu.Enable(item)
@@ -273,7 +291,8 @@ ToggleWindowCascadeHelp(*)
     help_text :=
     (
     "Caps + H             Toggle this help`n"
-    "Caps + M             Minimize all / disable; restore all / resume`n"
+    "Caps + M             Minimize / restore managed windows`n"
+    "Caps + P             Pause / resume cascade`n"
     "`n"
     "HINTS`n"
     "Hold Caps + key      Run a command normally`n"
@@ -287,7 +306,7 @@ ToggleWindowCascadeHelp(*)
     "Caps + Space / Tab            Next layer`n"
     "Caps + Alt + Space / Tab      Previous layer`n"
     "`n"
-    "Caps + F4                     Close all layers on this monitor`n"
+    "Caps + F4                     Close visible layers on this monitor`n"
     "Caps + F5                     Clear debug log`n"
     "Caps + F6                     Copy debug log to clipboard`n"
     "Caps + Delete                 Close active window`n"
@@ -336,7 +355,7 @@ ShowWindowCascadeMoreHelp(*)
     "NOTES`n"
     "Alt commands require held Caps.`n"
     "Space / Tab for layer rotation is selected from the tray menu.`n"
-    "When disabled, only Caps + M resumes; other cascade commands and focus tabs are inactive.`n"
+    "When paused, only Caps + P resumes; all other cascade controls are inactive.`n"
     "Other window commands are blocked during native drags/resizes or while maximized/fullscreen.`n"
     "If CapsLock Layer stops, Window Cascade exits after a short reload grace period.`n"
     "`n"
@@ -356,7 +375,7 @@ ShowWindowCascadeMoreHelp(*)
     "`n"
     "TRAY`n"
     "How to debug               Isolate a bug and prepare a GitHub report`n"
-    "Disable cascade            Same all-monitor disable / resume toggle as Caps + M`n"
+    "Pause cascade              Same pause / resume toggle as Caps + P`n"
     "Show focus tabs            Show / hide the faint focus tabs`n"
     "Focus tab colors           Choose colors for the active and inactive slots`n"
     "Check compatibility        Check conflicting settings`n"

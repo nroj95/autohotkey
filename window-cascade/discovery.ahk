@@ -725,7 +725,7 @@ HandleWinEvent(
     global debug_enabled, debug_verbose_enabled
 
     if !IsCascadeEnabled() {
-        HandleDisabledCascadeWinEvent(event, hwnd, object_id, child_id)
+        HandlePausedCascadeWinEvent(event, hwnd, object_id, child_id)
         return
     }
 
@@ -818,6 +818,8 @@ HandleWinEvent(
         }
 
         if event = EVENT_SYSTEM_MINIMIZEEND {
+            ; A manual restore relinquishes ownership of the Caps + M saved set.
+            ForgetMinimizedCascadeWindow(hwnd)
             CancelPlacementStabilization(hwnd)
             TrackCascadeWindowRestores([hwnd])
             SetTimer(ApplyPendingCascadeDisplayLayout, -50)

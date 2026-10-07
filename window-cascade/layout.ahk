@@ -677,7 +677,7 @@ CompactCascadeLayout(monitor_index, preferred_hwnd := 0)
         return
     }
 
-    ; Resume compacts existing membership only; disabled-time windows stay unmanaged.
+    ; Resume compacts existing membership only; paused-time windows stay unmanaged.
     windows := GetLiveCascadeHistory(monitor_index)
     managed_window_count := windows.Length
     membership_generation := cascade_membership_generation

@@ -64,16 +64,16 @@ HandleDebugResetLogsMessage(command_id, parameter, message_id, target_hwnd)
 {
     if target_hwnd != A_ScriptHwnd || !IsCascadeEnabled()
         return
-    ShowDebugActionTip(ResetDebugLog() ? "debug log cleared" : "debug log clear failed")
+    ShowCascadeStatusTip(ResetDebugLog() ? "debug log cleared" : "debug log clear failed")
 }
 
 HandleDebugCopyLogMessage(command_id, parameter, message_id, target_hwnd)
 {
     ; Copying is observational: do not cancel focus recovery, activate a window,
     ; clear the log, or emit another log entry that would contaminate the snapshot.
-    if target_hwnd != A_ScriptHwnd
+    if target_hwnd != A_ScriptHwnd || !IsCascadeEnabled()
         return
-    ShowDebugActionTip(CopyDebugLogToClipboard() ? "debug log copied" : "debug log copy failed")
+    ShowCascadeStatusTip(CopyDebugLogToClipboard() ? "debug log copied" : "debug log copy failed")
 }
 
 CopyDebugLogToClipboard()
@@ -100,21 +100,6 @@ CopyDebugLogToClipboard()
     }
 }
 
-ShowDebugActionTip(text)
-{
-    CoordMode "Mouse", "Screen"
-    CoordMode "ToolTip", "Screen"
-    MouseGetPos &mouse_x, &mouse_y
-
-    ; Use a separate tooltip slot so this never replaces CapsLock Layer's mode tip.
-    ToolTip text, mouse_x + 14, mouse_y + 18, 3
-    SetTimer HideDebugActionTip, -1400
-}
-
-HideDebugActionTip()
-{
-    ToolTip , , , 3
-}
 
 ResetDebugLog()
 {

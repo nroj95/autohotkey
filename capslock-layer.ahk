@@ -67,6 +67,7 @@ cascade_command_gather_to_monitor := 13
 cascade_command_show_help := 14
 cascade_command_move_monitor_left := 15
 cascade_command_move_monitor_right := 16
+cascade_command_toggle_pause := 17
 
 debug_reset_logs_message := DllCall(
     "RegisterWindowMessage",
@@ -268,6 +269,10 @@ CapsLock & m::PostPlainWindowCascadeCommandOnce(
     cascade_command_toggle_minimize,
     "m"
 )
+CapsLock & p::PostPlainWindowCascadeCommandOnce(
+    cascade_command_toggle_pause,
+    "p"
+)
 CapsLock & F4::PostPlainWindowCascadeCommandOnce(
     cascade_command_close_scope,
     "F4"
@@ -336,7 +341,7 @@ k::UseArmedNoOpKey("k")
 9::UseArmedVirtualKey("Numpad9", "9")
 
 ; Optional Window Cascade controls.
-; One-shot Caps exposes the same plain commands, including global disable/resume.
+; One-shot Caps exposes the same plain commands, including minimize and pause toggles.
 Up::UseArmedWindowCascadeCommand(cascade_command_swap_window_up, "Up")
 Down::UseArmedWindowCascadeCommand(cascade_command_swap_window_down, "Down")
 Left::UseArmedWindowCascadeCommand(cascade_command_rotate_slot_previous, "Left")
@@ -354,6 +359,7 @@ Tab::UseArmedWindowCascadeCommand(cascade_command_rotate_layers, "Tab")
 #HotIf CapsLayerOneShotReady()
 Home::UseArmedWindowCascadeCommand(cascade_command_bring_forward, "Home")
 m::UseArmedWindowCascadeCommand(cascade_command_toggle_minimize, "m")
+p::UseArmedWindowCascadeCommand(cascade_command_toggle_pause, "p")
 F4::UseArmedWindowCascadeCommand(cascade_command_close_scope, "F4")
 F7::UseArmedWindowCascadeCommand(cascade_command_gather_to_monitor, "F7")
 Delete::UseArmedWindowCascadeCommand(cascade_command_close_active, "Delete")

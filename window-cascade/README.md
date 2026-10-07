@@ -16,7 +16,7 @@ launch `../window-cascade.ahk`, not the files in this directory. the launcher ow
 | `navigation.ahk` | focusing, guarded new-window foreground recovery, swapping, slot/layer rotation, spatial navigation, and bringing a cascade forward. |
 | `placement.ahk` | explicit placement, identity-checked readiness retries, new-window placement, and bounded asynchronous stabilization. |
 | `commands.ahk` | adoption and one-shot adoption undo, gathering, cross-monitor moves, monitor-wide close commands, restore settling, and membership cleanup. |
-| `suspension.ahk` | the global Caps + M disable/resume state, identity-checked restore set, activity cancellation, and disabled-time lifecycle bookkeeping. |
+| `suspension.ahk` | Caps + M minimize/restore ownership, Caps + P pause/resume state, activity cancellation, and paused-time lifecycle bookkeeping. |
 | `focus-corners.ahk` | one visible tab per slot, overlay lifetime and position, representative handoff, and active-slot coloring. |
 | `focus-tab-clicks.ahk` | instant press-to-focus/cycle, live target validation, mouse-release pairing, and missed-release recovery. |
 | `windows.ahk` | window filtering, visible/raw frame geometry, monitor lookup, and monitor-selection policy. |
@@ -39,7 +39,7 @@ keep the `cascade_command_*` IDs in `settings.ahk` synchronized with the matchin
 
 `WindowCascade.Command`, the CapsLock Layer presence mutex, and the registered-message parameter contract form the cross-process integration surface. cross-monitor commands pass the original active window handle through that message path so the intended window remains the move target.
 
-`WindowCascade.RotateKeyChanged` broadcasts the committed rotate-key setting: `wParam = 1` means Space, `wParam = 2` means Tab, and `lParam = 0`. Window Cascade announces it at startup and after a successful tray-menu change. CapsLock Layer reads the persisted setting at startup, then uses this notification so its `#HotIf` predicate stays memory-only. reload both scripts after editing the INI externally; tray changes apply without a reload. the existing command IDs are unchanged.
+`WindowCascade.RotateKeyChanged` broadcasts the committed rotate-key setting: `wParam = 1` means Space, `wParam = 2` means Tab, and `lParam = 0`. Window Cascade announces it at startup and after a successful tray-menu change. CapsLock Layer reads the persisted setting at startup, then uses this notification so its `#HotIf` predicate stays memory-only. reload both scripts after editing the INI externally; tray changes apply without a reload. existing command IDs remain unchanged; `Caps + P` uses command ID 17.
 
 the launcher remains at the repository root. startup shortcuts and `icons/window-cascade.ico` keep their existing paths. Window Cascade stores `settings.ini` and `window-cascade-debug.log` under `%LOCALAPPDATA%\Window Cascade`.
 
@@ -67,17 +67,17 @@ normal tab rendering changes native opacity only when the desired value changes 
 
 **Verbose debug logging** in the tray toggles `debug_verbose_enabled` for the current run only and defaults to off after every restart. when verbose logging is enabled, `Focus-tab appearance.` entries are written only when the observed state changes. they include the active window, active-slot window count, click ownership, tab role, color, cached base alpha, native alpha, visibility, topmost state, Z-order predecessor, and rectangle. clicks do not override opacity. compare entries from a faint and a clear state when investigating intermittent appearance changes.
 
-## global disable and resume
+## minimize, restore, pause and resume
 
-`Caps + M` is one toggle for **all managed layers on all monitors**. the first press minimizes the currently visible managed windows, hides every focus tab, and disables cascade commands, mouse bindings, automatic placement, drag/drop snapping, compaction, and placement/focus recovery. it also disables an empty cascade. closing all saved windows does not implicitly resume the script.
+`Caps + M` is a pure minimize/restore toggle for **managed windows on all monitors**. the first press snapshots the currently visible managed windows and minimizes only that saved HWND/PID set. Window Cascade otherwise keeps running normally: new windows can still be placed, focus tabs remain available for visible members, drag/drop snapping stays active, and ordinary cascade commands continue to work.
 
-while disabled, `Caps + M` remains available from any foreground window, including a maximized/fullscreen application. other cascade keyboard commands are ignored. the tray's **Disable cascade** item invokes the same toggle, not a second pause setting. CapsLock Layer's unrelated extra-key mappings, Terminal macros, and Caps Lock gesture remain available.
+the next `Caps + M` restores only still-minimized windows from that saved set, in saved Z-order. independently minimized windows are never added to the set. closing a saved window or manually restoring it relinquishes Window Cascade's restore ownership. windows opened after the minimize action are not part of that restore and stay exactly where normal cascading placed them. after restore, the saved set is cleared and the next press takes a fresh snapshot.
 
-on resume, only still-minimized windows from this toggle's saved HWND/PID set are restored, in saved Z-order. independently minimized windows are not restored. closing a saved window or manually restoring it while disabled removes it from that restore set. windows opened while disabled remain unmanaged after resume; focusing them later does not adopt them. use `Caps + Insert` for explicit adoption.
+`Caps + P` separately pauses/resumes Window Cascade without minimizing or restoring anything. while paused, automatic placement, cascade mouse bindings, focus tabs, drag/drop snapping, compaction, placement/focus recovery, and all other Cascade keyboard commands are inactive. only `Caps + P` remains available to resume. any existing `Caps + M` restore set is retained until cascading resumes.
 
-the receiver and minimal window-lifetime bookkeeping remain alive so resume and closed-window cleanup still work. periodic cascade activity stops; pending placement requests and stabilization generations are invalidated so delayed callbacks cannot replay old work. full-process `Pause` is not used. the existing dependency watcher still exits safely if CapsLock Layer remains unavailable beyond its reload grace period.
+the command receiver and minimal window-lifetime bookkeeping stay alive while paused so resume, closed-window cleanup, and Caps + M ownership remain safe. windows first opened while paused are remembered but not adopted when cascading resumes. pending placement requests and stabilization generations are invalidated so delayed callbacks cannot replay old work. the paused state is runtime-only and is not persisted.
 
-a native mouse drag or an unfinished focus-tab click must finish before the toggle is accepted. the disabled state is runtime-only, not a persisted setting. reload/exit restores any still-minimized windows owned by this toggle before discarding its state, without recascading unrelated windows.
+a native mouse drag or unfinished focus-tab click must finish before either state transition is accepted. reload/exit restores any still-minimized windows owned by `Caps + M` before discarding its in-memory restore set, without recascading unrelated windows.
 
 ### restore settling and compaction
 
@@ -87,9 +87,9 @@ closed, moved-out, re-minimized, or manually dragged targets stop holding a rest
 
 ## scoped close batching
 
-`Caps + F4` closes all managed layers on the command monitor, using the former full-monitor close scope. it registers that whole HWND/PID scope before sending any `WinClose` requests. the former current-layer close command and the Alt variant are removed. destroy events remove windows from that batch, while layout compaction for the affected monitor stays deferred. the final destroyed target releases the batch and allows one queued compaction, so the cascade does not repeatedly reflow between individual closes.
+`Caps + F4` closes all **visible, non-minimized** managed layers on the command monitor. hidden, cloaked, and minimized members stay managed and are excluded from the close batch, including windows currently owned by the `Caps + M` restore set. the eligible HWND/PID scope is registered before any `WinClose` requests. destroy events remove windows from that batch, while layout compaction for the affected monitor stays deferred. the final destroyed target releases the batch and allows one queued compaction, so the cascade does not repeatedly reflow between individual closes.
 
-if a close is cancelled, ignored, or fails, `cascade_close_timeout_ms` releases the remaining batch after 5000 ms from the end of request dispatch. this is only a compaction grace period: it never dismisses a save prompt, retries the close, or kills an application. a still-open save prompt does not keep compaction blocked indefinitely. stale expiration callbacks cannot clear a newer batch. disabling the cascade also clears old close-batch gates, and an interrupted close loop sends no further requests once it observes the disabled state.
+if a close is cancelled, ignored, or fails, `cascade_close_timeout_ms` releases the remaining batch after 5000 ms from the end of request dispatch. this is only a compaction grace period: it never dismisses a save prompt, retries the close, or kills an application. a still-open save prompt does not keep compaction blocked indefinitely. stale expiration callbacks cannot clear a newer batch. pausing the cascade also clears old close-batch gates, and an interrupted close loop sends no further requests once it observes the paused state.
 
 `Caps + F7` gathers the other monitors' cascades onto the command monitor. the former `Caps + Alt + F7` modifier is removed; the plain command is also available through the one-shot Caps layer.
 
@@ -143,7 +143,7 @@ a hidden, control-free per-monitor-aware probe on each monitor supplies that mon
 
 `WM_DISPLAYCHANGE`, `WM_SETTINGCHANGE`, our own probes' `WM_DPICHANGED`, and resume notifications coalesce a refresh. messages sent to foreign applications are not received through our `OnMessage` handlers. the existing one-second discovery fallback checks the monitor snapshot too; there is no additional permanent fast display timer. live monitor checks before membership pruning also protect against a late notification.
 
-**changing display scaling does not reload Window Cascade.** a DPI-only refresh leaves the history map and its arrays in place. a runtime HWND/PID slot record remembers each member's last intended slot while Windows is resizing applications. affected visible normal windows are moved asynchronously with no activation or Z-order change. minimized, hidden, or cloaked members retain their destination until they become visible again; the script does not restore them just to update geometry. disabled cascades keep their saved restore set and defer moves until resumed. drags and unfinished focus-tab clicks also defer reflow, and manual dragging takes ownership of its target.
+**changing display scaling does not reload Window Cascade.** a DPI-only refresh leaves the history map and its arrays in place. a runtime HWND/PID slot record remembers each member's last intended slot while Windows is resizing applications. affected visible normal windows are moved asynchronously with no activation or Z-order change. minimized, hidden, or cloaked members retain their destination until they become visible again; the script does not restore them just to update geometry. paused cascades keep managed membership and defer moves until resumed; the independent Caps + M restore set is retained. drags and unfinished focus-tab clicks also defer reflow, and manual dragging takes ownership of its target.
 
 monitor indices are remapped using the display device names in the current session. if a display disappears, its managed members use the current primary display; if fewer canonical slots fit, an old slot is clamped to the last available slot. this is not persistent monitor/EDID matching, and reconnecting a display does not automatically send windows back to their former screen. stale monitor-index batch gates are cleared on a topology remap, not on an ordinary DPI-only refresh.
 
@@ -166,7 +166,7 @@ for Window Cascade changes, check:
 - new-window placement and delayed window startup; duplicate discovery and cancelled/recycled-HWND retries
 - shell/taskbar launches: provisional placement should reach the final reserved slot before the 300 ms settle pass, with no second slot jump; failed or late readiness must fall back cleanly
 - handled-window re-shows: use PowerToys Peek or another reusable preview/tray window as a test; exercise both SHOW and foreground-only re-shows, same-monitor drift must recover the remembered slot/size, already-correct same-monitor re-shows must not issue another move, cross-monitor re-shows must follow the trusted intent, a fresh-process/new-HWND preview must consume the Explorer Space hint through normal placement, and modified/Caps Space or unrelated background events must not retarget
-- disable with Caps + M, launch one to three windows, and verify no automatic placement or cascade drag snapping
+- minimize with Caps + M, launch one to three windows, and verify normal automatic placement and cascade drag snapping continue
 - Shift + taskbar launch: keep Shift held for several seconds, verify the new window remains typeable and its single-layer tab stays hidden; switching/clicking elsewhere must cancel recovery
 - fresh-process focus recovery: reload Window Cascade, test the first launch before using any close command, then repeat after both Alt + F4 and Caps + Delete
 - deny/delay activation and inspect the foreground diagnostic; background launches must not steal focus
@@ -179,7 +179,7 @@ for Window Cascade changes, check:
 - test mixed normal/always-on-top stacks through bring-forward, slot swaps, forward/reverse layer rotation, focus-tab clicks, and compaction; existing topmost windows must remain topmost, normal windows must remain normal, and both rotation directions must stay within the front window's native Z-order band
 - force/reproduce a failed topmost-state query during compaction: geometry may still compact, Z-order rebuilding for that stack must be skipped, and no repeated 120 ms compaction loop should result
 - queue a cascade command behind a slow command, then change/close the foreground window: the delayed command must be discarded unless its original HWND and PID still own foreground
-- Caps + F4: all layers on the current monitor close without intermediate compaction; other monitors stay untouched
+- Caps + F4: only visible, non-minimized layers on the current monitor close without intermediate compaction; hidden, cloaked, minimized, and other-monitor members stay untouched
 - drop-slot preservation: exactly one full layer and multiple layers; other windows fill gaps without moving the dropped window
 - partial layer: drops within the first N slots stay put; drops beyond that range compact inward
 - deferred drops: change focus, close other windows, or finish a close batch before compaction; minimized members stay hidden
@@ -188,26 +188,26 @@ for Window Cascade changes, check:
 - adopt an unmanaged window by dropping near an existing cascade; outside/empty-monitor drops remain unmanaged
 - cancelled drags, edge resizing, rapid successive drags, target closure, and delayed new-window placement during a drag
 - after mouse release, simulate/observe a failed native move-state query: snapping must be abandoned after `cascade_drag_unknown_release_timeout_ms`, the drag gate must clear, and later cascade commands must work normally
-- Caps + M from multiple monitors and from an empty cascade: disable remains latched until explicitly resumed
-- disable a partial/full multi-monitor cascade, open new windows, resume: only saved cascade windows restore and disabled-time launches remain unmanaged
-- close or manually restore a saved window while disabled; it must not be revived/re-restored on resume; independently minimized windows stay hidden
+- Caps + M across multiple monitors: only windows minimized by that press are restored; independently minimized windows stay hidden
+- after Caps + M, open new managed windows, then press Caps + M again: only the original saved set restores and the newer windows stay where Cascade placed them
+- close or manually restore a Caps + M-saved window before the second press; it must not be revived/re-restored
 - slow restores, rapid re-minimize, drag during restore, and close-batch deferral: no lost membership or permanent compaction lock
 - missed restore notifications and interrupted queued work: the existing slow fallback recovers the pending merge
 - unchanged layouts/tabs should not keep issuing opacity writes or restarting placement corrections
 - adoption and the one-shot adoption undo path
 - Caps + F7 gathering and cross-monitor moves
-- while disabled: Caps + M resumes; every other cascade shortcut is inert, tabs stay absent, and Win Key Overhaul/Terminal/extra-key controls remain independent
-- removed Caps + P, Caps + Alt + M, Caps + Alt + F4, and Caps + Alt + F7 do not invoke cascade commands
+- while paused: only Caps + P resumes; Caps + M and every other cascade shortcut are inert, tabs stay absent, and Win Key Overhaul/Terminal/extra-key controls remain independent
+- Caps + P pauses/resumes; removed Caps + Alt + M, Caps + Alt + F4, and Caps + Alt + F7 do not invoke cascade commands
 - tray help displays icons/window-cascade.ico in its caption/Alt+Tab; Escape and the hotkey both close it without leaking icon handles
-- tray Disable cascade mirrors Caps + M; rotate-key and focus-tab color preferences survive disable/resume
+- tray Pause cascade mirrors Caps + P; rotate-key and focus-tab color preferences survive pause/resume
 - required CapsLock Layer behavior during startup, quick reloads, and a sustained dependency loss
 - cancel a save prompt after Caps + F4; verify compaction resumes after the close grace period without forcing the window closed
-- overlap close attempts, then disable/resume; an older expiration must not release a newer batch or retain an old gate
+- overlap close attempts, then pause/resume; an older expiration must not release a newer batch or retain an old gate
 - switch virtual desktops; hidden/cloaked targets must not leave clickable tabs behind
 - test 100/100, 100/125, and 100/150 monitor pairs: first-window centering, physical 80% sizing, tab alignment, click targets, and cross-monitor keyboard moves/drops
 - launch an app on the 100% display and let Cascade place it on the 125%/150% display; test the reverse direction too, including an app that scales itself after the move
 - change scaling live with existing multi-layer cascades, without reloading; membership, slots, focus, and internal Z-order should survive once the transition settles
-- repeat a live scaling change with an independently minimized member and with Caps + M disabled; neither should be restored merely to update geometry
+- repeat a live scaling change with an independently minimized member, with a Caps + M saved set, and while paused; none should be restored merely to update geometry
 - change resolution or disconnect a display; check the documented primary-display fallback and slot clamping, then verify fresh launches still work
 - grow or seed the debug log beyond `debug_log_max_bytes`, then start/write again: the old active segment must become `.old`, logging must continue in a fresh active file, and repeated rotation must retain only one backup
 - Caps + F5 after rotation must remove both the active log and `.old` before starting the fresh reset session

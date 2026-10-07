@@ -267,7 +267,7 @@ CloseCommandMonitorCascade()
     if !monitor_index
         return
 
-    ; Caps + F4 now owns the complete monitor scope, including deeper layers.
+    ; Caps + F4 owns every visible, non-minimized managed layer on this monitor.
     CloseCascadeWindowList(GetCascadeWindowsForMonitorClose(monitor_index), monitor_index)
 }
 
@@ -275,19 +275,23 @@ GetCascadeWindowsForMonitorClose(monitor_index)
 {
     global placement_reservations
 
-    windows := GetLiveCascadeHistory(monitor_index)
+    windows := []
     seen := Map()
 
-    for hwnd in windows
-        seen[hwnd] := true
+    for hwnd in GetLiveCascadeHistory(monitor_index) {
+        if !IsCascadeCloseEligible(hwnd)
+            continue
 
-    ; Include windows already reserved for this monitor even if asynchronous
-    ; placement has not reached cascade history yet.
+        seen[hwnd] := true
+        windows.Push(hwnd)
+    }
+
+    ; Include visible, non-minimized windows already reserved for this monitor even if
+    ; asynchronous placement has not reached cascade history yet.
     for hwnd, reservation in placement_reservations {
         if reservation["monitor"] != monitor_index
             continue
-
-        if seen.Has(hwnd) || !WinExist("ahk_id " hwnd)
+        if seen.Has(hwnd) || !IsCascadeCloseEligible(hwnd)
             continue
 
         seen[hwnd] := true
@@ -295,6 +299,18 @@ GetCascadeWindowsForMonitorClose(monitor_index)
     }
 
     return windows
+}
+
+IsCascadeCloseEligible(hwnd)
+{
+    if !hwnd || !WinExist("ahk_id " hwnd)
+        return false
+    if !DllCall("IsWindowVisible", "ptr", hwnd, "int") || IsWindowCloaked(hwnd)
+        return false
+
+    try return WinGetMinMax(hwnd) != -1
+    catch
+        return false
 }
 
 CloseCascadeWindowList(windows, monitor_index)
@@ -312,14 +328,16 @@ CloseCascadeWindowList(windows, monitor_index)
 
     try {
         for hwnd in ordered_windows {
-            ; A disable or newer batch can take ownership while WinClose yields.
+            ; A pause or newer batch can take ownership while WinClose yields.
             if !IsCascadeEnabled() || !cascade_close_batches.Has(monitor_index)
                 || cascade_close_batches[monitor_index] != batch
                 break
             if !batch.targets.Has(hwnd)
                 continue
             try {
-                if !WinExist(hwnd) || WinGetPID(hwnd) != batch.targets[hwnd] {
+                if !WinExist(hwnd) || WinGetPID(hwnd) != batch.targets[hwnd]
+                    || !IsCascadeCloseEligible(hwnd)
+                {
                     RemoveWindowFromCascadeCloseBatch(hwnd, batch)
                     continue
                 }
@@ -509,8 +527,8 @@ RestoreCascadeWindowList(windows)
 
 TrackCascadeWindowRestores(windows)
 {
-    global cascade_disabled
-    if cascade_disabled
+    global cascade_paused
+    if cascade_paused
         return Map()
 
     global cascade_restore_batches, cascade_restore_poll_ms, cascade_membership_generation
@@ -651,7 +669,7 @@ WatchCascadeWindowRestores()
                     ForgetCascadeMinimizedObservation(hwnd)
             }
             cascade_restore_batches.Delete(monitor_index)
-            ; Rebuild from the current history, without adopting windows opened while disabled.
+            ; Rebuild from current history without adopting windows opened while paused.
             ; The existing planner still preserves explicit drop-slot preferences.
             QueueCascadeCompaction(monitor_index)
             QueueFocusCornerUpdate()
@@ -696,7 +714,7 @@ RemoveWindowFromCascadeRestore(hwnd)
 RemoveWindowFromMinimizeState(hwnd)
 {
     RemoveWindowFromCascadeRestore(hwnd)
-    ForgetDisabledCascadeWindow(hwnd)
+    ForgetMinimizedCascadeWindow(hwnd)
 }
 
 ; =============================================================================

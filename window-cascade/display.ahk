@@ -101,7 +101,7 @@ RefreshCascadeDisplays()
     global cascade_display_refreshing, cascade_display_generation, cascade_membership_generation
     global cascade_history, cascade_window_slots, cascade_display_reflow
     global placement_reservations, placement_stabilization_generations, placement_dpi_generations
-    global cascade_disabled_windows, cascade_restore_batches, cascade_close_batches
+    global cascade_minimized_windows, cascade_restore_batches, cascade_close_batches
     global cascade_compaction_pending, desktop_monitor_hint, desktop_monitor_hint_tick
 
     if cascade_display_refreshing
@@ -178,14 +178,14 @@ RefreshCascadeDisplays()
                 cascade_history := remapped_history
                 cascade_compaction_pending := remapped_compactions
                 ; Old monitor-index gates are no longer meaningful. Their delayed
-                ; callbacks already check identity; saved disabled windows are retained.
+                ; callbacks already check identity; saved minimized windows are retained.
                 cascade_restore_batches.Clear()
                 cascade_close_batches.Clear()
             }
             for hwnd in cascade_display_reflow {
                 CancelPlacementStabilization(hwnd)
             }
-            for target in cascade_disabled_windows {
+            for target in cascade_minimized_windows {
                 if cascade_window_slots.Has(target.hwnd)
                     target.monitor := cascade_window_slots[target.hwnd].monitor
             }

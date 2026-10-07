@@ -28,7 +28,7 @@
 ; - inspect actual window positions whenever a new window opens.
 ; - fill the least-used canonical slot so gaps are repaired before a new layer grows.
 ; - treat stack depth as layers: one window per slot at each depth.
-; - keep focus/swap/close controls local; Caps + M disables/restores every monitor.
+; - keep focus/swap/close controls local; Caps + M minimizes/restores every monitor.
 ; - compact holes forward across slots and layers after managed windows disappear.
 ; - rotate one slot across layers or rotate every slot to expose the next layer.
 ; - focus and swap current-layer windows by physical top-to-bottom order.
@@ -48,7 +48,7 @@ Persistent
 SetWinDelay 0
 
 A_IconTip := "Window Cascade"
-; Keep the custom icon while our own disabled state suspends mouse hotkeys.
+; Keep the custom icon while our own paused state suspends mouse hotkeys.
 try TraySetIcon(A_ScriptDir "\icons\window-cascade.ico", , true)
 
 ; Use virtual-screen coordinates so multi-monitor mouse positions match MonitorGet().
@@ -81,7 +81,7 @@ StartWindowHooks()
 
 SetTimer(WatchCapsLockLayer, caps_layer_check_ms)
 
-; The hooks retain lightweight lifetime bookkeeping while disabled. Work timers
+; The hooks retain lightweight lifetime bookkeeping while paused. Work timers
 ; are shared with the resume path and start only while the cascade is enabled.
 if IsCascadeEnabled() {
     StartCascadeActivity()
@@ -127,7 +127,7 @@ HandleScriptExit(exit_reason, exit_code)
 
     ; Never strand script-hidden windows when their in-memory restore set is lost.
     ; This is a plain restore, not a final cascade layout or focus operation.
-    RestoreDisabledCascadeWindowsOnExit()
+    RestoreMinimizedCascadeWindowsOnExit()
 
     if exit_reason = "Exit" && caps_layer_dependency_lost {
         for hwnd, overlay in focus_corner_overlays
@@ -136,7 +136,7 @@ HandleScriptExit(exit_reason, exit_code)
         ; OnExit does not allow timers/hotkeys to resume while this notice is open.
         MsgBox(
             "Window Cascade stopped because CapsLock Layer is not running.`n`n"
-            . "Its minimized windows were restored where possible.`n"
+            . "Any windows minimized by Caps + M were restored where possible.`n"
             . "Start capslock-layer.ahk, then relaunch window-cascade.ahk.",
             "Window Cascade",
             "Icon!"

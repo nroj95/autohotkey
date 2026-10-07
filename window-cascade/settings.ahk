@@ -209,11 +209,10 @@ cascade_compaction_timer_pending := false
 cascade_restore_batches := Map()
 cascade_restore_request_depth := 0
 cascade_close_batches := Map()
-; Disable state is independent of whether any saved windows still exist.
-; A closed final window must not silently re-enable automatic placement.
-cascade_disabled := false
-cascade_toggle_in_progress := false
-cascade_disabled_windows := []
+cascade_paused := false
+cascade_pause_toggle_in_progress := false
+cascade_minimize_toggle_in_progress := false
+cascade_minimized_windows := []
 
 focus_corner_overlays := Map()
 focus_corner_targets := Map()
@@ -265,3 +264,4 @@ cascade_command_gather_to_monitor := 13
 cascade_command_show_help := 14
 cascade_command_move_monitor_left := 15
 cascade_command_move_monitor_right := 16
+cascade_command_toggle_pause := 17
