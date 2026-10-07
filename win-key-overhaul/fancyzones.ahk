@@ -46,7 +46,7 @@ CheckFancyZonesIntegration(*)
             MsgBox(
                 "The FancyZones settings could not be read.`n`n"
                 . "Configure Override Windows Snap, Relative position, and "
-                . "Alt + Win + PgUp/PgDn manually in PowerToys.",
+                . "Win + Alt + PgUp/PgDn manually in PowerToys.",
                 "Win Key Overhaul", "Icon!"
             )
             return
@@ -56,9 +56,9 @@ CheckFancyZonesIntegration(*)
 
         response := MsgBox(
             "Set up the optional FancyZones shortcuts?`n`n"
-            . "Alt + Win + Arrow: move between zones`n"
-            . "Alt + Win + PgUp: previous window in the current zone`n"
-            . "Alt + Win + PgDn: next window in the current zone`n`n"
+            . "Win + Alt + Arrow: move between zones`n"
+            . "Win + Alt + PgUp: previous window in the current zone`n"
+            . "Win + Alt + PgDn: next window in the current zone`n`n"
             . "This enables Override Windows Snap, Relative position, and "
             . "zone-window switching, and replaces the two switching shortcuts. "
             . "Layouts and unrelated settings stay unchanged.`n`n"
@@ -131,7 +131,7 @@ MoveWindowThroughFancyZones(direction)
         RunWindowCommand(PrepareWindowForPlacement, hwnd)
         ForgetWindowLayoutCycle(hwnd)
 
-        ; FancyZones interprets Alt+Win+Arrow as zone extension. Temporarily
+        ; FancyZones interprets Win+Alt+Arrow as zone extension. Temporarily
         ; release Alt to send plain Win+Arrow instead. Blind mode prevents an
         ; immediate automatic Alt restore before FancyZones processes its queue.
         SendEvent("{Blind}{vkE8}{LAlt up}{RAlt up}#{" direction "}")

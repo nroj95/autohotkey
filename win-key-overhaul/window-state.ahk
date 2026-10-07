@@ -38,7 +38,7 @@ ToggleMinimizedWindowGroup(
         minimized_windows := []
         saved_active_hwnd := 0
 
-        ; Preserve the existing order: Shift+Win+Home restores front-to-back;
+        ; Preserve the existing order: Win+Shift+Home restores front-to-back;
         ; Win+M restores back-to-front before returning focus.
         Loop windows_to_restore.Length {
             index := (

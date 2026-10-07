@@ -721,7 +721,7 @@ RestoreAllHorizontalStretches()
             }
 
             ; Cleanup owns only the edges this script actually stretched. Keep a
-            ; manual change to the opposite edge, just like Shift+Win+Down does.
+            ; manual change to the opposite edge, just like Win+Shift+Down does.
             restore_left := state["left_stretched"] ? state["original_left"] : visible_left
             restore_right := state["right_stretched"] ? state["original_right"] : visible_right
             if restore_right > restore_left

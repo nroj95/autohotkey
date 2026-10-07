@@ -11,23 +11,15 @@ isolation_active_hwnd := 0
 all_minimized_windows := []
 all_active_hwnd := 0
 borderless_windows := Map()
-suspended_borderless_windows := Map()
+switcher_demoted_borderless_windows := Map()
 horizontal_stretch_windows := Map()
 vertical_stretch_windows := Map()
 layout_cycle_windows := Map()
 center_tile_next_sides := Map()
 normal_window_placements := Map()
 
-steam_game_cycle := []
-last_steam_game_hwnd := 0
-steam_return_hwnd := 0
-
-; Steam also distributes normal applications and tools. Their install path is
-; indistinguishable from a game's path, so keep known non-game executables out
-; of Shift+Win+G explicitly instead of guessing from window behavior.
-steam_game_excluded_executables := Map(
-    "aseprite.exe", true
-)
+maximized_fullscreen_cycle := []
+last_maximized_fullscreen_hwnd := 0
 
 focus_highlight_guis := []
 focus_highlight_duration_ms := 1500

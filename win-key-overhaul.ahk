@@ -13,7 +13,7 @@ SetWinDelay 10
 ; - Cycle edge, near-center, and centered layouts; place top/bottom tiles.
 ; - Stretch to neighboring visible window edges, or the monitor work-area edge.
 ; - Swap clockwise/counter-clockwise and navigate focus directly.
-; - Preserve borderless fullscreen and Steam cycling as standalone features.
+; - Cycle maximized, fullscreen, and borderless windows without changing geometry.
 ; - Offer Windows Snap setup and ScreenGrid; retain optional FancyZones support.
 ; =============================================================================
 
@@ -70,7 +70,7 @@ HandleWinKeyOverhaulExit(exit_reason, exit_code)
 #Include "%A_ScriptDir%\win-key-overhaul\layouts.ahk"
 #Include "%A_ScriptDir%\win-key-overhaul\swapping.ahk"
 #Include "%A_ScriptDir%\win-key-overhaul\focus.ahk"
-#Include "%A_ScriptDir%\win-key-overhaul\steam.ahk"
+#Include "%A_ScriptDir%\win-key-overhaul\window-switcher.ahk"
 #Include "%A_ScriptDir%\win-key-overhaul\borderless.ahk"
 #Include "%A_ScriptDir%\win-key-overhaul\fancyzones.ahk"
 #Include "%A_ScriptDir%\win-key-overhaul\windows.ahk"

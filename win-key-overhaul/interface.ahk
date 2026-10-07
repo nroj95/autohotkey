@@ -18,20 +18,20 @@ ToggleWinKeyOverhaulHelp(*)
 
     help_text :=
     (
-    "Ctrl + Win + H       Toggle this help`n"
+    "Win + Ctrl + H       Toggle this help`n"
     "`n"
     "WINDOW STATE`n"
     "Win + Up             Maximize / borderless fullscreen`n"
     "Win + Down           Restore to normal window`n"
     "Win + Backspace      Minimize`n"
-    "Shift + Win + Home   Isolate active window / restore others`n"
+    "Win + Shift + Home   Isolate active window / restore others`n"
     "Win + M              Minimize all / restore all`n"
     "`n"
     "WINDOW STRETCH`n"
-    "Shift + Win + Up     Stretch to full height`n"
-    "Shift + Win + Down   Reset all stretch`n"
-    "Shift + Win + Left   Toggle stretch left until collision`n"
-    "Shift + Win + Right  Toggle stretch right until collision`n"
+    "Win + Shift + Up     Stretch to full height`n"
+    "Win + Shift + Down   Reset all stretch`n"
+    "Win + Shift + Left   Toggle stretch left until collision`n"
+    "Win + Shift + Right  Toggle stretch right until collision`n"
     "`n"
     "SIDE LAYOUTS`n"
     "Win + Left           Cycle left layouts`n"
@@ -47,9 +47,9 @@ ToggleWinKeyOverhaulHelp(*)
     "`n"
     "WINDOW ARRANGEMENT`n"
     "Win + Enter          Swap clockwise`n"
-    "Shift + Win + Enter  Swap counter-clockwise`n"
+    "Win + Shift + Enter  Swap counter-clockwise`n"
     "Ctrl + Alt + Arrow   Start / move spatial focus`n"
-    "Shift + Win + G      Cycle running Steam games"
+    "Win + Shift + Tab    Cycle maximized / fullscreen / borderless"
     )
 
     if IsFancyZonesRunning() {
@@ -57,9 +57,9 @@ ToggleWinKeyOverhaulHelp(*)
             "`n"
             "`n"
             "FANCYZONES`n"
-            "Alt + Win + Arrow    Move between zones`n"
-            "Alt + Win + PgUp     Previous window in current zone`n"
-            "Alt + Win + PgDn     Next window in current zone"
+            "Win + Alt + Arrow    Move between zones`n"
+            "Win + Alt + PgUp     Previous window in current zone`n"
+            "Win + Alt + PgDn     Next window in current zone"
         )
     }
 

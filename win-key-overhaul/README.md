@@ -22,29 +22,29 @@ debug logging is off by default and can be toggled for the current run from the 
 
 | shortcut | action |
 | --- | --- |
-| `Ctrl + Win + H` | toggle the help window; `Escape` closes it. |
+| `Win + Ctrl + H` | toggle the help window; `Escape` closes it. |
 | `Win + Up` | maximize; another press enters borderless fullscreen; another returns to maximized. |
 | `Win + Down` | restore an ordinary window, including the rectangle saved before script-managed layout/stretch where available. |
 | `Win + Backspace` | minimize the active window and focus another eligible window when available; when focus is on the shell/desktop, restore the last window minimized with this shortcut. |
-| `Shift + Win + Home` | isolate the active window, or restore this command's minimized group. |
+| `Win + Shift + Home` | isolate the active window, or restore this command's minimized group. |
 | `Win + M` | minimize eligible windows, or restore this command's minimized group. |
-| `Shift + Win + Up` | stretch to full height, retaining the existing one-pixel vertical overscan. |
-| `Shift + Win + Down` | reset remembered horizontal and vertical stretch. |
-| `Shift + Win + Left/Right` | toggle that edge's collision-limited horizontal stretch. |
+| `Win + Shift + Up` | stretch to full height, retaining the existing one-pixel vertical overscan. |
+| `Win + Shift + Down` | reset remembered horizontal and vertical stretch. |
+| `Win + Shift + Left/Right` | toggle that edge's collision-limited horizontal stretch. |
 | `Win + Left/Right` | cycle the corresponding full-height side layouts. |
 | `Win + Insert/Delete` | top-left / bottom-left, alternating 25% and 50% width. |
 | `Win + PgUp/PgDn` | top-right / bottom-right, alternating 25% and 50% width. |
 | `Win + Home/End` | top-center / bottom-center, alternating centered 50% and offset 25%. |
 | `Win + Enter` | swap with the next eligible window clockwise on the current monitor. |
-| `Shift + Win + Enter` | swap with the next eligible window counter-clockwise. |
+| `Win + Shift + Enter` | swap with the next eligible window counter-clockwise. |
 | `Ctrl + Alt + Arrow` | start a spatial-focus session on the active window; subsequent presses move focus. |
-| `Shift + Win + G` | cycle running Steam games, retaining the single-game toggle and return-window behavior. |
-| `Alt + Win + Arrow` | optional FancyZones zone navigation. |
-| `Alt + Win + PgUp/PgDn` | optional FancyZones previous / next window in the current zone. |
+| `Win + Shift + Tab` | cycle visible maximized, fullscreen, and borderless windows without changing their geometry or minimize state. |
+| `Win + Alt + Arrow` | optional FancyZones zone navigation. |
+| `Win + Alt + PgUp/PgDn` | optional FancyZones previous / next window in the current zone. |
 
 when the marked Scratchpad window is active, Win Key Overhaul yields `Win + Left/Right` and `Win + PgUp/PgDn` so Scratchpad can use them for page navigation. this is optional coordination through a window property; Win Key Overhaul remains standalone.
 
-spatial focus and Steam cycling are direct standalone shortcuts. the focus outline reuses four non-activating GUI windows during the script run; expiry hides them and exit destroys them. Steam process-path lookups are shared only within each discovery scan, so no cross-scan PID cache can outlive its process. the original Steam executable exclusion list is retained, including `aseprite.exe`.
+spatial focus and maximized/fullscreen cycling are direct standalone shortcuts. the focus outline reuses four non-activating GUI windows during the script run; expiry hides them and exit destroys them. the window switcher keeps a stable cycle across focus-driven Z-order changes and accepts ordinary maximized windows, Win Key Overhaul borderless windows, and other visible windows whose frame fills a physical monitor. it never minimizes, restores, resizes, or moves a candidate, so the switcher does not directly alter Window Cascade geometry or membership. when switching away from a Win Key Overhaul borderless window, that window is temporarily lowered so a non-topmost target can become visible; its borderless topmost state is restored automatically if it becomes foreground again, including through another switching method. Win Key Overhaul remains standalone and does not call into Window Cascade.
 
 ## exact layout geometry
 
@@ -78,7 +78,7 @@ each edge has an independent restore position. repeating its shortcut restores t
 
 swaps exchange visible frames and verify both results. when an app clamps a requested size or a move fails, the script attempts to restore both original rectangles rather than accepting a partial swap.
 
-`Win + Down` uses a saved pre-placement/pre-stretch normal rectangle when available. this is more than just calling `WinRestore` on an already-normal tiled window. saved rectangles are discarded rather than carried across a changed monitor work area. `Shift + Win + Down` remains the stretch-only reset. ordinary layout placements are not undone just because the script exits; existing stretch and borderless exit cleanup is retained.
+`Win + Down` uses a saved pre-placement/pre-stretch normal rectangle when available. this is more than just calling `WinRestore` on an already-normal tiled window. saved rectangles are discarded rather than carried across a changed monitor work area. `Win + Shift + Down` remains the stretch-only reset. ordinary layout placements are not undone just because the script exits; existing stretch and borderless exit cleanup is retained.
 
 ## startup and optional tools
 
@@ -93,7 +93,7 @@ ScreenGrid is recommended once per user profile unless already running. acceptin
 FancyZones remains optional. the script detects it on startup and when its process starts later, using the existing five-second watcher. keyboard-hook conditions use that watcher's cached PID; an invoked forwarding command rechecks the process before sending keys. compatibility setup requires confirmation and configures only:
 
 - **Override Windows Snap hotkeys**, **Relative position**, and **Switch between windows in the current zone**;
-- previous window as **Alt + Win + PgUp**, and next window as **Alt + Win + PgDn**.
+- previous window as **Win + Alt + PgUp**, and next window as **Win + Alt + PgDn**.
 
 native Windows Snap may remain disabled; the FancyZones override setting is a separate feature. close the PowerToys Settings window before applying the change so it does not write stale settings back. the helper preserves unrelated setting values and makes an exact timestamped `.bak` beside `settings.json` using an atomic replacement. unfamiliar/incomplete settings, non-boolean toggles/modifiers, and invalid virtual-key codes are rejected instead of guessed. JSON formatting may change.
 
@@ -105,15 +105,15 @@ use **Check FancyZones compatibility** from the **Recommended setup** GUI after 
 
 | module | responsibility |
 | --- | --- |
-| `settings.ahk` | defaults, state, paths, exclusions, and debug settings. |
+| `settings.ahk` | defaults, runtime state, paths, and debug settings. |
 | `controls.ahk` | standalone hotkeys, click-to-abandon target, and optional FancyZones bindings. |
 | `window-state.ahk` | group toggles, target selection, maximize/minimize/restore, and normal snapshots. |
 | `layout-geometry.ahk` | pure ratio, rounding, cycle-index, and collision calculations. |
 | `layouts.ahk` | stretch, side/corner/center actions, alternation, matching, and placement tracking. |
 | `swapping.ahk` | shared clockwise ordering, both swap directions, and rectangle transactions. |
 | `focus.ahk` | spatial focus and the original accent-colored highlight/session behavior. |
-| `steam.ahk` | game discovery, direct cycling, minimize/resume, and return-window behavior. |
-| `borderless.ahk` | fullscreen entry/restoration, Steam suspension, and exit cleanup. |
+| `window-switcher.ahk` | maximized/fullscreen/borderless discovery, stable cycling, and focus-only activation. |
+| `borderless.ahk` | fullscreen entry/restoration, switcher Z-order coordination, and exit cleanup. |
 | `fancyzones.ahk` | compatibility detection, prompts, forwarding, and helper invocation. |
 | `fancyzones-settings.ps1` | narrowly scoped JSON reading/update with an exact backup. |
 | `windows.ahk` | shared filters, geometry, native placement, activation, and visible-frame movement. |
@@ -133,7 +133,7 @@ from the repository root:
 
 the repository validator automatically validates every root-level AutoHotkey script and its include tree with AutoHotkey `/Validate`.
 
-manual Windows behavior should still be checked after major changes, especially both full side cycles and arrow switching; top/bottom center alternation across multiple windows; `Win + Down` from tiled/maximized/borderless/minimized states; both swap directions; collision stretch and independent edge resets; Steam cycling with one and multiple games; spatial focus navigation and highlight expiry; startup migration/declines; and FancyZones launched before and after this script. include mixed-DPI monitors and size-constrained apps when applicable.
+manual Windows behavior should still be checked after major changes, especially both full side cycles and arrow switching; top/bottom center alternation across multiple windows; `Win + Down` from tiled/maximized/borderless/minimized states; both swap directions; collision stretch and independent edge resets; maximized/fullscreen switching with one and multiple candidates, including Win Key Overhaul borderless windows; spatial focus navigation and highlight expiry; startup migration/declines; and FancyZones launched before and after this script. include mixed-DPI monitors and size-constrained apps when applicable.
 
 ## implementation references
 

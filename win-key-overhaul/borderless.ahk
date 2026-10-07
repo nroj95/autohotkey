@@ -145,247 +145,115 @@ RestoreBorderlessWindow(
 }
 
 ; =============================================================================
-; Steam borderless suspension and resume
+; switcher Z-order coordination
 ; =============================================================================
 
-SuspendBorderlessSteamWindow(hwnd)
+PromoteBorderlessSwitcherTarget(hwnd)
 {
-    global borderless_windows
-    global suspended_borderless_windows
+    global borderless_windows, switcher_demoted_borderless_windows
 
-    static WPF_RESTORETOMAXIMIZED := 0x0002
-    static SW_SHOWMINNOACTIVE := 7
-
-    if !borderless_windows.Has(hwnd)
-        return true
-
+    if !hwnd || !borderless_windows.Has(hwnd)
+        return false
     if !WindowStateMatchesProcess(hwnd, borderless_windows[hwnd]) {
         borderless_windows.Delete(hwnd)
-        return true
+        switcher_demoted_borderless_windows.Delete(hwnd)
+        return false
     }
 
-    if !DllCall("IsIconic", "ptr", hwnd, "int")
-        return false
-
-    saved := borderless_windows[hwnd]
-    window := "ahk_id " hwnd
-
-    process_id := 0
-
-    try process_id := WinGetPID(hwnd)
+    promoted := false
 
     try {
-        if !saved["was_topmost"]
-            WinSetAlwaysOnTop 0, window
-
-        ; The window stays minimized, but no longer owns our temporary
-        ; borderless frame or fullscreen placement.
-        WinSetStyle(saved["style"], window)
-        RefreshWindowFrame(hwnd)
-
-        placement := saved["placement"]
-
-        original_flags := NumGet(
-            placement,
-            4,
-            "uint"
-        )
-
-        try {
-            ; Do not leave a minimized borderless window carrying a
-            ; restore-to-maximized request. Its on-disk/application-facing
-            ; state should be an ordinary minimized window.
-            NumPut(
-                "uint",
-                original_flags & ~WPF_RESTORETOMAXIMIZED,
-                placement,
-                4
-            )
-
-            ApplyWindowPlacement(
-                hwnd,
-                placement,
-                SW_SHOWMINNOACTIVE
-            )
-        }
-        finally {
-            NumPut(
-                "uint",
-                original_flags,
-                placement,
-                4
-            )
+        if !(WinGetExStyle("ahk_id " hwnd) & 0x8) { ; WS_EX_TOPMOST
+            WinSetAlwaysOnTop 1, "ahk_id " hwnd
+            promoted := true
         }
 
-        if saved["was_topmost"]
-            WinSetAlwaysOnTop 1, window
+        if switcher_demoted_borderless_windows.Has(hwnd)
+            switcher_demoted_borderless_windows.Delete(hwnd)
 
-        if !DllCall(
-            "IsIconic",
-            "ptr", hwnd,
-            "int"
-        ) {
-            throw Error(
-                "Window left minimized state during borderless suspension."
-            )
-        }
+        if !switcher_demoted_borderless_windows.Count
+            SetTimer(WatchDemotedBorderlessSwitcherWindows, 0)
 
-        ClearBorderlessWindowMarker(hwnd)
+        return promoted
+    }
+    catch Error as err {
+        DebugError("Promote borderless switcher target", err)
+        return false
+    }
+}
 
-        suspended_borderless_windows[hwnd] := Map(
-            "state", saved,
-            "pid", process_id
-        )
+DemoteBorderlessSwitcherSource(hwnd)
+{
+    global borderless_windows, switcher_demoted_borderless_windows
 
+    if !hwnd || !borderless_windows.Has(hwnd)
+        return
+    if !WindowStateMatchesProcess(hwnd, borderless_windows[hwnd]) {
         borderless_windows.Delete(hwnd)
-
-        DebugLog(
-            "Borderless Steam window suspended while minimized."
-            . " | pid=" process_id
-            . " | target=" DebugDescribeWindow(hwnd)
-        )
-
-        return true
-    }
-    catch Error as err {
-        DebugError(
-            "SuspendBorderlessSteamWindow hwnd=" hwnd,
-            err
-        )
-
-        return false
-    }
-}
-
-ResumeSuspendedBorderlessSteamWindow(hwnd)
-{
-    global borderless_windows
-    global suspended_borderless_windows
-
-    if !suspended_borderless_windows.Has(hwnd)
-        return true
-
-    entry := suspended_borderless_windows[hwnd]
-
-    if !DllCall("IsWindow", "ptr", hwnd, "int") {
-        suspended_borderless_windows.Delete(hwnd)
-        return true
-    }
-
-    current_process_id := 0
-
-    try current_process_id := WinGetPID(hwnd)
-    catch {
-        suspended_borderless_windows.Delete(hwnd)
-        return true
-    }
-
-    if entry["pid"]
-        && current_process_id != entry["pid"]
-    {
-        suspended_borderless_windows.Delete(hwnd)
-
-        DebugLog(
-            "Discarded suspended borderless state: PID changed."
-            . " | hwnd=" hwnd
-            . " | old-pid=" entry["pid"]
-            . " | current-pid=" current_process_id
-        )
-
-        return true
-    }
-
-    if DllCall(
-        "IsIconic",
-        "ptr", hwnd,
-        "int"
-    ) {
-        return false
+        switcher_demoted_borderless_windows.Delete(hwnd)
+        return
     }
 
     try {
-        ; Enter borderless using the currently restored ordinary window, then
-        ; replace the temporary captured state with the original pre-borderless
-        ; state so toggling borderless off later still restores correctly.
-        EnterBorderlessFullscreen(hwnd)
+        if WinGetExStyle("ahk_id " hwnd) & 0x8 ; WS_EX_TOPMOST
+            WinSetAlwaysOnTop 0, "ahk_id " hwnd
 
-        if !borderless_windows.Has(hwnd) {
-            throw Error(
-                "Borderless state was not established during resume."
-            )
-        }
+        switcher_demoted_borderless_windows[hwnd] :=
+            borderless_windows[hwnd]["pid"]
 
-        borderless_windows[hwnd] := entry["state"]
-        suspended_borderless_windows.Delete(hwnd)
-
-        DebugLog(
-            "Borderless Steam window resumed."
-            . " | target=" DebugDescribeWindow(hwnd)
-        )
-
-        return true
+        SetTimer(WatchDemotedBorderlessSwitcherWindows, 75)
     }
     catch Error as err {
-        DebugError(
-            "ResumeSuspendedBorderlessSteamWindow hwnd=" hwnd,
-            err
-        )
-
-        return false
+        DebugError("Demote borderless switcher source", err)
     }
 }
 
-PruneSuspendedBorderlessSteamWindows()
+WatchDemotedBorderlessSwitcherWindows(*)
 {
-    global suspended_borderless_windows
+    global borderless_windows, switcher_demoted_borderless_windows
 
+    if !switcher_demoted_borderless_windows.Count {
+        SetTimer(WatchDemotedBorderlessSwitcherWindows, 0)
+        return
+    }
+
+    foreground_hwnd := DllCall("GetForegroundWindow", "ptr")
     stale_hwnds := []
 
-    for hwnd, entry in suspended_borderless_windows {
-        remove_entry := false
-
-        if !DllCall("IsWindow", "ptr", hwnd, "int") {
-            remove_entry := true
-        } else {
-            current_process_id := 0
-
-            try current_process_id := WinGetPID(hwnd)
-            catch {
-                remove_entry := true
-            }
-
-            if !remove_entry
-                && entry["pid"]
-                && current_process_id != entry["pid"]
-            {
-                remove_entry := true
-            }
-
-            ; If something other than Shift+Win+G already restored the window,
-            ; borderless suspension no longer owns its next restore.
-            if !remove_entry
-                && !DllCall(
-                    "IsIconic",
-                    "ptr", hwnd,
-                    "int"
-                )
-            {
-                remove_entry := true
-            }
+    for hwnd, process_id in switcher_demoted_borderless_windows {
+        if !borderless_windows.Has(hwnd)
+            || !WindowStateMatchesProcess(hwnd, borderless_windows[hwnd])
+            || GetWindowProcessId(hwnd) != process_id
+        {
+            stale_hwnds.Push(hwnd)
+            continue
         }
 
-        if remove_entry
+        if foreground_hwnd != hwnd
+            continue
+
+        try {
+            WinSetAlwaysOnTop 1, "ahk_id " hwnd
             stale_hwnds.Push(hwnd)
+
+            DebugLog(
+                "Restored borderless topmost state after switcher demotion."
+                . " | " DebugDescribeWindow(hwnd)
+            )
+        }
+        catch Error as err {
+            stale_hwnds.Push(hwnd)
+            DebugError("Restore switcher-demoted borderless window", err)
+        }
     }
 
     for hwnd in stale_hwnds {
-        suspended_borderless_windows.Delete(hwnd)
-
-        DebugLog(
-            "Discarded stale suspended borderless state."
-            . " | hwnd=" hwnd
-        )
+        if switcher_demoted_borderless_windows.Has(hwnd)
+            switcher_demoted_borderless_windows.Delete(hwnd)
     }
+
+    if !switcher_demoted_borderless_windows.Count
+        SetTimer(WatchDemotedBorderlessSwitcherWindows, 0)
 }
 
 ; =============================================================================

@@ -105,7 +105,7 @@ my replacement for parts of Windows' built-in window-management shortcuts.
 - spatial focus navigation
 - Windows accent-color focus indicators
 - isolate and minimize/restore-all behavior
-- cycling running Steam games
+- cycling maximized, fullscreen, and borderless windows
 - optional FancyZones compatibility
 - optional ScreenGrid recommendation
 

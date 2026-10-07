@@ -211,35 +211,3 @@ DebugDescribeWindow(hwnd)
         . ' path="' process_path '"'
     )
 }
-
-DebugSteamGameState(label)
-{
-    global debug_enabled
-    global steam_game_cycle
-    global last_steam_game_hwnd
-    global steam_return_hwnd
-
-    if !debug_enabled
-        return
-
-    DebugLog(
-        label
-        . " | cycle-count=" steam_game_cycle.Length
-        . " | last="
-        . DebugDescribeWindow(last_steam_game_hwnd)
-        . " | return="
-        . DebugDescribeWindow(steam_return_hwnd)
-        . " | foreground="
-        . DebugDescribeWindow(
-            DllCall("GetForegroundWindow", "ptr")
-        )
-    )
-
-    for index, hwnd in steam_game_cycle {
-        DebugLog(
-            "Steam cycle entry."
-            . " | index=" index
-            . " | " DebugDescribeWindow(hwnd)
-        )
-    }
-}
